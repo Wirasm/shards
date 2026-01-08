@@ -1,13 +1,16 @@
 mod git;
 mod terminal;
 mod registry;
+mod config;
 
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 use git::GitManager;
 use terminal::TerminalLauncher;
 use registry::{SessionRegistry, ShardSession, SessionStatus};
+use config::Config;
 use std::time::SystemTime;
+use dialoguer::Select;
 
 #[derive(Parser)]
 #[command(name = "shards")]
@@ -24,9 +27,15 @@ enum Commands {
     Start {
         /// Name of the shard
         name: String,
-        /// Agent command to run
+        /// Agent command to run (optional if using profiles)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         agent_command: Vec<String>,
+        /// Use a specific agent profile
+        #[arg(long)]
+        agent: Option<String>,
+        /// Override terminal to use (auto, terminal, ghostty)
+        #[arg(long)]
+        terminal: Option<String>,
     },
     /// List active shards
     List,
@@ -44,15 +53,54 @@ enum Commands {
     },
 }
 
+fn resolve_agent_command(
+    agent_command: Vec<String>,
+    agent_profile: Option<String>,
+    config: &Config,
+) -> Result<Vec<String>> {
+    // Priority: CLI command > --agent profile > default_agent > prompt user
+    
+    if !agent_command.is_empty() {
+        return Ok(agent_command);
+    }
+    
+    if let Some(profile) = agent_profile {
+        if let Some(command) = config.agents.get(&profile) {
+            return Ok(command.split_whitespace().map(|s| s.to_string()).collect());
+        } else {
+            anyhow::bail!("Agent profile '{}' not found", profile);
+        }
+    }
+    
+    if !config.default_agent.is_empty() {
+        return Ok(config.default_agent.split_whitespace().map(|s| s.to_string()).collect());
+    }
+    
+    // Prompt user to choose
+    let mut options: Vec<String> = config.agents.keys().cloned().collect();
+    options.sort();
+    
+    if options.is_empty() {
+        anyhow::bail!("No agent profiles configured. Please specify a command or configure agents in ~/.shards/config.toml");
+    }
+    
+    println!("No agent specified. Choose an agent:");
+    let selection = Select::new()
+        .items(&options)
+        .default(0)
+        .interact()?;
+    
+    let selected_profile = &options[selection];
+    let command = config.agents.get(selected_profile).unwrap();
+    Ok(command.split_whitespace().map(|s| s.to_string()).collect())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load()?;
 
     match cli.command {
-        Commands::Start { name, agent_command } => {
-            if agent_command.is_empty() {
-                anyhow::bail!("Agent command is required");
-            }
-
+        Commands::Start { name, agent_command, agent, terminal } => {
             let git_manager = GitManager::new()?;
             let registry = SessionRegistry::new()?;
             
@@ -61,13 +109,14 @@ fn main() -> Result<()> {
                 anyhow::bail!("Shard '{}' already exists", name);
             }
 
+            let resolved_command = resolve_agent_command(agent_command, agent, &config)?;
             let worktree_path = git_manager.create_worktree(&name)?;
             
             // Create session record
             let session = ShardSession {
                 name: name.clone(),
                 worktree_path: worktree_path.clone(),
-                agent_command: agent_command.clone(),
+                agent_command: resolved_command.clone(),
                 created_at: SystemTime::now(),
                 status: SessionStatus::Active,
             };
@@ -75,9 +124,14 @@ fn main() -> Result<()> {
             registry.add_session(session)?;
             
             println!("Created worktree for shard '{}' at: {}", name, worktree_path.display());
-            println!("Launching agent with command: {:?}", agent_command);
+            println!("Launching agent with command: {:?}", resolved_command);
             
-            TerminalLauncher::launch_agent(&worktree_path, &agent_command)?;
+            let mut config = config;
+            if let Some(terminal_override) = terminal {
+                config.terminal = terminal_override;
+            }
+            
+            TerminalLauncher::launch_agent(&worktree_path, &resolved_command, &config)?;
             println!("Agent launched in new terminal window");
             
             Ok(())
