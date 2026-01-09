@@ -1,4 +1,4 @@
-use tracing::{error, info};
+use tracing::info;
 
 use crate::core::config::Config;
 use crate::git;
@@ -30,16 +30,13 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, SessionE
         branch = validated.name
     );
 
-    // 3. Check if session already exists (would need database here)
-    let session_id = operations::generate_session_id(&project.id, &validated.name);
-
-    // TODO: Check database for existing session
-    // if database::session_exists(&session_id)? {
-    //     return Err(SessionError::AlreadyExists { name: validated.name });
-    // }
-
-    // 4. Create worktree (I/O)
+    // 3. Create worktree (I/O)
     let config = Config::new();
+    let session_id = operations::generate_session_id(&project.id, &validated.name);
+    
+    // Ensure sessions directory exists
+    operations::ensure_sessions_directory(&config.sessions_dir())?;
+    
     let worktree = git::handler::create_worktree(&config.shards_dir, &project, &validated.name)
         .map_err(|e| SessionError::GitError { source: e })?;
 
@@ -65,8 +62,8 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, SessionE
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    // TODO: Save session to database
-    // database::save_session(&session)?;
+    // 7. Save session to file
+    operations::save_session_to_file(&session, &config.sessions_dir())?;
 
     info!(
         event = "session.create_completed",
@@ -81,9 +78,8 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, SessionE
 pub fn list_sessions() -> Result<Vec<Session>, SessionError> {
     info!(event = "session.list_started");
 
-    // TODO: Implement database query
-    // For now, return empty list
-    let sessions = Vec::new();
+    let config = Config::new();
+    let sessions = operations::load_sessions_from_files(&config.sessions_dir())?;
 
     info!(event = "session.list_completed", count = sessions.len());
 
@@ -93,20 +89,38 @@ pub fn list_sessions() -> Result<Vec<Session>, SessionError> {
 pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     info!(event = "session.destroy_started", name = name);
 
-    // TODO: Implement session destruction
-    // 1. Find session in database
-    // 2. Remove worktree
-    // 3. Update database record
+    let config = Config::new();
+    
+    // 1. Find session by name (branch name)
+    let session = operations::find_session_by_name(&config.sessions_dir(), name)?
+        .ok_or_else(|| SessionError::NotFound { name: name.to_string() })?;
 
-    error!(
-        event = "session.destroy_failed",
-        name = name,
-        error = "not implemented"
+    info!(
+        event = "session.destroy_found",
+        session_id = session.id,
+        worktree_path = %session.worktree_path.display()
     );
 
-    Err(SessionError::NotFound {
-        name: name.to_string(),
-    })
+    // 2. Remove git worktree
+    git::handler::remove_worktree_by_path(&session.worktree_path)
+        .map_err(|e| SessionError::GitError { source: e })?;
+
+    info!(
+        event = "session.destroy_worktree_removed",
+        session_id = session.id,
+        worktree_path = %session.worktree_path.display()
+    );
+
+    // 3. Remove session file
+    operations::remove_session_file(&config.sessions_dir(), &session.id)?;
+
+    info!(
+        event = "session.destroy_completed",
+        session_id = session.id,
+        name = name
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -115,14 +129,15 @@ mod tests {
 
     #[test]
     fn test_list_sessions_empty() {
+        // This test now verifies that list_sessions handles empty/nonexistent sessions directory
         let result = list_sessions();
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
 
     #[test]
-    fn test_destroy_session_not_implemented() {
-        let result = destroy_session("test");
+    fn test_destroy_session_not_found() {
+        let result = destroy_session("non-existent");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }

@@ -1,4 +1,6 @@
 use crate::sessions::{errors::SessionError, types::*};
+use std::fs;
+use std::path::Path;
 
 pub fn validate_session_request(
     name: &str,
@@ -52,6 +54,118 @@ pub fn validate_branch_name(branch: &str) -> Result<String, SessionError> {
     }
 
     Ok(trimmed.to_string())
+}
+
+pub fn ensure_sessions_directory(sessions_dir: &Path) -> Result<(), SessionError> {
+    if !sessions_dir.exists() {
+        fs::create_dir_all(sessions_dir)
+            .map_err(|e| SessionError::IoError { source: e })?;
+    }
+    Ok(())
+}
+
+pub fn save_session_to_file(session: &Session, sessions_dir: &Path) -> Result<(), SessionError> {
+    let session_file = sessions_dir.join(format!("{}.json", session.id.replace('/', "_")));
+    let session_json = serde_json::to_string_pretty(session)
+        .map_err(|e| SessionError::IoError { source: std::io::Error::new(std::io::ErrorKind::InvalidData, e) })?;
+    
+    // Write atomically by writing to temp file first, then renaming
+    let temp_file = session_file.with_extension("json.tmp");
+    fs::write(&temp_file, session_json)?;
+    fs::rename(&temp_file, &session_file)?;
+    
+    Ok(())
+}
+
+pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, SessionError> {
+    let mut sessions = Vec::new();
+    
+    // Return empty list if sessions directory doesn't exist
+    if !sessions_dir.exists() {
+        return Ok(sessions);
+    }
+    
+    let entries = fs::read_dir(sessions_dir)
+        .map_err(|e| SessionError::IoError { source: e })?;
+    
+    for entry in entries {
+        let entry = entry.map_err(|e| SessionError::IoError { source: e })?;
+        let path = entry.path();
+        
+        // Only process .json files
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            match fs::read_to_string(&path) {
+                Ok(content) => {
+                    match serde_json::from_str::<Session>(&content) {
+                        Ok(session) => {
+                            // Validate session structure
+                            if validate_session_structure(&session) {
+                                sessions.push(session);
+                            } else {
+                                tracing::warn!(
+                                    event = "session.load_invalid_structure",
+                                    file = %path.display(),
+                                    message = "Session file has invalid structure, skipping"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                event = "session.load_invalid_json",
+                                file = %path.display(),
+                                error = %e,
+                                message = "Failed to parse session JSON, skipping"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        event = "session.load_read_error",
+                        file = %path.display(),
+                        error = %e,
+                        message = "Failed to read session file, skipping"
+                    );
+                }
+            }
+        }
+    }
+    
+    Ok(sessions)
+}
+
+fn validate_session_structure(session: &Session) -> bool {
+    // Validate required fields are not empty
+    !session.id.trim().is_empty()
+        && !session.project_id.trim().is_empty()
+        && !session.branch.trim().is_empty()
+        && !session.agent.trim().is_empty()
+        && !session.created_at.trim().is_empty()
+        && session.worktree_path.as_os_str().len() > 0
+}
+
+pub fn find_session_by_name(sessions_dir: &Path, name: &str) -> Result<Option<Session>, SessionError> {
+    let sessions = load_sessions_from_files(sessions_dir)?;
+    
+    // Find session by branch name (the "name" parameter refers to branch name)
+    for session in sessions {
+        if session.branch == name {
+            return Ok(Some(session));
+        }
+    }
+    
+    Ok(None)
+}
+
+pub fn remove_session_file(sessions_dir: &Path, session_id: &str) -> Result<(), SessionError> {
+    let session_file = sessions_dir.join(format!("{}.json", session_id.replace('/', "_")));
+    
+    if session_file.exists() {
+        fs::remove_file(&session_file)
+            .map_err(|e| SessionError::IoError { source: e })?;
+    }
+    
+    Ok(())
 }
 
 #[cfg(test)]
@@ -126,5 +240,273 @@ mod tests {
         assert!(validate_branch_name("branch..name").is_err());
         assert!(validate_branch_name("-branch").is_err());
         assert!(validate_branch_name("branch name").is_err());
+    }
+
+    #[test]
+    fn test_ensure_sessions_directory() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_sessions");
+        
+        // Clean up if exists
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        
+        // Should create directory
+        assert!(ensure_sessions_directory(&temp_dir).is_ok());
+        assert!(temp_dir.exists());
+        
+        // Should not error if directory already exists
+        assert!(ensure_sessions_directory(&temp_dir).is_ok());
+        
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_session_to_file() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_save_session");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let session = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        // Save session
+        assert!(save_session_to_file(&session, &temp_dir).is_ok());
+
+        // Check file exists with correct name (/ replaced with _)
+        let session_file = temp_dir.join("test_branch.json");
+        assert!(session_file.exists());
+
+        // Verify content
+        let content = std::fs::read_to_string(&session_file).unwrap();
+        let loaded_session: Session = serde_json::from_str(&content).unwrap();
+        assert_eq!(loaded_session, session);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_sessions_from_files() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_load_sessions");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Test empty directory
+        let sessions = load_sessions_from_files(&temp_dir).unwrap();
+        assert_eq!(sessions.len(), 0);
+
+        // Create test sessions
+        let session1 = Session {
+            id: "test/branch1".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch1".to_string(),
+            worktree_path: PathBuf::from("/tmp/test1"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        let session2 = Session {
+            id: "test/branch2".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch2".to_string(),
+            worktree_path: PathBuf::from("/tmp/test2"),
+            agent: "kiro".to_string(),
+            status: SessionStatus::Stopped,
+            created_at: "2024-01-02T00:00:00Z".to_string(),
+        };
+
+        // Save sessions
+        save_session_to_file(&session1, &temp_dir).unwrap();
+        save_session_to_file(&session2, &temp_dir).unwrap();
+
+        // Load sessions
+        let loaded_sessions = load_sessions_from_files(&temp_dir).unwrap();
+        assert_eq!(loaded_sessions.len(), 2);
+
+        // Verify sessions (order might vary)
+        let ids: Vec<String> = loaded_sessions.iter().map(|s| s.id.clone()).collect();
+        assert!(ids.contains(&"test/branch1".to_string()));
+        assert!(ids.contains(&"test/branch2".to_string()));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_sessions_nonexistent_directory() {
+        use std::env;
+
+        let nonexistent_dir = env::temp_dir().join("shards_test_nonexistent");
+        let _ = std::fs::remove_dir_all(&nonexistent_dir);
+
+        let sessions = load_sessions_from_files(&nonexistent_dir).unwrap();
+        assert_eq!(sessions.len(), 0);
+    }
+
+    #[test]
+    fn test_find_session_by_name() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_find_session");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let session = Session {
+            id: "test/feature-branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "feature-branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        // Save session
+        save_session_to_file(&session, &temp_dir).unwrap();
+
+        // Find by branch name
+        let found = find_session_by_name(&temp_dir, "feature-branch").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, "test/feature-branch");
+
+        // Try to find non-existent session
+        let not_found = find_session_by_name(&temp_dir, "non-existent").unwrap();
+        assert!(not_found.is_none());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_remove_session_file() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_remove_session");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let session = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        // Save session
+        save_session_to_file(&session, &temp_dir).unwrap();
+
+        let session_file = temp_dir.join("test_branch.json");
+        assert!(session_file.exists());
+
+        // Remove session file
+        remove_session_file(&temp_dir, &session.id).unwrap();
+        assert!(!session_file.exists());
+
+        // Removing non-existent file should not error
+        assert!(remove_session_file(&temp_dir, "non-existent").is_ok());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_load_sessions_with_invalid_files() {
+        use std::env;
+        use std::path::PathBuf;
+
+        let temp_dir = env::temp_dir().join("shards_test_invalid_files");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create a valid session
+        let valid_session = Session {
+            id: "test/valid".to_string(),
+            project_id: "test".to_string(),
+            branch: "valid".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        save_session_to_file(&valid_session, &temp_dir).unwrap();
+
+        // Create invalid JSON file
+        let invalid_json_file = temp_dir.join("invalid.json");
+        std::fs::write(&invalid_json_file, "{ invalid json }").unwrap();
+
+        // Create file with invalid session structure (missing required fields)
+        let invalid_structure_file = temp_dir.join("invalid_structure.json");
+        std::fs::write(&invalid_structure_file, r#"{"id": "", "project_id": "test"}"#).unwrap();
+
+        // Load sessions - should only return the valid one
+        let sessions = load_sessions_from_files(&temp_dir).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "test/valid");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_validate_session_structure() {
+        use std::path::PathBuf;
+
+        // Valid session
+        let valid_session = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        assert!(validate_session_structure(&valid_session));
+
+        // Invalid session - empty id
+        let invalid_session = Session {
+            id: "".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        assert!(!validate_session_structure(&invalid_session));
+
+        // Invalid session - empty worktree path
+        let invalid_session2 = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::new(),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        assert!(!validate_session_structure(&invalid_session2));
     }
 }
