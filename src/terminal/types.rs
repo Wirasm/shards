@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminalType {
+    Ghostty,
     ITerm,
     TerminalApp,
 }
@@ -47,6 +48,7 @@ impl SpawnResult {
 impl std::fmt::Display for TerminalType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TerminalType::Ghostty => write!(f, "ghostty"),
             TerminalType::ITerm => write!(f, "iterm"),
             TerminalType::TerminalApp => write!(f, "terminal"),
         }
@@ -59,6 +61,7 @@ mod tests {
 
     #[test]
     fn test_terminal_type_display() {
+        assert_eq!(TerminalType::Ghostty.to_string(), "ghostty");
         assert_eq!(TerminalType::ITerm.to_string(), "iterm");
         assert_eq!(TerminalType::TerminalApp.to_string(), "terminal");
     }
