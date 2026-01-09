@@ -46,3 +46,15 @@ Feature: file-based-persistence
   - Tests verify both empty directory handling and successful loading of multiple sessions
   - File loading preserves all session data including id, branch, agent, status, and created_at
 ---
+## 2026-01-09 - US-004
+- Implemented destroy command with file cleanup and worktree removal
+- Files changed: src/sessions/operations.rs, src/sessions/handler.rs, src/git/handler.rs
+- **Learnings:**
+  - Added find_session_by_name() function to locate sessions by branch name
+  - Added remove_session_file() function to delete session JSON files
+  - Added remove_worktree_by_path() function to git handler for worktree cleanup without needing ProjectInfo
+  - destroy_session() now properly finds session, removes worktree, and deletes session file
+  - Error handling for non-existent sessions returns SessionError::NotFound
+  - Worktree removal includes both git worktree pruning and directory cleanup
+  - Tests verify session finding, file removal, and proper error handling for missing sessions
+---
