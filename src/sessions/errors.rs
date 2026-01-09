@@ -26,9 +26,6 @@ pub enum SessionError {
         source: crate::terminal::errors::TerminalError,
     },
 
-    #[error("Database operation failed: {message}")]
-    DatabaseError { message: String },
-
     #[error("IO operation failed: {source}")]
     IoError {
         #[from]
@@ -45,7 +42,6 @@ impl ShardsError for SessionError {
             SessionError::InvalidCommand => "INVALID_COMMAND",
             SessionError::GitError { .. } => "GIT_ERROR",
             SessionError::TerminalError { .. } => "TERMINAL_ERROR",
-            SessionError::DatabaseError { .. } => "DATABASE_ERROR",
             SessionError::IoError { .. } => "IO_ERROR",
         }
     }

@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
 git2 = "0.18"
-rusqlite = { version = "0.32", features = ["bundled"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
