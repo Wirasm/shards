@@ -89,6 +89,14 @@ pub fn create_worktree(
         .find_branch(&validated_branch, BranchType::Local)
         .is_ok();
 
+    debug!(
+        event = "git.branch.check_completed",
+        project_id = project.id,
+        branch = validated_branch,
+        exists = branch_exists
+    );
+
+    // Only create branch if it doesn't exist
     if !branch_exists {
         debug!(
             event = "git.branch.create_started",
@@ -112,8 +120,9 @@ pub fn create_worktree(
         );
     }
 
-    // Create worktree
-    repo.worktree(&validated_branch, &worktree_path, None)
+    // Create worktree - use a different name to avoid conflicts
+    let worktree_name = format!("worktree-{}", validated_branch);
+    repo.worktree(&worktree_name, &worktree_path, None)
         .map_err(|e| GitError::Git2Error { source: e })?;
 
     let worktree_info = WorktreeInfo::new(

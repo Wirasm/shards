@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::terminal::{errors::TerminalError, operations, types::*};
 
@@ -36,29 +36,15 @@ pub fn spawn_terminal(
         command_args = ?spawn_command
     );
 
-    // Execute the command
+    // Execute the command asynchronously (don't wait for terminal to close)
     let mut cmd = Command::new(&spawn_command[0]);
     if spawn_command.len() > 1 {
         cmd.args(&spawn_command[1..]);
     }
 
-    let output = cmd.output().map_err(|e| TerminalError::SpawnFailed {
+    let _child = cmd.spawn().map_err(|e| TerminalError::SpawnFailed {
         message: format!("Failed to execute {}: {}", spawn_command[0], e),
     })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!(
-            event = "terminal.spawn_failed",
-            terminal_type = %terminal_type,
-            working_directory = %working_directory.display(),
-            command = command,
-            error = %stderr
-        );
-        return Err(TerminalError::SpawnFailed {
-            message: format!("Terminal command failed: {}", stderr),
-        });
-    }
 
     let result = SpawnResult::new(
         terminal_type.clone(),
