@@ -70,3 +70,15 @@ Feature: file-based-persistence
   - Tests verify handling of invalid JSON, invalid session structure, and that only valid sessions are loaded
   - Error handling follows the pattern of logging warnings and continuing rather than failing the entire operation
 ---
+## 2026-01-09 - US-006
+- Removed SQLite dependency and all database-related code
+- Files changed: Cargo.toml, src/core/config.rs, src/sessions/errors.rs, src/sessions/handler.rs
+- **Learnings:**
+  - Removed rusqlite dependency from Cargo.toml completely
+  - Removed database_path() method from Config struct and its test
+  - Removed DatabaseError variant from SessionError enum and its error_code case
+  - Removed TODO comments about database operations from session handler
+  - Project now builds and runs without any SQLite dependencies
+  - All tests pass confirming the file-based persistence system is complete
+  - File-based approach eliminates external database dependency while maintaining full functionality
+---
