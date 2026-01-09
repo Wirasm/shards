@@ -58,3 +58,15 @@ Feature: file-based-persistence
   - Worktree removal includes both git worktree pruning and directory cleanup
   - Tests verify session finding, file removal, and proper error handling for missing sessions
 ---
+## 2026-01-09 - US-005
+- Implemented session file validation and error handling with warning logs
+- Files changed: src/sessions/operations.rs
+- **Learnings:**
+  - Enhanced load_sessions_from_files() with comprehensive error handling for file read errors, JSON parsing errors, and validation errors
+  - Added validate_session_structure() function to check required fields are not empty
+  - Invalid JSON files now log warnings with tracing::warn! instead of failing silently
+  - File system permission errors are handled gracefully with warning logs
+  - Session structure validation ensures id, project_id, branch, agent, created_at are non-empty and worktree_path exists
+  - Tests verify handling of invalid JSON, invalid session structure, and that only valid sessions are loaded
+  - Error handling follows the pattern of logging warnings and continuing rather than failing the entire operation
+---

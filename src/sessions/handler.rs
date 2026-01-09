@@ -30,16 +30,9 @@ pub fn create_session(request: CreateSessionRequest) -> Result<Session, SessionE
         branch = validated.name
     );
 
-    // 3. Check if session already exists (would need database here)
-    let session_id = operations::generate_session_id(&project.id, &validated.name);
-
-    // TODO: Check database for existing session
-    // if database::session_exists(&session_id)? {
-    //     return Err(SessionError::AlreadyExists { name: validated.name });
-    // }
-
-    // 4. Create worktree (I/O)
+    // 3. Create worktree (I/O)
     let config = Config::new();
+    let session_id = operations::generate_session_id(&project.id, &validated.name);
     
     // Ensure sessions directory exists
     operations::ensure_sessions_directory(&config.sessions_dir())?;

@@ -105,9 +105,9 @@ shards destroy claude-review
 - Session persistence and cleanup commands are planned
 
 ### **Command Structure**
-- Simple commands: `shards start test "echo hello"`
-- Complex commands: `shards start kiro "kiro-cli chat --model gpt-4"`
-- Commands with flags: `shards start debug "node --inspect app.js"`
+- Simple commands: `shards create test --agent claude`
+- Different agents: `shards create kiro-task --agent kiro`
+- Custom branches: `shards create feature-auth --agent gemini`
 
 ## Troubleshooting
 
@@ -118,14 +118,11 @@ shards destroy claude-review
 
 ### **Recovery Commands**
 ```bash
-# Clean up all orphaned sessions
-shards cleanup
-
 # Check what's actually running
 shards list
 
-# Get detailed info about a problematic shard
-shards info <shard-name>
+# Clean up when destroy is implemented
+shards destroy <branch-name>
 ```
 
 ## Requirements
