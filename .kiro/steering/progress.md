@@ -81,14 +81,17 @@
 - ✅ CLI framework with clap
 - ✅ Git worktree management
 - ✅ Cross-platform terminal launching
-- ✅ Session registry and tracking
-- ✅ Basic lifecycle management
+- ✅ Vertical slice architecture implementation
+- ✅ Structured logging with tracing
+- ✅ Feature-specific error handling
+- ✅ Handler/Operations pattern
 - ✅ Documentation and project structure
 
 ### **In Progress**
-- 🚧 None currently
+- 🚧 File-based session persistence (Ralph PRD created)
 
 ### **Planned**
+- 📋 Session list and destroy commands (depends on persistence)
 - 📋 Process monitoring and health checks
 - 📋 PTY output parsing and event extraction
 - 📋 GPUI native frontend
