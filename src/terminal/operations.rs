@@ -2,7 +2,9 @@ use crate::terminal::{errors::TerminalError, types::*};
 use std::path::Path;
 
 pub fn detect_terminal() -> Result<TerminalType, TerminalError> {
-    if app_exists_macos("iTerm") {
+    if command_exists("ghostty") {
+        Ok(TerminalType::Ghostty)
+    } else if app_exists_macos("iTerm") {
         Ok(TerminalType::ITerm)
     } else if app_exists_macos("Terminal") {
         Ok(TerminalType::TerminalApp)
@@ -29,6 +31,22 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
     );
 
     match config.terminal_type {
+        TerminalType::Ghostty => {
+            // Use Fish shell to work around Ghostty's -e parsing issues
+            let fish_command = format!(
+                "cd {} && {}",
+                shell_escape(&config.working_directory.display().to_string()),
+                config.command
+            );
+            
+            Ok(vec![
+                "ghostty".to_string(),
+                "-e".to_string(),
+                "fish".to_string(),
+                "-c".to_string(),
+                fish_command,
+            ])
+        }
         TerminalType::ITerm => Ok(vec![
             "osascript".to_string(),
             "-e".to_string(),
@@ -118,6 +136,25 @@ mod tests {
     fn test_detect_terminal() {
         // This test depends on the system, so we just ensure it doesn't panic
         let _result = detect_terminal();
+    }
+
+    #[test]
+    fn test_build_spawn_command_ghostty() {
+        let config = SpawnConfig::new(
+            TerminalType::Ghostty,
+            std::env::current_dir().unwrap(),
+            "kiro-cli chat".to_string(),
+        );
+
+        let result = build_spawn_command(&config);
+        assert!(result.is_ok());
+
+        let command = result.unwrap();
+        assert_eq!(command[0], "ghostty");
+        assert_eq!(command[1], "-e");
+        assert_eq!(command[2], "fish");
+        assert_eq!(command[3], "-c");
+        assert!(command[4].contains("kiro-cli chat"));
     }
 
     #[test]
