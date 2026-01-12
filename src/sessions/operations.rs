@@ -111,16 +111,20 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<(Vec<Session>, us
                     match serde_json::from_str::<Session>(&content) {
                         Ok(session) => {
                             // Validate session structure
-                            if validate_session_structure(&session) {
-                                sessions.push(session);
-                            } else {
-                                skipped_count += 1;
-                                tracing::warn!(
-                                    event = "session.load_invalid_structure",
-                                    file = %path.display(),
-                                    worktree_path = %session.worktree_path.display(),
-                                    message = "Session file has invalid structure or worktree path doesn't exist, skipping"
-                                );
+                            match validate_session_structure(&session) {
+                                Ok(()) => {
+                                    sessions.push(session);
+                                }
+                                Err(validation_error) => {
+                                    skipped_count += 1;
+                                    tracing::warn!(
+                                        event = "session.load_invalid_structure",
+                                        file = %path.display(),
+                                        worktree_path = %session.worktree_path.display(),
+                                        validation_error = validation_error,
+                                        message = "Session file has invalid structure, skipping"
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -150,15 +154,30 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<(Vec<Session>, us
     Ok((sessions, skipped_count))
 }
 
-fn validate_session_structure(session: &Session) -> bool {
+fn validate_session_structure(session: &Session) -> Result<(), String> {
     // Validate required fields are not empty
-    !session.id.trim().is_empty()
-        && !session.project_id.trim().is_empty()
-        && !session.branch.trim().is_empty()
-        && !session.agent.trim().is_empty()
-        && !session.created_at.trim().is_empty()
-        && session.worktree_path.as_os_str().len() > 0
-        && session.worktree_path.exists() // Check if worktree path actually exists on disk
+    if session.id.trim().is_empty() {
+        return Err("session ID is empty".to_string());
+    }
+    if session.project_id.trim().is_empty() {
+        return Err("project ID is empty".to_string());
+    }
+    if session.branch.trim().is_empty() {
+        return Err("branch name is empty".to_string());
+    }
+    if session.agent.trim().is_empty() {
+        return Err("agent name is empty".to_string());
+    }
+    if session.created_at.trim().is_empty() {
+        return Err("created_at timestamp is empty".to_string());
+    }
+    if session.worktree_path.as_os_str().len() == 0 {
+        return Err("worktree path is empty".to_string());
+    }
+    if !session.worktree_path.exists() {
+        return Err(format!("worktree path does not exist: {}", session.worktree_path.display()));
+    }
+    Ok(())
 }
 
 pub fn find_session_by_name(sessions_dir: &Path, name: &str) -> Result<Option<Session>, SessionError> {
@@ -656,7 +675,7 @@ mod tests {
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
-        assert!(validate_session_structure(&valid_session));
+        assert!(validate_session_structure(&valid_session).is_ok());
 
         // Invalid session - empty id
         let invalid_session = Session {
@@ -668,7 +687,9 @@ mod tests {
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
-        assert!(!validate_session_structure(&invalid_session));
+        let result = validate_session_structure(&invalid_session);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "session ID is empty");
 
         // Invalid session - empty worktree path
         let invalid_session2 = Session {
@@ -680,7 +701,9 @@ mod tests {
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
-        assert!(!validate_session_structure(&invalid_session2));
+        let result2 = validate_session_structure(&invalid_session2);
+        assert!(result2.is_err());
+        assert_eq!(result2.unwrap_err(), "worktree path is empty");
 
         // Invalid session - non-existing worktree path
         let nonexistent_path = temp_dir.join("nonexistent");
@@ -688,15 +711,16 @@ mod tests {
             id: "test/branch".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
-            worktree_path: nonexistent_path,
+            worktree_path: nonexistent_path.clone(),
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
-        assert!(!validate_session_structure(&invalid_session3));
+        let result3 = validate_session_structure(&invalid_session3);
+        assert!(result3.is_err());
+        assert!(result3.unwrap_err().contains("worktree path does not exist"));
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
-        assert!(!validate_session_structure(&invalid_session2));
     }
 }

@@ -81,3 +81,12 @@ Feature: pr1-code-review-fixes
   - Using temporary directories and environment variables allows isolated testing
   - Testing session persistence verifies the primary user journey works end-to-end
 ---
+## 2026-01-12 - US-009
+- Fixed TOCTOU race condition by using create_dir_all unconditionally
+- Removed check-then-create pattern for thread safety
+- Files changed: src/sessions/operations.rs
+- **Learnings:**
+  - TOCTOU race conditions occur when checking state before acting on it
+  - create_dir_all is idempotent and thread-safe, making it perfect for this use case
+  - Removing unnecessary existence checks simplifies code and improves safety
+---
