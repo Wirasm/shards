@@ -98,7 +98,7 @@
         "tests pass"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Important issue in src/git/handler.rs:207-233"
     },
     {
