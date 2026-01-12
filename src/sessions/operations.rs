@@ -119,7 +119,8 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<(Vec<Session>, us
                                 tracing::warn!(
                                     event = "session.load_invalid_structure",
                                     file = %path.display(),
-                                    message = "Session file has invalid structure, skipping"
+                                    worktree_path = %session.worktree_path.display(),
+                                    message = "Session file has invalid structure or worktree path doesn't exist, skipping"
                                 );
                             }
                         }
@@ -158,6 +159,7 @@ fn validate_session_structure(session: &Session) -> bool {
         && !session.agent.trim().is_empty()
         && !session.created_at.trim().is_empty()
         && session.worktree_path.as_os_str().len() > 0
+        && session.worktree_path.exists() // Check if worktree path actually exists on disk
 }
 
 pub fn find_session_by_name(sessions_dir: &Path, name: &str) -> Result<Option<Session>, SessionError> {
@@ -288,11 +290,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/branch".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -323,11 +329,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/atomic".to_string(),
             project_id: "test".to_string(),
             branch: "atomic".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -357,11 +367,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/atomic-behavior".to_string(),
             project_id: "test".to_string(),
             branch: "atomic-behavior".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -397,11 +411,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/cleanup".to_string(),
             project_id: "test".to_string(),
             branch: "cleanup".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -437,12 +455,17 @@ mod tests {
         assert_eq!(sessions.len(), 0);
         assert_eq!(skipped, 0);
 
-        // Create test sessions
+        // Create test sessions with existing worktree paths
+        let worktree1 = temp_dir.join("worktree1");
+        let worktree2 = temp_dir.join("worktree2");
+        std::fs::create_dir_all(&worktree1).unwrap();
+        std::fs::create_dir_all(&worktree2).unwrap();
+
         let session1 = Session {
             id: "test/branch1".to_string(),
             project_id: "test".to_string(),
             branch: "branch1".to_string(),
-            worktree_path: PathBuf::from("/tmp/test1"),
+            worktree_path: worktree1,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -452,7 +475,7 @@ mod tests {
             id: "test/branch2".to_string(),
             project_id: "test".to_string(),
             branch: "branch2".to_string(),
-            worktree_path: PathBuf::from("/tmp/test2"),
+            worktree_path: worktree2,
             agent: "kiro".to_string(),
             status: SessionStatus::Stopped,
             created_at: "2024-01-02T00:00:00Z".to_string(),
@@ -497,11 +520,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/feature-branch".to_string(),
             project_id: "test".to_string(),
             branch: "feature-branch".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -532,11 +559,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
+        // Create worktree directory
+        let worktree_path = temp_dir.join("worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let session = Session {
             id: "test/branch".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -568,12 +599,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        // Create a valid session
+        // Create a valid session with existing worktree path
+        let worktree_path = temp_dir.join("valid_worktree");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
         let valid_session = Session {
             id: "test/valid".to_string(),
             project_id: "test".to_string(),
             branch: "valid".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: worktree_path,
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -601,13 +635,19 @@ mod tests {
     #[test]
     fn test_validate_session_structure() {
         use std::path::PathBuf;
+        use std::env;
 
-        // Valid session
+        // Create a temporary directory that exists
+        let temp_dir = env::temp_dir().join("shards_test_validation");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Valid session with existing worktree path
         let valid_session = Session {
             id: "test/branch".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: temp_dir.clone(),
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -619,7 +659,7 @@ mod tests {
             id: "".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
-            worktree_path: PathBuf::from("/tmp/test"),
+            worktree_path: temp_dir.clone(),
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -636,6 +676,23 @@ mod tests {
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         };
+        assert!(!validate_session_structure(&invalid_session2));
+
+        // Invalid session - non-existing worktree path
+        let nonexistent_path = temp_dir.join("nonexistent");
+        let invalid_session3 = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: nonexistent_path,
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        assert!(!validate_session_structure(&invalid_session3));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
         assert!(!validate_session_structure(&invalid_session2));
     }
 }

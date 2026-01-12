@@ -36,3 +36,12 @@ Feature: pr1-code-review-fixes
   - Testing atomic behavior requires verifying no partial writes occur
   - Test isolation important when dealing with filesystem operations
 ---
+## 2026-01-12 - US-004
+- Added temp file cleanup on atomic write failure in save_session_to_file
+- Enhanced error handling to clean up orphaned temp files
+- Files changed: src/sessions/operations.rs
+- **Learnings:**
+  - Atomic operations need cleanup on all failure paths
+  - Using explicit error handling instead of ? operator allows cleanup
+  - Testing failure scenarios requires creating specific failure conditions
+---
