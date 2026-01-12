@@ -10,3 +10,11 @@ Feature: pr1-code-review-fixes
 - src/sessions/operations.rs - Session persistence logic
 - src/sessions/handler.rs - Session orchestration
 ---
+## 2026-01-12 - US-001
+- Implemented warning log for state inconsistency in remove_worktree_by_path
+- Files changed: src/git/handler.rs
+- **Learnings:**
+  - Added warn import to tracing module
+  - Silent failures in cleanup operations can hide important state inconsistencies
+  - Proper logging helps users understand when system state is inconsistent
+---

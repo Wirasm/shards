@@ -77,12 +77,13 @@ pub fn save_session_to_file(session: &Session, sessions_dir: &Path) -> Result<()
     Ok(())
 }
 
-pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, SessionError> {
+pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<(Vec<Session>, usize), SessionError> {
     let mut sessions = Vec::new();
+    let mut skipped_count = 0;
     
     // Return empty list if sessions directory doesn't exist
     if !sessions_dir.exists() {
-        return Ok(sessions);
+        return Ok((sessions, skipped_count));
     }
     
     let entries = fs::read_dir(sessions_dir)
@@ -102,6 +103,7 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, Ses
                             if validate_session_structure(&session) {
                                 sessions.push(session);
                             } else {
+                                skipped_count += 1;
                                 tracing::warn!(
                                     event = "session.load_invalid_structure",
                                     file = %path.display(),
@@ -110,6 +112,7 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, Ses
                             }
                         }
                         Err(e) => {
+                            skipped_count += 1;
                             tracing::warn!(
                                 event = "session.load_invalid_json",
                                 file = %path.display(),
@@ -120,6 +123,7 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, Ses
                     }
                 }
                 Err(e) => {
+                    skipped_count += 1;
                     tracing::warn!(
                         event = "session.load_read_error",
                         file = %path.display(),
@@ -131,7 +135,7 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<Vec<Session>, Ses
         }
     }
     
-    Ok(sessions)
+    Ok((sessions, skipped_count))
 }
 
 fn validate_session_structure(session: &Session) -> bool {
@@ -145,7 +149,7 @@ fn validate_session_structure(session: &Session) -> bool {
 }
 
 pub fn find_session_by_name(sessions_dir: &Path, name: &str) -> Result<Option<Session>, SessionError> {
-    let sessions = load_sessions_from_files(sessions_dir)?;
+    let (sessions, _) = load_sessions_from_files(sessions_dir)?;
     
     // Find session by branch name (the "name" parameter refers to branch name)
     for session in sessions {
@@ -308,8 +312,9 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         // Test empty directory
-        let sessions = load_sessions_from_files(&temp_dir).unwrap();
+        let (sessions, skipped) = load_sessions_from_files(&temp_dir).unwrap();
         assert_eq!(sessions.len(), 0);
+        assert_eq!(skipped, 0);
 
         // Create test sessions
         let session1 = Session {
@@ -337,8 +342,9 @@ mod tests {
         save_session_to_file(&session2, &temp_dir).unwrap();
 
         // Load sessions
-        let loaded_sessions = load_sessions_from_files(&temp_dir).unwrap();
+        let (loaded_sessions, skipped) = load_sessions_from_files(&temp_dir).unwrap();
         assert_eq!(loaded_sessions.len(), 2);
+        assert_eq!(skipped, 0);
 
         // Verify sessions (order might vary)
         let ids: Vec<String> = loaded_sessions.iter().map(|s| s.id.clone()).collect();
@@ -356,8 +362,9 @@ mod tests {
         let nonexistent_dir = env::temp_dir().join("shards_test_nonexistent");
         let _ = std::fs::remove_dir_all(&nonexistent_dir);
 
-        let sessions = load_sessions_from_files(&nonexistent_dir).unwrap();
+        let (sessions, skipped) = load_sessions_from_files(&nonexistent_dir).unwrap();
         assert_eq!(sessions.len(), 0);
+        assert_eq!(skipped, 0);
     }
 
     #[test]
@@ -461,9 +468,10 @@ mod tests {
         std::fs::write(&invalid_structure_file, r#"{"id": "", "project_id": "test"}"#).unwrap();
 
         // Load sessions - should only return the valid one
-        let sessions = load_sessions_from_files(&temp_dir).unwrap();
+        let (sessions, skipped) = load_sessions_from_files(&temp_dir).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "test/valid");
+        assert_eq!(skipped, 2); // invalid JSON + invalid structure
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);

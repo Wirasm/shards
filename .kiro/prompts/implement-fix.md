@@ -230,4 +230,4 @@ gh issue close [User's GitHub issue ID] --comment "Fixed and merged."
 - If additional issues are found during implementation, note them for separate GitHub issues and RCAs
 - Follow project coding standards exactly
 - Ensure all validation passes before declaring complete
-- The commit message `Fixes #$ARGUMENTS` will link the commit to the GitHub issue
+- The commit message `Fixes #[User's GitHub issue ID]` will link the commit to the GitHub issue

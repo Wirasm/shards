@@ -79,7 +79,15 @@ pub fn list_sessions() -> Result<Vec<Session>, SessionError> {
     info!(event = "session.list_started");
 
     let config = Config::new();
-    let sessions = operations::load_sessions_from_files(&config.sessions_dir())?;
+    let (sessions, skipped_count) = operations::load_sessions_from_files(&config.sessions_dir())?;
+
+    if skipped_count > 0 {
+        tracing::warn!(
+            event = "session.list_skipped_sessions",
+            skipped_count = skipped_count,
+            message = "Some session files were skipped due to errors"
+        );
+    }
 
     info!(event = "session.list_completed", count = sessions.len());
 
