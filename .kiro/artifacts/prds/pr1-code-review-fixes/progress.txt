@@ -55,3 +55,11 @@ Feature: pr1-code-review-fixes
   - Adding new validation requirements can break existing tests
   - Test data should reflect realistic scenarios (existing paths)
 ---
+## 2026-01-12 - US-006
+- Added warning log to remove_session_file when file doesn't exist
+- Files changed: src/sessions/operations.rs
+- **Learnings:**
+  - Silent success in file operations can hide state inconsistencies
+  - Adding tracing::warn import enables proper logging of edge cases
+  - Warning logs help users understand when system state is inconsistent
+---

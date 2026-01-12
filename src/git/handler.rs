@@ -227,10 +227,19 @@ pub fn remove_worktree_by_path(worktree_path: &Path) -> Result<(), GitError> {
         }
 
         let repo_path = repo_path.ok_or_else(|| GitError::OperationFailed {
-            message: "Could not find main repository for worktree".to_string(),
+            message: format!(
+                "Could not find main repository for worktree at {}. Searched up directory tree but no .git directory found.",
+                worktree_path.display()
+            ),
         })?;
 
-        Repository::open(repo_path).map_err(|e| GitError::Git2Error { source: e })?
+        Repository::open(repo_path).map_err(|e| GitError::OperationFailed {
+            message: format!(
+                "Found potential repository at {} but failed to open it: {}",
+                repo_path.display(),
+                e
+            ),
+        })?
     };
 
     // Find worktree by path
