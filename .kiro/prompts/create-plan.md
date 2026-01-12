@@ -1,10 +1,15 @@
 ---
 description: Create comprehensive feature implementation plan with codebase analysis and research
-argument-hint: <feature description>
+---
+
+## First Step: Get Feature Description
+
+Ask the user: "What feature would you like to create a plan for?"
+
 ---
 
 <objective>
-Transform "$ARGUMENTS" into a battle-tested implementation plan through systematic codebase exploration, pattern extraction, and strategic research.
+Transform "[User's feature description]" into a battle-tested implementation plan through systematic codebase exploration, pattern extraction, and strategic research.
 
 **Core Principle**: PLAN ONLY - no code written. Create a context-rich document that enables one-pass implementation success.
 

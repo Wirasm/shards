@@ -1,11 +1,16 @@
 ---
 description: Execute an implementation plan with rigorous validation loops
-argument-hint: <path/to/plan.md>
+---
+
+## First Step: Get Plan Path
+
+Ask the user: "What is the path to the plan file you want to implement?"
+
 ---
 
 # Implement Plan
 
-**Plan**: $ARGUMENTS
+**Plan**: [User's plan path]
 
 ---
 
@@ -24,7 +29,7 @@ Execute the plan end-to-end with rigorous self-validation. You are autonomous.
 ### 1.1 Load Plan File
 
 ```bash
-cat $ARGUMENTS
+cat [User's plan path]
 ```
 
 ### 1.2 Extract Key Sections
@@ -41,7 +46,7 @@ Locate and understand:
 
 **If plan not found:**
 ```
-Error: Plan not found at $ARGUMENTS
+Error: Plan not found at [User's plan path]
 
 Create a plan first: /archon:create-plan "feature description"
 ```
@@ -232,7 +237,7 @@ mkdir -p .archon/artifacts/reports
 ```markdown
 # Implementation Report
 
-**Plan**: `$ARGUMENTS`
+**Plan**: `[User's plan path]`
 **Source Issue**: #{number} (if applicable)
 **Branch**: `{branch-name}`
 **Date**: {YYYY-MM-DD}
@@ -321,7 +326,7 @@ Compare the original investigation's assessment with what actually happened:
 
 ```bash
 mkdir -p .archon/artifacts/plans/completed
-mv $ARGUMENTS .archon/artifacts/plans/completed/
+mv [User's plan path] .archon/artifacts/plans/completed/
 ```
 
 **PHASE_5_CHECKPOINT:**
@@ -335,7 +340,7 @@ mv $ARGUMENTS .archon/artifacts/plans/completed/
 ```markdown
 ## Implementation Complete
 
-**Plan**: `$ARGUMENTS`
+**Plan**: `[User's plan path]`
 **Source Issue**: #{number} (if applicable)
 **Branch**: `{branch-name}`
 **Status**: ✅ Complete

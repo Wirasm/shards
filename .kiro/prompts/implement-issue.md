@@ -1,11 +1,16 @@
 ---
 description: Implement a fix from investigation artifact - code changes, PR, and self-review
-argument-hint: <issue-number|artifact-path>
+---
+
+## First Step: Get Issue Input
+
+Ask the user: "Which issue should I implement? (issue number or artifact path)"
+
 ---
 
 # Implement Issue
 
-**Input**: $ARGUMENTS
+**Input**: [User's issue input]
 
 ---
 

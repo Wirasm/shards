@@ -1,11 +1,16 @@
 ---
 description: Investigate a GitHub issue or problem - analyze codebase, create plan, post to GitHub
-argument-hint: <issue-number|url|"description">
+---
+
+## First Step: Get Issue Input
+
+Ask the user: "What issue should I investigate? (issue number, URL, or description)"
+
 ---
 
 # Investigate Issue
 
-**Input**: $ARGUMENTS
+**Input**: [User's issue input]
 
 ---
 
