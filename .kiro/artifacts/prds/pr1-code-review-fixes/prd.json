@@ -112,7 +112,7 @@
         "tests pass"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Important missing test for src/sessions/handler.rs"
     },
     {

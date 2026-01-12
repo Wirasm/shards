@@ -58,10 +58,8 @@ pub fn validate_branch_name(branch: &str) -> Result<String, SessionError> {
 }
 
 pub fn ensure_sessions_directory(sessions_dir: &Path) -> Result<(), SessionError> {
-    if !sessions_dir.exists() {
-        fs::create_dir_all(sessions_dir)
-            .map_err(|e| SessionError::IoError { source: e })?;
-    }
+    fs::create_dir_all(sessions_dir)
+        .map_err(|e| SessionError::IoError { source: e })?;
     Ok(())
 }
 
