@@ -10,6 +10,7 @@ pub struct Session {
     pub agent: String,
     pub status: SessionStatus,
     pub created_at: String,
+    pub process_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +61,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         assert_eq!(session.branch, "branch");

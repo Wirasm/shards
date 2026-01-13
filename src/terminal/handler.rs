@@ -53,21 +53,26 @@ pub fn spawn_terminal(
         cmd.args(&spawn_command[1..]);
     }
 
-    let _child = cmd.spawn().map_err(|e| TerminalError::SpawnFailed {
+    let child = cmd.spawn().map_err(|e| TerminalError::SpawnFailed {
         message: format!("Failed to execute {}: {}", spawn_command[0], e),
     })?;
+
+    // Capture PID before dropping Child
+    let process_id = Some(child.id());
 
     let result = SpawnResult::new(
         terminal_type.clone(),
         command.to_string(),
         working_directory.to_path_buf(),
+        process_id,
     );
 
     info!(
         event = "terminal.spawn_completed",
         terminal_type = %terminal_type,
         working_directory = %working_directory.display(),
-        command = command
+        command = command,
+        process_id = process_id
     );
 
     Ok(result)

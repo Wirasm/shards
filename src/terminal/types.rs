@@ -18,6 +18,7 @@ pub struct SpawnResult {
     pub terminal_type: TerminalType,
     pub command_executed: String,
     pub working_directory: PathBuf,
+    pub process_id: Option<u32>,
 }
 
 impl SpawnConfig {
@@ -35,11 +36,13 @@ impl SpawnResult {
         terminal_type: TerminalType,
         command_executed: String,
         working_directory: PathBuf,
+        process_id: Option<u32>,
     ) -> Self {
         Self {
             terminal_type,
             command_executed,
             working_directory,
+            process_id,
         }
     }
 }
@@ -82,6 +85,7 @@ mod tests {
             TerminalType::ITerm,
             "cc".to_string(),
             PathBuf::from("/path/to/worktree"),
+            None,
         );
 
         assert_eq!(result.terminal_type, TerminalType::ITerm);

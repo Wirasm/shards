@@ -55,6 +55,16 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("status")
+                .about("Show detailed status of a shard")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of the shard to check")
+                        .required(true)
+                        .index(1)
+                )
+        )
+        .subcommand(
             Command::new("cleanup")
                 .about("Clean up orphaned resources (branches, worktrees, sessions)")
         )

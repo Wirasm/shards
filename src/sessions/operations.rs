@@ -154,6 +154,14 @@ pub fn load_sessions_from_files(sessions_dir: &Path) -> Result<(Vec<Session>, us
     Ok((sessions, skipped_count))
 }
 
+pub fn load_session_from_file(name: &str, sessions_dir: &Path) -> Result<Session, SessionError> {
+    // Find session by branch name
+    let session = find_session_by_name(sessions_dir, name)?
+        .ok_or_else(|| SessionError::NotFound { name: name.to_string() })?;
+    
+    Ok(session)
+}
+
 fn validate_session_structure(session: &Session) -> Result<(), String> {
     // Validate required fields are not empty
     if session.id.trim().is_empty() {
@@ -325,6 +333,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Save session
@@ -364,6 +373,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Save session
@@ -402,6 +412,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         let session_file = temp_dir.join("test_atomic-behavior.json");
@@ -446,6 +457,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Create a directory where the final file should be to force rename failure
@@ -492,6 +504,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         let session2 = Session {
@@ -502,6 +515,7 @@ mod tests {
             agent: "kiro".to_string(),
             status: SessionStatus::Stopped,
             created_at: "2024-01-02T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Save sessions
@@ -555,6 +569,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Save session
@@ -594,6 +609,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
 
         // Save session
@@ -634,6 +650,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
         save_session_to_file(&valid_session, &temp_dir).unwrap();
 
@@ -674,6 +691,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
         assert!(validate_session_structure(&valid_session).is_ok());
 
@@ -686,6 +704,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
         let result = validate_session_structure(&invalid_session);
         assert!(result.is_err());
@@ -700,6 +719,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
         let result2 = validate_session_structure(&invalid_session2);
         assert!(result2.is_err());
@@ -715,6 +735,7 @@ mod tests {
             agent: "claude".to_string(),
             status: SessionStatus::Active,
             created_at: "2024-01-01T00:00:00Z".to_string(),
+            process_id: None,
         };
         let result3 = validate_session_structure(&invalid_session3);
         assert!(result3.is_err());

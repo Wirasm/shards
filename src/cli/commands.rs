@@ -4,6 +4,7 @@ use tracing::{error, info};
 use crate::cleanup;
 use crate::core::events;
 use crate::core::config::ShardsConfig;
+use crate::process;
 use crate::sessions::{handler as session_handler, types::CreateSessionRequest};
 
 pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
@@ -13,6 +14,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("create", sub_matches)) => handle_create_command(sub_matches),
         Some(("list", _)) => handle_list_command(),
         Some(("destroy", sub_matches)) => handle_destroy_command(sub_matches),
+        Some(("status", sub_matches)) => handle_status_command(sub_matches),
         Some(("cleanup", _)) => handle_cleanup_command(),
         _ => {
             error!(event = "cli.command_unknown");
@@ -90,21 +92,32 @@ fn handle_list_command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("No active shards found.");
             } else {
                 println!("Active shards:");
-                println!("┌──────────────────┬─────────┬─────────┬─────────────────────┐");
-                println!("│ Branch           │ Agent   │ Status  │ Created             │");
-                println!("├──────────────────┼─────────┼─────────┼─────────────────────┤");
+                println!("┌──────────────────┬─────────┬─────────┬─────────────────────┬─────────────┐");
+                println!("│ Branch           │ Agent   │ Status  │ Created             │ Process     │");
+                println!("├──────────────────┼─────────┼─────────┼─────────────────────┼─────────────┤");
 
                 for session in &sessions {
+                    let process_status = if let Some(pid) = session.process_id {
+                        match process::is_process_running(pid) {
+                            Ok(true) => format!("Running({})", pid),
+                            Ok(false) => format!("Stopped({})", pid),
+                            Err(_) => format!("Error({})", pid),
+                        }
+                    } else {
+                        "No PID".to_string()
+                    };
+
                     println!(
-                        "│ {:<16} │ {:<7} │ {:<7} │ {:<19} │",
+                        "│ {:<16} │ {:<7} │ {:<7} │ {:<19} │ {:<11} │",
                         truncate(&session.branch, 16),
                         truncate(&session.agent, 7),
                         format!("{:?}", session.status).to_lowercase(),
-                        truncate(&session.created_at, 19)
+                        truncate(&session.created_at, 19),
+                        truncate(&process_status, 11)
                     );
                 }
 
-                println!("└──────────────────┴─────────┴─────────┴─────────────────────┘");
+                println!("└──────────────────┴─────────┴─────────┴─────────────────────┴─────────────┘");
             }
 
             info!(event = "cli.list_completed", count = sessions.len());
@@ -158,6 +171,69 @@ fn truncate(s: &str, max_len: usize) -> String {
         format!("{:<width$}", s, width = max_len)
     } else {
         format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
+fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches.get_one::<String>("branch").unwrap();
+
+    info!(event = "cli.status_started", branch = branch);
+
+    match session_handler::get_session(branch) {
+        Ok(session) => {
+            println!("📊 Shard Status: {}", branch);
+            println!("┌─────────────────────────────────────────────────────────────┐");
+            println!("│ Branch:      {:<47} │", session.branch);
+            println!("│ Agent:       {:<47} │", session.agent);
+            println!("│ Status:      {:<47} │", format!("{:?}", session.status).to_lowercase());
+            println!("│ Created:     {:<47} │", session.created_at);
+            println!("│ Worktree:    {:<47} │", session.worktree_path.display());
+            
+            // Check process status if PID is available
+            if let Some(pid) = session.process_id {
+                match process::is_process_running(pid) {
+                    Ok(true) => {
+                        println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+                        
+                        // Try to get process info
+                        if let Ok(info) = process::get_process_info(pid) {
+                            println!("│ Process Name: {:<46} │", info.name);
+                            println!("│ Process Status: {:<44} │", info.status);
+                        }
+                    }
+                    Ok(false) => {
+                        println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
+                    }
+                    Err(e) => {
+                        println!("│ Process:     {:<47} │", format!("Error checking PID {}: {}", pid, e));
+                    }
+                }
+            } else {
+                println!("│ Process:     {:<47} │", "No PID tracked");
+            }
+            
+            println!("└─────────────────────────────────────────────────────────────┘");
+
+            info!(
+                event = "cli.status_completed",
+                branch = branch,
+                process_id = session.process_id
+            );
+
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to get status for shard '{}': {}", branch, e);
+
+            error!(
+                event = "cli.status_failed",
+                branch = branch,
+                error = %e
+            );
+
+            events::log_app_error(&e);
+            Err(e.into())
+        }
     }
 }
 

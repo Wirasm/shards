@@ -31,6 +31,15 @@ pub enum SessionError {
         #[from]
         source: std::io::Error,
     },
+
+    #[error("Process '{pid}' not found")]
+    ProcessNotFound { pid: u32 },
+
+    #[error("Failed to kill process '{pid}': {message}")]
+    ProcessKillFailed { pid: u32, message: String },
+
+    #[error("Access denied for process '{pid}'")]
+    ProcessAccessDenied { pid: u32 },
 }
 
 impl ShardsError for SessionError {
@@ -43,6 +52,9 @@ impl ShardsError for SessionError {
             SessionError::GitError { .. } => "GIT_ERROR",
             SessionError::TerminalError { .. } => "TERMINAL_ERROR",
             SessionError::IoError { .. } => "IO_ERROR",
+            SessionError::ProcessNotFound { .. } => "PROCESS_NOT_FOUND",
+            SessionError::ProcessKillFailed { .. } => "PROCESS_KILL_FAILED",
+            SessionError::ProcessAccessDenied { .. } => "PROCESS_ACCESS_DENIED",
         }
     }
 

@@ -49,7 +49,7 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
     );
 
     // 5. Launch terminal (I/O)
-    let _spawn_result = terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config)
+    let spawn_result = terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config)
         .map_err(|e| SessionError::TerminalError { source: e })?;
 
     // 6. Create session record
@@ -61,6 +61,7 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         agent: validated.agent,
         status: SessionStatus::Active,
         created_at: chrono::Utc::now().to_rfc3339(),
+        process_id: spawn_result.process_id,
     };
 
     // 7. Save session to file
@@ -70,7 +71,8 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         event = "session.create_completed",
         session_id = session_id,
         branch = validated.name,
-        agent = session.agent
+        agent = session.agent,
+        process_id = session.process_id
     );
 
     Ok(session)
@@ -95,6 +97,21 @@ pub fn list_sessions() -> Result<Vec<Session>, SessionError> {
     Ok(sessions)
 }
 
+pub fn get_session(name: &str) -> Result<Session, SessionError> {
+    info!(event = "session.get_started", name = name);
+
+    let config = Config::new();
+    let session = operations::load_session_from_file(name, &config.sessions_dir())?;
+
+    info!(
+        event = "session.get_completed",
+        name = name,
+        session_id = session.id
+    );
+
+    Ok(session)
+}
+
 pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     info!(event = "session.destroy_started", name = name);
 
@@ -107,10 +124,35 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     info!(
         event = "session.destroy_found",
         session_id = session.id,
-        worktree_path = %session.worktree_path.display()
+        worktree_path = %session.worktree_path.display(),
+        process_id = session.process_id
     );
 
-    // 2. Remove git worktree
+    // 2. Kill process if PID is tracked
+    if let Some(pid) = session.process_id {
+        info!(event = "session.destroy_kill_started", pid = pid);
+        
+        match crate::process::kill_process(pid) {
+            Ok(()) => {
+                info!(event = "session.destroy_kill_completed", pid = pid);
+            }
+            Err(crate::process::ProcessError::NotFound { .. }) => {
+                // Process already dead, that's fine
+                info!(event = "session.destroy_kill_already_dead", pid = pid);
+            }
+            Err(e) => {
+                // Log error but continue with cleanup
+                tracing::warn!(
+                    event = "session.destroy_kill_failed",
+                    pid = pid,
+                    error = %e,
+                    message = "Failed to kill process, continuing with cleanup"
+                );
+            }
+        }
+    }
+
+    // 3. Remove git worktree
     git::handler::remove_worktree_by_path(&session.worktree_path)
         .map_err(|e| SessionError::GitError { source: e })?;
 
@@ -120,7 +162,7 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
         worktree_path = %session.worktree_path.display()
     );
 
-    // 3. Remove session file
+    // 4. Remove session file
     operations::remove_session_file(&config.sessions_dir(), &session.id)?;
 
     info!(
@@ -187,6 +229,7 @@ mod tests {
             agent: "test-agent".to_string(),
             status: SessionStatus::Active,
             created_at: chrono::Utc::now().to_rfc3339(),
+            process_id: None,
         };
 
         // Create worktree directory so validation passes
