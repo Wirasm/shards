@@ -182,6 +182,11 @@ pub fn cleanup_all() -> Result<CleanupSummary, CleanupError> {
 }
 
 fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, CleanupError> {
+    // Early return for empty list - no Git access needed
+    if branches.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let current_dir = std::env::current_dir().map_err(|e| CleanupError::IoError { source: e })?;
     let repo = Repository::discover(&current_dir).map_err(|_| CleanupError::NotInRepository)?;
 
@@ -204,15 +209,27 @@ fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, Cleanup
                         cleaned_branches.push(branch_name.clone());
                     }
                     Err(e) => {
-                        error!(
-                            event = "cleanup.branch_delete_failed",
-                            branch = branch_name,
-                            error = %e
-                        );
-                        return Err(CleanupError::CleanupFailed {
-                            name: branch_name.clone(),
-                            message: format!("Failed to delete branch: {}", e),
-                        });
+                        // Handle race conditions gracefully - another process might have deleted the branch
+                        let error_msg = e.to_string();
+                        if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                            info!(
+                                event = "cleanup.branch_delete_race_condition",
+                                branch = branch_name,
+                                message = "Branch was deleted by another process - considering as cleaned"
+                            );
+                            cleaned_branches.push(branch_name.clone());
+                        } else {
+                            error!(
+                                event = "cleanup.branch_delete_failed",
+                                branch = branch_name,
+                                error = %e,
+                                error_type = "permission_or_lock_error"
+                            );
+                            return Err(CleanupError::CleanupFailed {
+                                name: branch_name.clone(),
+                                message: format!("Failed to delete branch (not a race condition): {}", e),
+                            });
+                        }
                     }
                 }
             }
@@ -232,6 +249,11 @@ fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, Cleanup
 }
 
 fn cleanup_orphaned_worktrees(worktree_paths: &[std::path::PathBuf]) -> Result<Vec<std::path::PathBuf>, CleanupError> {
+    // Early return for empty list
+    if worktree_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut cleaned_worktrees = Vec::new();
 
     for worktree_path in worktree_paths {
@@ -266,6 +288,11 @@ fn cleanup_orphaned_worktrees(worktree_paths: &[std::path::PathBuf]) -> Result<V
 }
 
 fn cleanup_stale_sessions(session_ids: &[String]) -> Result<Vec<String>, CleanupError> {
+    // Early return for empty list
+    if session_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let config = Config::new();
     let mut cleaned_sessions = Vec::new();
 
@@ -324,5 +351,67 @@ mod tests {
         // This test verifies the NoOrphanedResources error case
         // In a clean repository, cleanup_all should return NoOrphanedResources
         // Note: This test may pass or fail depending on the actual repository state
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_branches_empty_list() {
+        let result = cleanup_orphaned_branches(&[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_worktrees_empty_list() {
+        let result = cleanup_orphaned_worktrees(&[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_stale_sessions_empty_list() {
+        let result = cleanup_stale_sessions(&[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_resources_empty_summary() {
+        let empty_summary = CleanupSummary::new();
+        let result = cleanup_orphaned_resources(&empty_summary);
+        assert!(result.is_ok());
+        let cleaned = result.unwrap();
+        assert_eq!(cleaned.total_cleaned, 0);
+        assert_eq!(cleaned.orphaned_branches.len(), 0);
+        assert_eq!(cleaned.orphaned_worktrees.len(), 0);
+        assert_eq!(cleaned.stale_sessions.len(), 0);
+    }
+
+    #[test]
+    fn test_cleanup_summary_operations() {
+        let mut summary = CleanupSummary::new();
+        assert_eq!(summary.total_cleaned, 0);
+
+        summary.add_branch("test-branch".to_string());
+        assert_eq!(summary.total_cleaned, 1);
+        assert_eq!(summary.orphaned_branches.len(), 1);
+        assert_eq!(summary.orphaned_branches[0], "test-branch");
+
+        summary.add_worktree(std::path::PathBuf::from("/tmp/test"));
+        assert_eq!(summary.total_cleaned, 2);
+        assert_eq!(summary.orphaned_worktrees.len(), 1);
+
+        summary.add_session("test-session".to_string());
+        assert_eq!(summary.total_cleaned, 3);
+        assert_eq!(summary.stale_sessions.len(), 1);
+        assert_eq!(summary.stale_sessions[0], "test-session");
+    }
+
+    #[test]
+    fn test_cleanup_summary_default() {
+        let summary = CleanupSummary::default();
+        assert_eq!(summary.total_cleaned, 0);
+        assert_eq!(summary.orphaned_branches.len(), 0);
+        assert_eq!(summary.orphaned_worktrees.len(), 0);
+        assert_eq!(summary.stale_sessions.len(), 0);
     }
 }

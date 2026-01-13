@@ -297,12 +297,24 @@ pub fn remove_worktree_by_path(worktree_path: &Path) -> Result<(), GitError> {
                                 );
                             }
                             Err(e) => {
-                                warn!(
-                                    event = "git.branch.delete_failed",
-                                    branch = branch_name,
-                                    worktree_path = %worktree_path.display(),
-                                    error = %e
-                                );
+                                // Handle potential race conditions where branch might be deleted concurrently
+                                let error_msg = e.to_string();
+                                if error_msg.contains("not found") || error_msg.contains("does not exist") {
+                                    debug!(
+                                        event = "git.branch.delete_race_condition",
+                                        branch = branch_name,
+                                        worktree_path = %worktree_path.display(),
+                                        message = "Branch was deleted by another process"
+                                    );
+                                } else {
+                                    warn!(
+                                        event = "git.branch.delete_failed",
+                                        branch = branch_name,
+                                        worktree_path = %worktree_path.display(),
+                                        error = %e,
+                                        error_type = "concurrent_operation_or_permission"
+                                    );
+                                }
                                 // Don't fail the whole operation if branch deletion fails
                             }
                         }
@@ -312,7 +324,8 @@ pub fn remove_worktree_by_path(worktree_path: &Path) -> Result<(), GitError> {
                             event = "git.branch.not_found_for_cleanup",
                             branch = branch_name,
                             worktree_path = %worktree_path.display(),
-                            error = %e
+                            error = %e,
+                            message = "Branch already deleted or never existed"
                         );
                         // Branch already gone or not found - that's fine
                     }
