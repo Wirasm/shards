@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
+fn default_port_start() -> u16 { 0 }
+fn default_port_end() -> u16 { 0 }
+fn default_port_count() -> u16 { 0 }
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -10,8 +14,11 @@ pub struct Session {
     pub agent: String,
     pub status: SessionStatus,
     pub created_at: String,
+    #[serde(default = "default_port_start")]
     pub port_range_start: u16,
+    #[serde(default = "default_port_end")]
     pub port_range_end: u16,
+    #[serde(default = "default_port_count")]
     pub port_count: u16,
 }
 

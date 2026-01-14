@@ -67,7 +67,10 @@ pub fn find_next_available_range(
     let mut current_port = base_port;
     
     for &(allocated_start, allocated_end) in &allocated_ranges {
-        let proposed_end = current_port + port_count - 1;
+        let proposed_end = current_port
+            .checked_add(port_count)
+            .and_then(|sum| sum.checked_sub(1))
+            .ok_or(SessionError::PortRangeExhausted)?;
         
         // Check if proposed range fits before this allocated range
         if proposed_end < allocated_start {
@@ -79,12 +82,12 @@ pub fn find_next_available_range(
     }
     
     // Check if we can allocate after all existing ranges
-    let proposed_end = current_port + port_count - 1;
-    if proposed_end >= current_port { // Check for overflow
-        Ok((current_port, proposed_end))
-    } else {
-        Err(SessionError::PortRangeExhausted)
-    }
+    let proposed_end = current_port
+        .checked_add(port_count)
+        .and_then(|sum| sum.checked_sub(1))
+        .ok_or(SessionError::PortRangeExhausted)?;
+    
+    Ok((current_port, proposed_end))
 }
 
 pub fn is_port_range_available(
@@ -947,6 +950,37 @@ mod tests {
         let result3 = validate_session_structure(&invalid_session3);
         assert!(result3.is_err());
         assert!(result3.unwrap_err().contains("worktree path does not exist"));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_port_allocation_near_max_boundary() {
+        use std::env;
+
+        // Create a temporary directory
+        let temp_dir = env::temp_dir().join("shards_test_overflow");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Test that requesting many ports near u16::MAX fails gracefully
+        let result = find_next_available_range(&[], 1000, 65000);
+        assert!(matches!(result, Err(SessionError::PortRangeExhausted)));
+
+        // Test edge case: maximum possible allocation from 65000
+        // Due to checked arithmetic (start + count - 1), max is 535 ports (65000-65534)
+        // Requesting 536 would require 65000 + 536 = 65536 which overflows
+        let result2 = find_next_available_range(&[], 535, 65000);
+        assert!(result2.is_ok());
+        if let Ok((start, end)) = result2 {
+            assert_eq!(start, 65000);
+            assert_eq!(end, 65534);
+        }
+
+        // Test overflow: 536 ports from 65000 would overflow
+        let result3 = find_next_available_range(&[], 536, 65000);
+        assert!(matches!(result3, Err(SessionError::PortRangeExhausted)));
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);

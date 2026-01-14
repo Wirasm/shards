@@ -1,4 +1,4 @@
-use tracing::info;
+use tracing::{info, error};
 
 use crate::core::config::{Config, ShardsConfig};
 use crate::git;
@@ -42,7 +42,16 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         &config.sessions_dir(),
         config.default_port_count,
         config.base_port_range,
-    )?;
+    ).map_err(|e| {
+        error!(
+            event = "session.port_allocation_failed",
+            session_id = %session_id,
+            requested_count = config.default_port_count,
+            base_port = config.base_port_range,
+            error = %e
+        );
+        e
+    })?;
 
     info!(
         event = "session.port_allocated",
