@@ -56,6 +56,7 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             println!("   Branch: {}", session.branch);
             println!("   Agent: {}", session.agent);
             println!("   Worktree: {}", session.worktree_path.display());
+            println!("   Port Range: {}-{}", session.port_range_start, session.port_range_end);
             println!("   Status: {:?}", session.status);
 
             info!(
@@ -90,21 +91,23 @@ fn handle_list_command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("No active shards found.");
             } else {
                 println!("Active shards:");
-                println!("┌──────────────────┬─────────┬─────────┬─────────────────────┐");
-                println!("│ Branch           │ Agent   │ Status  │ Created             │");
-                println!("├──────────────────┼─────────┼─────────┼─────────────────────┤");
+                println!("┌──────────────────┬─────────┬─────────┬─────────────────────┬─────────────┐");
+                println!("│ Branch           │ Agent   │ Status  │ Created             │ Port Range  │");
+                println!("├──────────────────┼─────────┼─────────┼─────────────────────┼─────────────┤");
 
                 for session in &sessions {
+                    let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
                     println!(
-                        "│ {:<16} │ {:<7} │ {:<7} │ {:<19} │",
+                        "│ {:<16} │ {:<7} │ {:<7} │ {:<19} │ {:<11} │",
                         truncate(&session.branch, 16),
                         truncate(&session.agent, 7),
                         format!("{:?}", session.status).to_lowercase(),
-                        truncate(&session.created_at, 19)
+                        truncate(&session.created_at, 19),
+                        truncate(&port_range, 11)
                     );
                 }
 
-                println!("└──────────────────┴─────────┴─────────┴─────────────────────┘");
+                println!("└──────────────────┴─────────┴─────────┴─────────────────────┴─────────────┘");
             }
 
             info!(event = "cli.list_completed", count = sessions.len());

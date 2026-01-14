@@ -47,6 +47,8 @@ use tracing;
 pub struct Config {
     pub shards_dir: PathBuf,
     pub log_level: String,
+    pub default_port_count: u16,
+    pub base_port_range: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -236,6 +238,20 @@ impl Default for Config {
         Self {
             shards_dir: home_dir.join(".shards"),
             log_level: std::env::var("SHARDS_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+            default_port_count: std::env::var("SHARDS_DEFAULT_PORT_COUNT")
+                .ok()
+                .and_then(|s| s.parse::<u16>().ok())
+                .filter(|&count| count > 0 && count <= 1000)
+                .unwrap_or_else(|| {
+                    if let Ok(val) = std::env::var("SHARDS_DEFAULT_PORT_COUNT") {
+                        eprintln!("Warning: Invalid SHARDS_DEFAULT_PORT_COUNT '{}', using default 10", val);
+                    }
+                    10
+                }),
+            base_port_range: std::env::var("SHARDS_BASE_PORT_RANGE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3000),
         }
     }
 }

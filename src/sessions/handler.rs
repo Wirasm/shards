@@ -1,4 +1,4 @@
-use tracing::info;
+use tracing::{info, error};
 
 use crate::core::config::{Config, ShardsConfig};
 use crate::git;
@@ -37,6 +37,30 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
     // Ensure sessions directory exists
     operations::ensure_sessions_directory(&config.sessions_dir())?;
     
+    // 4. Allocate port range (I/O)
+    let (port_start, port_end) = operations::allocate_port_range(
+        &config.sessions_dir(),
+        config.default_port_count,
+        config.base_port_range,
+    ).map_err(|e| {
+        error!(
+            event = "session.port_allocation_failed",
+            session_id = %session_id,
+            requested_count = config.default_port_count,
+            base_port = config.base_port_range,
+            error = %e
+        );
+        e
+    })?;
+
+    info!(
+        event = "session.port_allocated",
+        session_id = session_id,
+        port_range_start = port_start,
+        port_range_end = port_end,
+        port_count = config.default_port_count
+    );
+    
     let base_config = Config::new();
     let worktree = git::handler::create_worktree(&base_config.shards_dir, &project, &validated.name, Some(shards_config))
         .map_err(|e| SessionError::GitError { source: e })?;
@@ -61,6 +85,9 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         agent: validated.agent,
         status: SessionStatus::Active,
         created_at: chrono::Utc::now().to_rfc3339(),
+        port_range_start: port_start,
+        port_range_end: port_end,
+        port_count: config.default_port_count,
     };
 
     // 7. Save session to file
@@ -107,7 +134,9 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     info!(
         event = "session.destroy_found",
         session_id = session.id,
-        worktree_path = %session.worktree_path.display()
+        worktree_path = %session.worktree_path.display(),
+        port_range_start = session.port_range_start,
+        port_range_end = session.port_range_end
     );
 
     // 2. Remove git worktree
@@ -120,8 +149,15 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
         worktree_path = %session.worktree_path.display()
     );
 
-    // 3. Remove session file
+    // 3. Remove session file (automatically frees port range)
     operations::remove_session_file(&config.sessions_dir(), &session.id)?;
+
+    info!(
+        event = "session.port_deallocated",
+        session_id = session.id,
+        port_range_start = session.port_range_start,
+        port_range_end = session.port_range_end
+    );
 
     info!(
         event = "session.destroy_completed",
@@ -187,6 +223,9 @@ mod tests {
             agent: "test-agent".to_string(),
             status: SessionStatus::Active,
             created_at: chrono::Utc::now().to_rfc3339(),
+            port_range_start: 3000,
+            port_range_end: 3009,
+            port_count: 10,
         };
 
         // Create worktree directory so validation passes

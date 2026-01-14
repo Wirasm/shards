@@ -14,6 +14,15 @@ pub enum SessionError {
     #[error("Invalid command: cannot be empty")]
     InvalidCommand,
 
+    #[error("Invalid port count: must be greater than 0")]
+    InvalidPortCount,
+
+    #[error("Port range exhausted: no available ports in the configured range")]
+    PortRangeExhausted,
+
+    #[error("Port allocation failed: {message}")]
+    PortAllocationFailed { message: String },
+
     #[error("Git operation failed: {source}")]
     GitError {
         #[from]
@@ -40,6 +49,9 @@ impl ShardsError for SessionError {
             SessionError::NotFound { .. } => "SESSION_NOT_FOUND",
             SessionError::InvalidName => "INVALID_SESSION_NAME",
             SessionError::InvalidCommand => "INVALID_COMMAND",
+            SessionError::InvalidPortCount => "INVALID_PORT_COUNT",
+            SessionError::PortRangeExhausted => "PORT_RANGE_EXHAUSTED",
+            SessionError::PortAllocationFailed { .. } => "PORT_ALLOCATION_FAILED",
             SessionError::GitError { .. } => "GIT_ERROR",
             SessionError::TerminalError { .. } => "TERMINAL_ERROR",
             SessionError::IoError { .. } => "IO_ERROR",
@@ -53,6 +65,9 @@ impl ShardsError for SessionError {
                 | SessionError::NotFound { .. }
                 | SessionError::InvalidName
                 | SessionError::InvalidCommand
+                | SessionError::InvalidPortCount
+                | SessionError::PortRangeExhausted
+                | SessionError::PortAllocationFailed { .. }
         )
     }
 }
