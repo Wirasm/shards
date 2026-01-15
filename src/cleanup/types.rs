@@ -1,11 +1,19 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResourceType {
     OrphanedBranch,
     OrphanedWorktree,
     StaleSession,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CleanupStrategy {
+    All,            // Clean everything (default)
+    NoPid,          // Only sessions with process_id: None
+    Stopped,        // Only sessions with stopped processes
+    OlderThan(u64), // Only sessions older than N days
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,7 +33,12 @@ pub struct CleanupSummary {
 }
 
 impl OrphanedResource {
-    pub fn new(resource_type: ResourceType, path: PathBuf, name: String, description: String) -> Self {
+    pub fn new(
+        resource_type: ResourceType,
+        path: PathBuf,
+        name: String,
+        description: String,
+    ) -> Self {
         Self {
             resource_type,
             path,

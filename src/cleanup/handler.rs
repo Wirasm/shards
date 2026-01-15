@@ -1,95 +1,104 @@
-use tracing::{error, info, warn};
 use git2::{BranchType, Repository};
+use tracing::{error, info, warn};
 
 use crate::cleanup::{errors::CleanupError, operations, types::*};
 use crate::core::config::Config;
 use crate::git;
 use crate::sessions;
 
-pub fn scan_for_orphans() -> Result<CleanupSummary, CleanupError> {
-    info!(event = "cleanup.scan_started");
+pub fn scan_for_orphans_with_strategy(
+    strategy: CleanupStrategy,
+) -> Result<CleanupSummary, CleanupError> {
+    info!(event = "cleanup.scan_started", strategy = ?strategy);
 
-    // Validate we're in a git repository
     operations::validate_cleanup_request()?;
 
     let current_dir = std::env::current_dir().map_err(|e| CleanupError::IoError { source: e })?;
     let repo = Repository::discover(&current_dir).map_err(|_| CleanupError::NotInRepository)?;
 
     let mut summary = CleanupSummary::new();
-
-    // Detect orphaned branches
-    match operations::detect_orphaned_branches(&repo) {
-        Ok(orphaned_branches) => {
-            info!(
-                event = "cleanup.scan_branches_completed",
-                count = orphaned_branches.len()
-            );
-            for branch in orphaned_branches {
-                summary.add_branch(branch);
-            }
-        }
-        Err(e) => {
-            error!(
-                event = "cleanup.scan_branches_failed",
-                error = %e
-            );
-            return Err(e);
-        }
-    }
-
-    // Detect orphaned worktrees
-    match operations::detect_orphaned_worktrees(&repo) {
-        Ok(orphaned_worktrees) => {
-            info!(
-                event = "cleanup.scan_worktrees_completed",
-                count = orphaned_worktrees.len()
-            );
-            for worktree_path in orphaned_worktrees {
-                summary.add_worktree(worktree_path);
-            }
-        }
-        Err(e) => {
-            error!(
-                event = "cleanup.scan_worktrees_failed",
-                error = %e
-            );
-            return Err(e);
-        }
-    }
-
-    // Detect stale sessions
     let config = Config::new();
-    match operations::detect_stale_sessions(&config.sessions_dir()) {
-        Ok(stale_sessions) => {
-            info!(
-                event = "cleanup.scan_sessions_completed",
-                count = stale_sessions.len()
-            );
-            for session_id in stale_sessions {
-                summary.add_session(session_id);
+
+    match strategy {
+        CleanupStrategy::All => {
+            // Detect all types of orphans (existing behavior)
+            match operations::detect_orphaned_branches(&repo) {
+                Ok(branches) => {
+                    for branch in branches {
+                        summary.add_branch(branch);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+
+            match operations::detect_orphaned_worktrees(&repo) {
+                Ok(worktrees) => {
+                    for worktree_path in worktrees {
+                        summary.add_worktree(worktree_path);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+
+            match operations::detect_stale_sessions(&config.sessions_dir()) {
+                Ok(sessions) => {
+                    for session_id in sessions {
+                        summary.add_session(session_id);
+                    }
+                }
+                Err(e) => return Err(e),
             }
         }
-        Err(e) => {
-            error!(
-                event = "cleanup.scan_sessions_failed",
-                error = %e
-            );
-            return Err(e);
+        CleanupStrategy::NoPid => {
+            // Only detect sessions without PID
+            match operations::detect_sessions_without_pid(&config.sessions_dir()) {
+                Ok(sessions) => {
+                    for session_id in sessions {
+                        summary.add_session(session_id);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        CleanupStrategy::Stopped => {
+            // Only detect sessions with stopped processes
+            match operations::detect_sessions_with_stopped_processes(&config.sessions_dir()) {
+                Ok(sessions) => {
+                    for session_id in sessions {
+                        summary.add_session(session_id);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        CleanupStrategy::OlderThan(days) => {
+            // Only detect old sessions
+            match operations::detect_old_sessions(&config.sessions_dir(), days) {
+                Ok(sessions) => {
+                    for session_id in sessions {
+                        summary.add_session(session_id);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
     info!(
         event = "cleanup.scan_completed",
-        total_orphaned = summary.total_cleaned,
-        branches = summary.orphaned_branches.len(),
-        worktrees = summary.orphaned_worktrees.len(),
-        sessions = summary.stale_sessions.len()
+        total_orphaned = summary.total_cleaned
     );
 
     Ok(summary)
 }
 
-pub fn cleanup_orphaned_resources(summary: &CleanupSummary) -> Result<CleanupSummary, CleanupError> {
+pub fn scan_for_orphans() -> Result<CleanupSummary, CleanupError> {
+    scan_for_orphans_with_strategy(CleanupStrategy::All)
+}
+
+pub fn cleanup_orphaned_resources(
+    summary: &CleanupSummary,
+) -> Result<CleanupSummary, CleanupError> {
     info!(
         event = "cleanup.cleanup_started",
         total_resources = summary.total_cleaned
@@ -159,18 +168,18 @@ pub fn cleanup_orphaned_resources(summary: &CleanupSummary) -> Result<CleanupSum
     Ok(cleaned_summary)
 }
 
-pub fn cleanup_all() -> Result<CleanupSummary, CleanupError> {
-    info!(event = "cleanup.cleanup_all_started");
+pub fn cleanup_all_with_strategy(
+    strategy: CleanupStrategy,
+) -> Result<CleanupSummary, CleanupError> {
+    info!(event = "cleanup.cleanup_all_started", strategy = ?strategy);
 
-    // First scan for orphaned resources
-    let scan_summary = scan_for_orphans()?;
+    let scan_summary = scan_for_orphans_with_strategy(strategy)?;
 
     if scan_summary.total_cleaned == 0 {
         info!(event = "cleanup.cleanup_all_no_resources");
         return Err(CleanupError::NoOrphanedResources);
     }
 
-    // Then clean them up
     let cleanup_summary = cleanup_orphaned_resources(&scan_summary)?;
 
     info!(
@@ -179,6 +188,10 @@ pub fn cleanup_all() -> Result<CleanupSummary, CleanupError> {
     );
 
     Ok(cleanup_summary)
+}
+
+pub fn cleanup_all() -> Result<CleanupSummary, CleanupError> {
+    cleanup_all_with_strategy(CleanupStrategy::All)
 }
 
 fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, CleanupError> {
@@ -227,7 +240,10 @@ fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, Cleanup
                             );
                             return Err(CleanupError::CleanupFailed {
                                 name: branch_name.clone(),
-                                message: format!("Failed to delete branch (not a race condition): {}", e),
+                                message: format!(
+                                    "Failed to delete branch (not a race condition): {}",
+                                    e
+                                ),
                             });
                         }
                     }
@@ -248,7 +264,9 @@ fn cleanup_orphaned_branches(branches: &[String]) -> Result<Vec<String>, Cleanup
     Ok(cleaned_branches)
 }
 
-fn cleanup_orphaned_worktrees(worktree_paths: &[std::path::PathBuf]) -> Result<Vec<std::path::PathBuf>, CleanupError> {
+fn cleanup_orphaned_worktrees(
+    worktree_paths: &[std::path::PathBuf],
+) -> Result<Vec<std::path::PathBuf>, CleanupError> {
     // Early return for empty list
     if worktree_paths.is_empty() {
         return Ok(Vec::new());

@@ -1,4 +1,4 @@
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 
 pub fn build_cli() -> Command {
     Command::new("shards")
@@ -67,6 +67,31 @@ pub fn build_cli() -> Command {
         .subcommand(
             Command::new("cleanup")
                 .about("Clean up orphaned resources (branches, worktrees, sessions)")
+                .arg(
+                    Arg::new("no-pid")
+                        .long("no-pid")
+                        .help("Clean only sessions without PID tracking")
+                        .action(ArgAction::SetTrue)
+                )
+                .arg(
+                    Arg::new("stopped")
+                        .long("stopped")
+                        .help("Clean only sessions with stopped processes")
+                        .action(ArgAction::SetTrue)
+                )
+                .arg(
+                    Arg::new("older-than")
+                        .long("older-than")
+                        .help("Clean sessions older than N days (e.g., 7)")
+                        .value_name("DAYS")
+                        .value_parser(clap::value_parser!(u64))
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Clean all orphaned resources (default)")
+                        .action(ArgAction::SetTrue)
+                )
         )
 }
 
