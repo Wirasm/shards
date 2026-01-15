@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 fn default_port_start() -> u16 { 0 }
 fn default_port_end() -> u16 { 0 }
 fn default_port_count() -> u16 { 0 }
+fn default_command() -> String { String::new() }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
@@ -37,6 +38,15 @@ pub struct Session {
     
     /// Process start time captured at spawn time for PID reuse protection
     pub process_start_time: Option<u64>,
+    
+    /// The full command that was executed to start the agent
+    /// 
+    /// This is the actual command passed to the terminal, e.g.,
+    /// "kiro-cli chat --trust-all-tools" or "claude-code"
+    /// 
+    /// Empty string for sessions created before this field was added.
+    #[serde(default = "default_command")]
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,10 +103,12 @@ mod tests {
             process_id: None,
             process_name: None,
             process_start_time: None,
+            command: "claude-code".to_string(),
         };
 
         assert_eq!(session.branch, "branch");
         assert_eq!(session.status, SessionStatus::Active);
+        assert_eq!(session.command, "claude-code");
     }
 
     #[test]

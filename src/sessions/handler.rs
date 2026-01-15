@@ -91,6 +91,7 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         process_id: spawn_result.process_id,
         process_name: spawn_result.process_name.clone(),
         process_start_time: spawn_result.process_start_time,
+        command: spawn_result.command_executed.clone(),
     };
 
     // 7. Save session to file
@@ -282,6 +283,7 @@ mod tests {
             process_id: None,
             process_name: None,
             process_start_time: None,
+            command: "test-command".to_string(),
         };
 
         // Create worktree directory so validation passes
