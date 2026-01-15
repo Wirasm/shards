@@ -52,7 +52,7 @@ For each agent, provide clear instructions including:
 
 ### Agents to Spawn
 
-**Always spawn these 4 core agents in parallel:**
+**Always spawn these 5 core agents in parallel:**
 
 1. **code-reviewer** - General code quality and guidelines
    ```
@@ -151,6 +151,28 @@ For each agent, provide clear instructions including:
    Return prioritized test recommendations.
    ```
 
+5. **doc-updater** - Documentation synchronization (ALWAYS SPAWN)
+   ```
+   Review scope: [PR #{number} | current diff | staged changes | branch diff]
+
+   Get changes with: [command]
+
+   Analyze code changes and check if documentation needs updates:
+   - Read all steering docs (.kiro/steering/*.md)
+   - Read .claude/skills/shards/SKILL.md
+   - Read CLAUDE.md and AGENTS.md (if they exist)
+   - Compare code changes against documentation claims
+   - Identify outdated information
+
+   For each documentation update needed, provide:
+   - Exact current text that's outdated
+   - Exact proposed replacement text
+   - Justification for the change
+   - Priority (critical/important/minor)
+
+   Return specific documentation updates with before/after text.
+   ```
+
 ---
 
 ## Phase 3: WAIT AND COLLECT
@@ -162,6 +184,7 @@ Wait for all spawned agents to complete and collect their reports.
 - [ ] comment-analyzer complete
 - [ ] error-hunter complete
 - [ ] type-analyzer complete
+- [ ] doc-updater complete
 - [ ] test-analyzer complete (if spawned)
 
 ---
@@ -182,7 +205,7 @@ Combine all agent findings into a comprehensive report. This SAME report will be
 
 **Scope**: [PR #X with title | Current Diff | Staged Changes | Branch Diff]
 **Date**: [YYYY-MM-DD HH:MM]
-**Reviewers**: code-reviewer, comment-analyzer, error-hunter, type-analyzer[, test-analyzer]
+**Reviewers**: code-reviewer, comment-analyzer, error-hunter, type-analyzer, doc-updater[, test-analyzer]
 
 ---
 
@@ -196,6 +219,7 @@ Combine all agent findings into a comprehensive report. This SAME report will be
 | Critical Issues | X |
 | Important Issues | X |
 | Suggestions | X |
+| Documentation Updates | X |
 
 **Recommendation**: [Detailed recommendation explaining the assessment]
 
@@ -328,6 +352,22 @@ Combine all agent findings into a comprehensive report. This SAME report will be
 
 ---
 
+### Documentation Synchronization (doc-updater)
+
+**Documentation Files Reviewed**: [list]
+
+**Documentation Status**: [UP-TO-DATE / NEEDS UPDATES / CRITICAL GAPS]
+
+**Updates Required**:
+- Critical: X
+- Important: X
+- Minor: X
+
+**Key Updates**:
+[Summary of most important documentation changes needed]
+
+---
+
 ### Test Coverage Analysis (test-analyzer)
 *(If applicable)*
 
@@ -337,6 +377,23 @@ Combine all agent findings into a comprehensive report. This SAME report will be
 [Detailed summary of test coverage]
 
 **Critical Gaps**: [list]
+
+---
+
+## Documentation Updates Required
+
+*(Include this section only if doc-updater found updates needed)*
+
+### Critical Documentation Updates
+1. **[Document Name]** - [Section]
+   - **Current**: [Outdated text]
+   - **Proposed**: [Updated text]
+   - **Reason**: [Why this matters]
+
+### Important Documentation Updates
+1. **[Document Name]** - [Section]
+   - **Update**: [Description of change]
+   - **Reason**: [Why this matters]
 
 ---
 
@@ -357,6 +414,7 @@ Combine all agent findings into a comprehensive report. This SAME report will be
 ### Should Do (Before Merge)
 1. [ ] [Specific action with file:line] - [brief reason]
 2. [ ] [Specific action with file:line] - [brief reason]
+3. [ ] Update documentation (see Documentation Updates section)
 
 ### Consider (Optional)
 1. [ ] [Specific action with file:line] - [brief reason]
