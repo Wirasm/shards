@@ -101,6 +101,16 @@ fn applescript_escape(s: &str) -> String {
         .replace('\r', "\\r")
 }
 
+/// Extract the executable name from a command string
+/// Examples: "kiro-cli chat" -> "kiro-cli", "claude-code" -> "claude-code"
+pub fn extract_command_name(command: &str) -> String {
+    command
+        .split_whitespace()
+        .next()
+        .unwrap_or(command)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +205,13 @@ mod tests {
         assert_eq!(applescript_escape("hello\"world"), "hello\\\"world");
         assert_eq!(applescript_escape("hello\\world"), "hello\\\\world");
         assert_eq!(applescript_escape("hello\nworld"), "hello\\nworld");
+    }
+
+    #[test]
+    fn test_extract_command_name() {
+        assert_eq!(extract_command_name("kiro-cli chat"), "kiro-cli");
+        assert_eq!(extract_command_name("claude-code"), "claude-code");
+        assert_eq!(extract_command_name("  cc  "), "cc");
+        assert_eq!(extract_command_name("echo hello world"), "echo");
     }
 }

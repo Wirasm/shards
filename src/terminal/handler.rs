@@ -53,24 +53,38 @@ pub fn spawn_terminal(
         cmd.args(&spawn_command[1..]);
     }
 
-    let child = cmd.spawn().map_err(|e| TerminalError::SpawnFailed {
+    let _child = cmd.spawn().map_err(|e| TerminalError::SpawnFailed {
         message: format!("Failed to execute {}: {}", spawn_command[0], e),
     })?;
 
-    let process_id = child.id();
+    // Wait briefly for terminal to spawn the agent process
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // Capture process metadata immediately for PID reuse protection
-    let (process_name, process_start_time) = if let Ok(info) = crate::process::get_process_info(process_id) {
-        (Some(info.name), Some(info.start_time))
-    } else {
-        (None, None)
-    };
+    // Extract agent command name for process search
+    let agent_name = operations::extract_command_name(command);
+
+    // Try to find the actual agent process
+    let (process_id, process_name, process_start_time) =
+        if let Ok(Some(info)) = crate::process::find_process_by_name(&agent_name, Some(command)) {
+            (
+                Some(info.pid.as_u32()),
+                Some(info.name),
+                Some(info.start_time),
+            )
+        } else {
+            debug!(
+                event = "terminal.agent_process_not_found",
+                agent_name = agent_name,
+                command = command
+            );
+            (None, None, None)
+        };
 
     let result = SpawnResult::new(
         terminal_type.clone(),
         command.to_string(),
         working_directory.to_path_buf(),
-        Some(process_id),
+        process_id,
         process_name.clone(),
         process_start_time,
     );
