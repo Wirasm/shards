@@ -37,6 +37,8 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("flags")
                         .long("flags")
+                        .num_args(1)
+                        .allow_hyphen_values(true)
                         .help("Additional flags for agent (overrides config)")
                 )
         )
@@ -147,5 +149,48 @@ mod tests {
             "invalid",
         ]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_create_with_flags_space_separated() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "shards",
+            "create",
+            "test-branch",
+            "--agent",
+            "kiro",
+            "--flags",
+            "--trust-all-tools",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("flags").unwrap(),
+            "--trust-all-tools"
+        );
+    }
+
+    #[test]
+    fn test_cli_create_with_flags_equals_syntax() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "shards",
+            "create",
+            "test-branch",
+            "--agent",
+            "kiro",
+            "--flags=--trust-all-tools",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("flags").unwrap(),
+            "--trust-all-tools"
+        );
     }
 }
