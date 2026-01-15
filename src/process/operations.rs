@@ -90,13 +90,19 @@ mod tests {
     #[test]
     fn test_get_process_info_with_invalid_pid() {
         let result = get_process_info(999999);
-        assert!(matches!(result, Err(ProcessError::NotFound { pid: 999999 })));
+        assert!(matches!(
+            result,
+            Err(ProcessError::NotFound { pid: 999999 })
+        ));
     }
 
     #[test]
     fn test_kill_process_with_invalid_pid() {
         let result = kill_process(999999, None, None);
-        assert!(matches!(result, Err(ProcessError::NotFound { pid: 999999 })));
+        assert!(matches!(
+            result,
+            Err(ProcessError::NotFound { pid: 999999 })
+        ));
     }
 
     #[test]

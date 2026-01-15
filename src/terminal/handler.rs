@@ -60,11 +60,12 @@ pub fn spawn_terminal(
     let process_id = child.id();
 
     // Capture process metadata immediately for PID reuse protection
-    let (process_name, process_start_time) = if let Ok(info) = crate::process::get_process_info(process_id) {
-        (Some(info.name), Some(info.start_time))
-    } else {
-        (None, None)
-    };
+    let (process_name, process_start_time) =
+        if let Ok(info) = crate::process::get_process_info(process_id) {
+            (Some(info.name), Some(info.start_time))
+        } else {
+            (None, None)
+        };
 
     let result = SpawnResult::new(
         terminal_type.clone(),

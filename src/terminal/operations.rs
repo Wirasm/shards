@@ -34,7 +34,9 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
             "-e".to_string(),
             format!(
                 r#"tell application "iTerm"
-                        create window with default profile
+                        if (count of windows) = 0 then
+                            create window with default profile
+                        end if
                         tell current session of current window
                             write text "{}"
                         end tell
