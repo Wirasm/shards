@@ -23,6 +23,35 @@ The current CLI spawns external terminal windows via AppleScript (macOS only), i
 
 Create a GPUI-based native application that embeds terminals directly using `alacritty_terminal` (following Zed's architecture). Each shard becomes a managed PTY with full read/write access. A "main session" terminal can query shard outputs, send prompts, and coordinate work—transforming Shards from a launcher into an orchestration platform.
 
+**Critical Design Principle: CLI-First Architecture**
+
+The GPUI UI is built **on top of** the existing CLI, not replacing it:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    shards (library crate - core)                    │
+│     sessions │ git │ process │ core │ cleanup │ files │ config     │
+└─────────────────────────────────────────────────────────────────────┘
+                    │                           │
+          ┌─────────┴─────────┐       ┌─────────┴─────────┐
+          ▼                   │       │                   ▼
+┌─────────────────────┐       │       │       ┌─────────────────────┐
+│   CLI Frontend      │       │       │       │   GPUI Frontend     │
+│  shards create/list │       │       │       │   shards ui         │
+│  (AppleScript term) │       │       │       │  (embedded PTY)     │
+└─────────────────────┘       │       │       └─────────────────────┘
+                              │       │
+                    SHARED: ~/.shards/sessions/*.json
+```
+
+**Benefits of CLI-First:**
+- CLI distributed standalone (minimal dependencies)
+- UI is optional enhancement, not requirement
+- Same session state shared between CLI and UI
+- Simpler UX option for terminal-native users
+- Easier testing and CI/CD integration
+- Feature-gated dependencies (UI adds ~50MB to binary)
+
 ## Metadata
 
 | Field            | Value                                                                    |
@@ -292,28 +321,80 @@ pub fn create_session(request: CreateSessionRequest, config: &ShardsConfig) -> R
 
 ## Files to Change
 
-| File                                   | Action | Justification                                 |
-| -------------------------------------- | ------ | --------------------------------------------- |
-| `src/ui/mod.rs`                        | CREATE | New UI module root                            |
-| `src/ui/app.rs`                        | CREATE | GPUI Application and window setup             |
-| `src/ui/views/mod.rs`                  | CREATE | View components module                        |
-| `src/ui/views/main_view.rs`            | CREATE | Main application view with layout             |
-| `src/ui/views/terminal_view.rs`        | CREATE | Single terminal rendering view                |
-| `src/ui/views/shard_tabs.rs`           | CREATE | Tab bar for shard switching                   |
-| `src/ui/views/status_bar.rs`           | CREATE | Bottom status bar                             |
-| `src/pty/mod.rs`                       | CREATE | PTY management module root                    |
-| `src/pty/types.rs`                     | CREATE | Pty, PtyHandle, OutputBuffer types            |
-| `src/pty/handler.rs`                   | CREATE | PTY creation, read, write operations          |
-| `src/pty/errors.rs`                    | CREATE | PtyError enum                                 |
-| `src/shard_manager/mod.rs`             | CREATE | Multi-shard orchestration                     |
-| `src/shard_manager/types.rs`           | CREATE | ManagedShard, ShardStatus types               |
-| `src/shard_manager/handler.rs`         | CREATE | create_shard, destroy_shard, list_shards      |
-| `src/core/config.rs`                   | UPDATE | Add UiConfig struct                           |
-| `src/sessions/types.rs`                | UPDATE | Add pty_handle field (runtime only)           |
-| `src/cli/app.rs`                       | UPDATE | Add `ui` subcommand                           |
-| `src/lib.rs`                           | UPDATE | Export new modules                            |
-| `src/main.rs`                          | UPDATE | Handle `ui` command to launch GPUI app        |
-| `Cargo.toml`                           | UPDATE | Add gpui, alacritty_terminal dependencies     |
+**Note**: All `src/ui/`, `src/pty/`, `src/shard_manager/` modules are feature-gated behind `#[cfg(feature = "ui")]`
+
+| File                                   | Action | Feature-Gated | Justification                           |
+| -------------------------------------- | ------ | ------------- | --------------------------------------- |
+| `src/ui/mod.rs`                        | CREATE | Yes           | New UI module root                      |
+| `src/ui/app.rs`                        | CREATE | Yes           | GPUI Application and window setup       |
+| `src/ui/views/mod.rs`                  | CREATE | Yes           | View components module                  |
+| `src/ui/views/main_view.rs`            | CREATE | Yes           | Main application view with layout       |
+| `src/ui/views/terminal_view.rs`        | CREATE | Yes           | Single terminal rendering view          |
+| `src/ui/views/shard_tabs.rs`           | CREATE | Yes           | Tab bar for shard switching             |
+| `src/ui/views/status_bar.rs`           | CREATE | Yes           | Bottom status bar                       |
+| `src/pty/mod.rs`                       | CREATE | Yes           | PTY management module root              |
+| `src/pty/types.rs`                     | CREATE | Yes           | Pty, PtyHandle, OutputBuffer types      |
+| `src/pty/handler.rs`                   | CREATE | Yes           | PTY creation, read, write operations    |
+| `src/pty/errors.rs`                    | CREATE | Yes           | PtyError enum                           |
+| `src/shard_manager/mod.rs`             | CREATE | Yes           | Multi-shard orchestration               |
+| `src/shard_manager/types.rs`           | CREATE | Yes           | ManagedShard, ShardStatus types         |
+| `src/shard_manager/handler.rs`         | CREATE | Yes           | create_shard, destroy_shard, list_shards|
+| `src/core/config.rs`                   | UPDATE | Partial       | Add UiConfig (feature-gated fields)     |
+| `src/cli/app.rs`                       | UPDATE | Partial       | Add `ui` subcommand (feature-gated)     |
+| `src/lib.rs`                           | UPDATE | Partial       | Conditionally export UI modules         |
+| `src/main.rs`                          | UPDATE | Partial       | Handle `ui` command when feature enabled|
+| `Cargo.toml`                           | UPDATE | N/A           | Add optional deps behind `ui` feature   |
+
+**Feature-gating pattern:**
+```rust
+// src/lib.rs
+#[cfg(feature = "ui")]
+pub mod ui;
+
+#[cfg(feature = "ui")]
+pub mod pty;
+
+#[cfg(feature = "ui")]
+pub mod shard_manager;
+```
+
+---
+
+## CLI/UI Coexistence
+
+**Both modes share the same session state and can be used interchangeably:**
+
+```bash
+# CLI creates a shard (spawns external terminal)
+shards create auth-fix --agent claude
+
+# UI can see and manage the same shard
+shards ui
+# OR with feature flag at build time:
+# cargo run --features ui -- ui
+
+# CLI can list shards created in UI
+shards list
+
+# Either can destroy
+shards destroy auth-fix
+```
+
+**Session JSON is the shared contract:**
+- CLI writes `~/.shards/sessions/*.json`
+- UI reads/writes same files
+- Both respect `process_id`, `worktree_path`, etc.
+
+**When to use which:**
+
+| Use Case | Recommended |
+|----------|-------------|
+| Quick one-off shard | CLI |
+| Scripting/CI | CLI |
+| Multi-shard orchestration | UI |
+| Main agent coordinating work | UI |
+| Headless servers | CLI |
+| Visual monitoring | UI |
 
 ---
 
@@ -329,6 +410,7 @@ Explicit exclusions to prevent scope creep:
 - **Settings UI** - Config via TOML files, not GUI settings panel
 - **Session sync** - No cloud sync of sessions across machines
 - **Collaborative features** - Single-user only for v1
+- **Replacing CLI** - CLI remains fully functional, UI is additive
 
 ---
 
@@ -336,20 +418,30 @@ Explicit exclusions to prevent scope creep:
 
 Execute in order. Each task is atomic and independently verifiable.
 
-### Task 1: UPDATE `Cargo.toml` - Add dependencies
+### Task 1: UPDATE `Cargo.toml` - Add feature-gated dependencies
 
-- **ACTION**: ADD gpui, alacritty_terminal, and supporting dependencies
+- **ACTION**: ADD gpui, alacritty_terminal as OPTIONAL dependencies behind `ui` feature
 - **IMPLEMENT**:
   ```toml
+  [features]
+  default = []
+  ui = ["dep:gpui", "dep:alacritty_terminal", "dep:parking_lot"]
+
   [dependencies]
-  gpui = "0.1"
-  alacritty_terminal = "0.24"
-  tokio = { version = "1", features = ["full", "sync"] }
-  parking_lot = "0.12"  # FairMutex for terminal
+  # Existing deps unchanged...
+
+  # UI-only dependencies (optional)
+  gpui = { version = "0.1", optional = true }
+  alacritty_terminal = { version = "0.24", optional = true }
+  parking_lot = { version = "0.12", optional = true }
+
+  # Async runtime (needed for PTY I/O in UI mode)
+  tokio = { version = "1", features = ["full", "sync"], optional = true }
   ```
 - **MIRROR**: Existing dependency style in Cargo.toml
 - **GOTCHA**: GPUI may require git dependency if crates.io version is outdated
-- **VALIDATE**: `cargo check`
+- **BENEFIT**: `cargo install shards` = minimal CLI, `cargo install shards --features ui` = full UI
+- **VALIDATE**: `cargo check` AND `cargo check --features ui`
 
 ### Task 2: CREATE `src/pty/types.rs` - PTY type definitions
 
