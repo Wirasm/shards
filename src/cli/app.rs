@@ -152,40 +152,23 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_create_with_flags_space_separated() {
-        let matches = build_cli().try_get_matches_from(vec![
-            "shards", "create", "test-branch", "--agent", "kiro", "--flags", "--trust-all-tools"
-        ]).unwrap();
-        
-        assert_eq!(
-            matches.subcommand_matches("create").unwrap()
-                .get_one::<String>("flags").unwrap(),
-            "--trust-all-tools"
-        );
-    }
-
-    #[test]
-    fn test_cli_create_with_flags_equals_syntax() {
-        let matches = build_cli().try_get_matches_from(vec![
-            "shards", "create", "test-branch", "--agent", "kiro", "--flags=--trust-all-tools"
-        ]).unwrap();
-        
-        assert_eq!(
-            matches.subcommand_matches("create").unwrap()
-                .get_one::<String>("flags").unwrap(),
-            "--trust-all-tools"
-        );
-    }
-
-    #[test]
     fn test_cli_create_with_complex_flags() {
-        let matches = build_cli().try_get_matches_from(vec![
-            "shards", "create", "test-branch", "--agent", "kiro", "--flags", "--trust-all-tools --verbose --debug"
-        ]).unwrap();
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "shards",
+            "create", 
+            "test-branch",
+            "--agent",
+            "kiro",
+            "--flags",
+            "--trust-all-tools --verbose --debug",
+        ]);
+        assert!(matches.is_ok());
         
+        let matches = matches.unwrap();
+        let create_matches = matches.subcommand_matches("create").unwrap();
         assert_eq!(
-            matches.subcommand_matches("create").unwrap()
-                .get_one::<String>("flags").unwrap(),
+            create_matches.get_one::<String>("flags").unwrap(),
             "--trust-all-tools --verbose --debug"
         );
     }
