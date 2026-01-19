@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::config::ShardsConfig;
 use crate::terminal::{errors::TerminalError, operations, types::*};
@@ -19,9 +19,40 @@ pub fn spawn_terminal(
     let terminal_type = if let Some(preferred) = &config.terminal.preferred {
         // Try to use preferred terminal, fall back to detection if not available
         match preferred.as_str() {
-            "iterm2" | "iterm" => TerminalType::ITerm,
-            "terminal" => TerminalType::TerminalApp,
-            _ => operations::detect_terminal()?,
+            "iterm2" | "iterm" => {
+                // Verify iTerm2 is actually available
+                if operations::app_exists_macos("iTerm") {
+                    TerminalType::ITerm
+                } else {
+                    warn!(
+                        event = "terminal.preferred_not_available",
+                        preferred = "iTerm",
+                        message = "Preferred terminal not found, falling back to detection"
+                    );
+                    operations::detect_terminal()?
+                }
+            }
+            "terminal" => {
+                // Verify Terminal.app is actually available
+                if operations::app_exists_macos("Terminal") {
+                    TerminalType::TerminalApp
+                } else {
+                    warn!(
+                        event = "terminal.preferred_not_available",
+                        preferred = "Terminal",
+                        message = "Preferred terminal not found, falling back to detection"
+                    );
+                    operations::detect_terminal()?
+                }
+            }
+            _ => {
+                warn!(
+                    event = "terminal.preferred_unknown",
+                    preferred = preferred,
+                    message = "Unknown preferred terminal, falling back to detection"
+                );
+                operations::detect_terminal()?
+            }
         }
     } else {
         operations::detect_terminal()?
@@ -46,6 +77,37 @@ pub fn spawn_terminal(
         terminal_type = %terminal_type,
         command_args = ?spawn_command
     );
+
+    info!(
+        event = "terminal.launching",
+        terminal_type = %terminal_type,
+        message = "Launching terminal..."
+    );
+
+    // For AppleScript commands, use our enhanced execution function
+    if spawn_command[0] == "osascript" && spawn_command.len() >= 3 {
+        operations::execute_applescript(&spawn_command[2])?;
+
+        info!(
+            event = "terminal.spawn_completed",
+            terminal_type = %terminal_type,
+            working_directory = %working_directory.display(),
+            command = command,
+            message = "Terminal launched successfully"
+        );
+
+        // For AppleScript, we don't get a direct process ID, so return None
+        let result = SpawnResult::new(
+            terminal_type.clone(),
+            command.to_string(),
+            working_directory.to_path_buf(),
+            None,
+            None,
+            None,
+        );
+
+        return Ok(result);
+    }
 
     // Execute the command asynchronously (don't wait for terminal to close)
     let mut cmd = Command::new(&spawn_command[0]);
@@ -82,7 +144,8 @@ pub fn spawn_terminal(
         working_directory = %working_directory.display(),
         command = command,
         process_id = process_id,
-        process_name = ?process_name
+        process_name = ?process_name,
+        message = "Terminal launched successfully"
     );
 
     Ok(result)
