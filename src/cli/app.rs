@@ -38,8 +38,8 @@ pub fn build_cli() -> Command {
                     Arg::new("flags")
                         .long("flags")
                         .num_args(1)
-                        .allow_hyphen_values(true)
-                        .help("Additional flags for agent (overrides config)")
+                        .allow_hyphen_values(true) // Allow flag values starting with hyphens (e.g., --trust-all-tools)
+                        .help("Additional flags for agent (use --flags 'value' or --flags='value')")
                 )
         )
         .subcommand(
@@ -191,6 +191,28 @@ mod tests {
         assert_eq!(
             create_matches.get_one::<String>("flags").unwrap(),
             "--trust-all-tools"
+        );
+    }
+
+    #[test]
+    fn test_cli_create_with_complex_flags() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "shards",
+            "create",
+            "test-branch",
+            "--agent",
+            "kiro",
+            "--flags",
+            "--trust-all-tools --verbose --debug",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("flags").unwrap(),
+            "--trust-all-tools --verbose --debug"
         );
     }
 }
