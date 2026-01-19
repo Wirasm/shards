@@ -1,7 +1,12 @@
 use sysinfo::{Pid as SysinfoPid, ProcessesToUpdate, System};
+use std::sync::Mutex;
+use std::sync::LazyLock;
 
 use crate::process::errors::ProcessError;
-use crate::process::types::{Pid, ProcessInfo, ProcessStatus};
+use crate::process::types::{Pid, ProcessInfo, ProcessMetrics, ProcessStatus};
+
+// Shared system instance to prevent memory leaks
+static SYSTEM: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new()));
 
 /// Check if a process with the given PID is currently running
 pub fn is_process_running(pid: u32) -> Result<bool, ProcessError> {
@@ -35,15 +40,14 @@ pub fn kill_process(
                 }
             }
 
-            if let Some(start_time) = expected_start_time {
-                if process.start_time() != start_time {
+            if let Some(start_time) = expected_start_time
+                && process.start_time() != start_time {
                     return Err(ProcessError::PidReused {
                         pid,
                         expected: format!("start_time={}", start_time),
                         actual: format!("start_time={}", process.start_time()),
                     });
                 }
-            }
 
             if process.kill() {
                 Ok(())
@@ -74,6 +78,28 @@ pub fn get_process_info(pid: u32) -> Result<ProcessInfo, ProcessError> {
         None => Err(ProcessError::NotFound { pid }),
     }
 }
+
+/// Get CPU and memory usage metrics for a process
+pub fn get_process_metrics(pid: u32) -> Result<ProcessMetrics, ProcessError> {
+    let pid_obj = SysinfoPid::from_u32(pid);
+    
+    // Use shared system instance to prevent memory leaks
+    let mut system = SYSTEM.lock().unwrap();
+    system.refresh_processes(ProcessesToUpdate::Some(&[pid_obj]), true);
+    
+    match system.process(pid_obj) {
+        Some(process) => {
+            let memory_bytes = process.memory();
+            
+            Ok(ProcessMetrics {
+                cpu_usage_percent: process.cpu_usage(),
+                memory_usage_bytes: memory_bytes,
+            })
+        }
+        None => Err(ProcessError::NotFound { pid }),
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -129,4 +155,72 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
     }
+
+    #[test]
+    fn test_find_process_by_name() {
+        use std::process::{Command, Stdio};
+
+        // Spawn a test process
+        let mut child = Command::new("sleep")
+            .arg("10")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Failed to spawn test process");
+
+        // Give it a moment to start
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Should find it by name
+        let result = find_process_by_name("sleep", None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Clean up
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_find_process_by_name_not_found() {
+        let result = find_process_by_name("nonexistent-process-xyz", None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+}
+
+/// Find a process by name, optionally filtering by command line pattern
+pub fn find_process_by_name(
+    name_pattern: &str,
+    command_pattern: Option<&str>,
+) -> Result<Option<ProcessInfo>, ProcessError> {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+
+    for (pid, process) in system.processes() {
+        let process_name = process.name().to_string_lossy();
+        
+        if !process_name.contains(name_pattern) {
+            continue;
+        }
+
+        if let Some(cmd_pattern) = command_pattern {
+            let cmd_line = process.cmd().iter()
+                .map(|s| s.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !cmd_line.contains(cmd_pattern) {
+                continue;
+            }
+        }
+
+        return Ok(Some(ProcessInfo {
+            pid: Pid::from_raw(pid.as_u32()),
+            name: process_name.to_string(),
+            status: ProcessStatus::from(process.status()),
+            start_time: process.start_time(),
+        }));
+    }
+
+    Ok(None)
 }

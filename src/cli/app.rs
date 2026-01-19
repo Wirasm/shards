@@ -37,7 +37,9 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("flags")
                         .long("flags")
-                        .help("Additional flags for agent (overrides config)")
+                        .num_args(1)
+                        .allow_hyphen_values(true) // Allow flag values starting with hyphens (e.g., --trust-all-tools)
+                        .help("Additional flags for agent (use --flags 'value' or --flags='value')")
                 )
         )
         .subcommand(
@@ -52,6 +54,23 @@ pub fn build_cli() -> Command {
                         .help("Branch name of the shard to destroy")
                         .required(true)
                         .index(1)
+                )
+        )
+        .subcommand(
+            Command::new("restart")
+                .about("Restart agent in existing shard without destroying worktree")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of the shard to restart")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("agent")
+                        .long("agent")
+                        .short('a')
+                        .help("AI agent to use (overrides current agent)")
+                        .value_parser(["claude", "kiro", "gemini", "codex", "aether"])
                 )
         )
         .subcommand(
@@ -91,6 +110,27 @@ pub fn build_cli() -> Command {
                         .long("all")
                         .help("Clean all orphaned resources (default)")
                         .action(ArgAction::SetTrue)
+                )
+        )
+        .subcommand(
+            Command::new("health")
+                .about("Show health status and metrics for shards")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of specific shard to check (optional)")
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Show health for all projects, not just current")
+                        .action(clap::ArgAction::SetTrue)
+                )
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .help("Output in JSON format")
+                        .action(clap::ArgAction::SetTrue)
                 )
         )
 }
@@ -172,5 +212,27 @@ mod tests {
             "invalid",
         ]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_create_with_complex_flags() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "shards",
+            "create", 
+            "test-branch",
+            "--agent",
+            "kiro",
+            "--flags",
+            "--trust-all-tools --verbose --debug",
+        ]);
+        assert!(matches.is_ok());
+        
+        let matches = matches.unwrap();
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("flags").unwrap(),
+            "--trust-all-tools --verbose --debug"
+        );
     }
 }
