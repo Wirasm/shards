@@ -247,11 +247,9 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
             session.process_name.as_deref(),
             session.process_start_time,
         ) {
-            Ok(()) => {
-                info!(event = "session.restart_kill_completed", pid = pid);
-            }
+            Ok(()) => info!(event = "session.restart_kill_completed", pid = pid),
             Err(crate::process::ProcessError::NotFound { .. }) => {
-                info!(event = "session.restart_kill_process_not_found", pid = pid);
+                info!(event = "session.restart_kill_process_not_found", pid = pid)
             }
             Err(crate::process::ProcessError::AccessDenied { .. }) => {
                 error!(event = "session.restart_kill_access_denied", pid = pid);
@@ -284,7 +282,7 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
 
     // 4. Determine agent and command
     let shards_config = ShardsConfig::load_hierarchy().unwrap_or_default();
-    let agent = agent_override.unwrap_or_else(|| session.agent.clone());
+    let agent = agent_override.unwrap_or(session.agent.clone());
     let agent_command = shards_config.get_agent_command(&agent);
 
     info!(
@@ -307,15 +305,10 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
     );
 
     // Capture process metadata immediately for PID reuse protection
-    let (process_name, process_start_time) = if let Some(pid) = spawn_result.process_id {
-        if let Ok(info) = crate::process::get_process_info(pid) {
-            (Some(info.name), Some(info.start_time))
-        } else {
-            (spawn_result.process_name.clone(), spawn_result.process_start_time)
-        }
-    } else {
-        (spawn_result.process_name.clone(), spawn_result.process_start_time)
-    };
+    let (process_name, process_start_time) = spawn_result.process_id
+        .and_then(|pid| crate::process::get_process_info(pid).ok())
+        .map(|info| (Some(info.name), Some(info.start_time)))
+        .unwrap_or((spawn_result.process_name.clone(), spawn_result.process_start_time));
 
     // 6. Update session with new process info
     session.agent = agent;

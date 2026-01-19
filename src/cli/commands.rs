@@ -190,16 +190,12 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
             println!("   Agent: {}", session.agent);
             println!("   Process ID: {:?}", session.process_id);
             println!("   Worktree: {}", session.worktree_path.display());
-
             info!(event = "cli.restart_completed", branch = branch, process_id = session.process_id);
-
             Ok(())
         }
         Err(e) => {
             eprintln!("❌ Failed to restart shard '{}': {}", branch, e);
-
             error!(event = "cli.restart_failed", branch = branch, error = %e);
-
             events::log_app_error(&e);
             Err(e.into())
         }
