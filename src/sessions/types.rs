@@ -1,9 +1,15 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-fn default_port_start() -> u16 { 0 }
-fn default_port_end() -> u16 { 0 }
-fn default_port_count() -> u16 { 0 }
+fn default_port_start() -> u16 {
+    0
+}
+fn default_port_end() -> u16 {
+    0
+}
+fn default_port_count() -> u16 {
+    0
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
@@ -20,7 +26,7 @@ pub struct Session {
     pub port_range_end: u16,
     #[serde(default = "default_port_count")]
     pub port_count: u16,
-    
+
     /// Process ID of the spawned terminal/agent process.
     ///
     /// This is `None` if:
@@ -31,10 +37,10 @@ pub struct Session {
     /// Note: PIDs can be reused by the OS, so this should be validated
     /// against process name/start time before use.
     pub process_id: Option<u32>,
-    
+
     /// Process name captured at spawn time for PID reuse protection
     pub process_name: Option<String>,
-    
+
     /// Process start time captured at spawn time for PID reuse protection
     pub process_start_time: Option<u64>,
 }

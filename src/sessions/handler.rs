@@ -5,7 +5,10 @@ use crate::git;
 use crate::sessions::{errors::SessionError, operations, types::*};
 use crate::terminal;
 
-pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfig) -> Result<Session, SessionError> {
+pub fn create_session(
+    request: CreateSessionRequest,
+    shards_config: &ShardsConfig,
+) -> Result<Session, SessionError> {
     let agent = request.agent_or_default(&shards_config.agent.default);
     let agent_command = shards_config.get_agent_command(&agent);
 
@@ -33,16 +36,17 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
     // 3. Create worktree (I/O)
     let config = Config::new();
     let session_id = operations::generate_session_id(&project.id, &validated.name);
-    
+
     // Ensure sessions directory exists
     operations::ensure_sessions_directory(&config.sessions_dir())?;
-    
+
     // 4. Allocate port range (I/O)
     let (port_start, port_end) = operations::allocate_port_range(
         &config.sessions_dir(),
         config.default_port_count,
         config.base_port_range,
-    ).map_err(|e| {
+    )
+    .map_err(|e| {
         error!(
             event = "session.port_allocation_failed",
             session_id = %session_id,
@@ -60,10 +64,15 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
         port_range_end = port_end,
         port_count = config.default_port_count
     );
-    
+
     let base_config = Config::new();
-    let worktree = git::handler::create_worktree(&base_config.shards_dir, &project, &validated.name, Some(shards_config))
-        .map_err(|e| SessionError::GitError { source: e })?;
+    let worktree = git::handler::create_worktree(
+        &base_config.shards_dir,
+        &project,
+        &validated.name,
+        Some(shards_config),
+    )
+    .map_err(|e| SessionError::GitError { source: e })?;
 
     info!(
         event = "session.worktree_created",
@@ -73,8 +82,9 @@ pub fn create_session(request: CreateSessionRequest, shards_config: &ShardsConfi
     );
 
     // 5. Launch terminal (I/O)
-    let spawn_result = terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config)
-        .map_err(|e| SessionError::TerminalError { source: e })?;
+    let spawn_result =
+        terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config)
+            .map_err(|e| SessionError::TerminalError { source: e })?;
 
     // 6. Create session record
     let session = Session {
@@ -146,10 +156,14 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     info!(event = "session.destroy_started", name = name);
 
     let config = Config::new();
-    
+
     // 1. Find session by name (branch name)
-    let session = operations::find_session_by_name(&config.sessions_dir(), name)?
-        .ok_or_else(|| SessionError::NotFound { name: name.to_string() })?;
+    let session =
+        operations::find_session_by_name(&config.sessions_dir(), name)?.ok_or_else(|| {
+            SessionError::NotFound {
+                name: name.to_string(),
+            }
+        })?;
 
     info!(
         event = "session.destroy_found",
@@ -231,12 +245,12 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("shards_test_empty_sessions");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
-        
+
         // Test with empty directory
         let (sessions, skipped) = operations::load_sessions_from_files(&temp_dir).unwrap();
         assert_eq!(sessions.len(), 0);
         assert_eq!(skipped, 0);
-        
+
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -254,20 +268,21 @@ mod tests {
     #[test]
     fn test_create_list_destroy_integration_flow() {
         use std::fs;
-        
+
         // Create a unique temporary directory for this test
-        let temp_dir = std::env::temp_dir().join(format!("shards_test_integration_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("shards_test_integration_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         let sessions_dir = temp_dir.join("sessions");
         fs::create_dir_all(&sessions_dir).expect("Failed to create sessions dir");
 
         // Test session persistence workflow using operations directly
         // This tests the core persistence logic without git/terminal dependencies
-        
+
         // 1. Create a test session manually
-        use crate::sessions::types::{Session, SessionStatus};
         use crate::sessions::operations;
-        
+        use crate::sessions::types::{Session, SessionStatus};
+
         let session = Session {
             id: "test-project_test-branch".to_string(),
             project_id: "test-project".to_string(),
@@ -288,12 +303,11 @@ mod tests {
         fs::create_dir_all(&session.worktree_path).expect("Failed to create worktree dir");
 
         // 2. Save session to file
-        operations::save_session_to_file(&session, &sessions_dir)
-            .expect("Failed to save session");
+        operations::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
 
         // 3. List sessions - should contain our session
-        let (sessions, skipped) = operations::load_sessions_from_files(&sessions_dir)
-            .expect("Failed to load sessions");
+        let (sessions, skipped) =
+            operations::load_sessions_from_files(&sessions_dir).expect("Failed to load sessions");
         assert_eq!(sessions.len(), 1);
         assert_eq!(skipped, 0);
         assert_eq!(sessions[0].id, session.id);
