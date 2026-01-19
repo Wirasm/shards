@@ -8,6 +8,18 @@ use crate::health;
 use crate::process;
 use crate::sessions::{handler as session_handler, types::CreateSessionRequest};
 
+/// Validate branch name to prevent injection attacks
+fn is_valid_branch_name(name: &str) -> bool {
+    // Allow alphanumeric, hyphens, underscores, and forward slashes
+    // Prevent path traversal and special characters
+    !name.is_empty() 
+        && !name.contains("..")
+        && !name.starts_with('/')
+        && !name.ends_with('/')
+        && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '/')
+        && name.len() <= 255
+}
+
 pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     events::log_app_startup();
 
@@ -327,6 +339,13 @@ fn handle_health_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     );
     
     if let Some(branch_name) = branch {
+        // Validate branch name
+        if !is_valid_branch_name(branch_name) {
+            eprintln!("❌ Invalid branch name: {}", branch_name);
+            error!(event = "cli.health_invalid_branch", branch = branch_name);
+            return Err("Invalid branch name".into());
+        }
+        
         // Single shard health
         match health::get_health_single_session(branch_name) {
             Ok(shard_health) => {

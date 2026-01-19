@@ -16,6 +16,7 @@ pub struct HealthMetrics {
     pub process_status: String,
     pub last_activity: Option<String>,
     pub status: HealthStatus,
+    pub status_icon: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

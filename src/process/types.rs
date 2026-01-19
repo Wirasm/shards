@@ -75,5 +75,10 @@ pub struct ProcessMetadata {
 pub struct ProcessMetrics {
     pub cpu_usage_percent: f32,
     pub memory_usage_bytes: u64,
-    pub memory_usage_mb: u64,
+}
+
+impl ProcessMetrics {
+    pub fn memory_usage_mb(&self) -> u64 {
+        self.memory_usage_bytes / 1_024 / 1_024
+    }
 }

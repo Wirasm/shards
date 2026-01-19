@@ -1,9 +1,20 @@
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicI64, Ordering};
 use crate::health::types::{HealthStatus, HealthMetrics, ShardHealth, HealthOutput};
 use crate::sessions::types::Session;
 use crate::process::types::ProcessMetrics;
 
-const IDLE_THRESHOLD_MINUTES: i64 = 10;
+static IDLE_THRESHOLD_MINUTES: AtomicI64 = AtomicI64::new(10);
+
+/// Set the idle threshold for health status calculation
+pub fn set_idle_threshold_minutes(minutes: i64) {
+    IDLE_THRESHOLD_MINUTES.store(minutes, Ordering::Relaxed);
+}
+
+/// Get the current idle threshold
+pub fn get_idle_threshold_minutes() -> i64 {
+    IDLE_THRESHOLD_MINUTES.load(Ordering::Relaxed)
+}
 
 /// Calculate health status based on process state and activity
 pub fn calculate_health_status(
@@ -25,8 +36,9 @@ pub fn calculate_health_status(
     
     let now = Utc::now();
     let minutes_since_activity = (now.signed_duration_since(activity_time)).num_minutes();
+    let threshold = IDLE_THRESHOLD_MINUTES.load(Ordering::Relaxed);
     
-    if minutes_since_activity < IDLE_THRESHOLD_MINUTES {
+    if minutes_since_activity < threshold {
         HealthStatus::Working
     } else if last_message_from_user {
         HealthStatus::Stuck
@@ -47,12 +59,21 @@ pub fn enrich_session_with_health(
         false, // TODO: Track last message sender in future
     );
     
+    let status_icon = match status {
+        HealthStatus::Working => "✅",
+        HealthStatus::Idle => "⏸️ ",
+        HealthStatus::Stuck => "⚠️ ",
+        HealthStatus::Crashed => "❌",
+        HealthStatus::Unknown => "❓",
+    };
+    
     let metrics = HealthMetrics {
         cpu_usage_percent: process_metrics.as_ref().map(|m| m.cpu_usage_percent),
-        memory_usage_mb: process_metrics.as_ref().map(|m| m.memory_usage_mb),
+        memory_usage_mb: process_metrics.as_ref().map(|m| m.memory_usage_mb()),
         process_status: if process_running { "Running".to_string() } else { "Stopped".to_string() },
         last_activity: session.last_activity.clone(),
         status,
+        status_icon: status_icon.to_string(),
     };
     
     ShardHealth {

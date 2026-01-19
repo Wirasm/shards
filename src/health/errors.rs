@@ -2,22 +2,22 @@ use crate::core::errors::ShardsError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HealthError {
-    #[error("Failed to gather health metrics: {message}")]
+    #[error("Health metrics collection failed: {message}")]
     MetricsGatherFailed { message: String },
     
-    #[error("Session error: {source}")]
+    #[error("Health check failed due to session error: {source}")]
     SessionError {
         #[from]
         source: crate::sessions::errors::SessionError,
     },
     
-    #[error("Process error: {source}")]
+    #[error("Health check failed due to process error: {source}")]
     ProcessError {
         #[from]
         source: crate::process::errors::ProcessError,
     },
     
-    #[error("IO operation failed: {source}")]
+    #[error("Health check failed due to I/O error: {source}")]
     IoError {
         #[from]
         source: std::io::Error,

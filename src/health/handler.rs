@@ -50,7 +50,18 @@ fn enrich_session_with_metrics(session: &sessions::types::Session) -> ShardHealt
     let (process_metrics, process_running) = if let Some(pid) = session.process_id {
         match process::is_process_running(pid) {
             Ok(true) => {
-                let metrics = process::get_process_metrics(pid).ok();
+                let metrics = match process::get_process_metrics(pid) {
+                    Ok(metrics) => Some(metrics),
+                    Err(e) => {
+                        warn!(
+                            event = "health.process_metrics_failed",
+                            pid = pid,
+                            session_branch = &session.branch,
+                            error = %e
+                        );
+                        None
+                    }
+                };
                 (metrics, true)
             }
             Ok(false) => (None, false),
