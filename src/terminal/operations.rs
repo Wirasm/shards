@@ -2,7 +2,10 @@ use crate::terminal::{errors::TerminalError, types::*};
 use std::path::Path;
 
 pub fn detect_terminal() -> Result<TerminalType, TerminalError> {
-    if app_exists_macos("iTerm") {
+    // Check for Ghostty first (user preference)
+    if app_exists_macos("Ghostty") {
+        Ok(TerminalType::Ghostty)
+    } else if app_exists_macos("iTerm") {
         Ok(TerminalType::ITerm)
     } else if app_exists_macos("Terminal") {
         Ok(TerminalType::TerminalApp)
@@ -52,6 +55,27 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
                 applescript_escape(&cd_command)
             ),
         ]),
+        TerminalType::Ghostty => Ok(vec![
+            "osascript".to_string(),
+            "-e".to_string(),
+            format!(
+                r#"tell application "Ghostty"
+                        activate
+                        delay 0.5
+                    end tell
+                    tell application "System Events"
+                        keystroke "{}"
+                        keystroke return
+                    end tell"#,
+                applescript_escape(&cd_command)
+            ),
+        ]),
+        TerminalType::Native => {
+            // Use system default (detect and delegate)
+            let detected = detect_terminal()?;
+            let native_config = SpawnConfig::new(detected, config.working_directory.clone(), config.command.clone());
+            build_spawn_command(&native_config)
+        }
     }
 }
 

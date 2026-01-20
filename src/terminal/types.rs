@@ -4,6 +4,8 @@ use std::path::PathBuf;
 pub enum TerminalType {
     ITerm,
     TerminalApp,
+    Ghostty,
+    Native, // System default
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +60,8 @@ impl std::fmt::Display for TerminalType {
         match self {
             TerminalType::ITerm => write!(f, "iterm"),
             TerminalType::TerminalApp => write!(f, "terminal"),
+            TerminalType::Ghostty => write!(f, "ghostty"),
+            TerminalType::Native => write!(f, "native"),
         }
     }
 }
@@ -70,6 +74,8 @@ mod tests {
     fn test_terminal_type_display() {
         assert_eq!(TerminalType::ITerm.to_string(), "iterm");
         assert_eq!(TerminalType::TerminalApp.to_string(), "terminal");
+        assert_eq!(TerminalType::Ghostty.to_string(), "ghostty");
+        assert_eq!(TerminalType::Native.to_string(), "native");
     }
 
     #[test]
@@ -83,6 +89,19 @@ mod tests {
         assert_eq!(config.terminal_type, TerminalType::ITerm);
         assert_eq!(config.working_directory, PathBuf::from("/tmp/test"));
         assert_eq!(config.command, "echo hello");
+    }
+
+    #[test]
+    fn test_spawn_config_ghostty() {
+        let config = SpawnConfig::new(
+            TerminalType::Ghostty,
+            PathBuf::from("/tmp/test"),
+            "kiro-cli chat".to_string(),
+        );
+        
+        assert_eq!(config.terminal_type, TerminalType::Ghostty);
+        assert_eq!(config.working_directory, PathBuf::from("/tmp/test"));
+        assert_eq!(config.command, "kiro-cli chat");
     }
 
     #[test]
