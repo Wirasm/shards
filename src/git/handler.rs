@@ -74,6 +74,13 @@ pub fn create_worktree(
 
     let repo = Repository::open(&project.path).map_err(git2_error)?;
 
+    // Check current branch for smart worktree naming
+    let current_branch = operations::get_current_branch(&repo)?;
+    let use_current = current_branch
+        .as_ref()
+        .map(|cb| operations::should_use_current_branch(cb, &validated_branch))
+        .unwrap_or(false);
+
     let worktree_path =
         operations::calculate_worktree_path(base_dir, &project.name, &validated_branch);
 
@@ -132,8 +139,12 @@ pub fn create_worktree(
         );
     }
 
-    // Create worktree - use a different name to avoid conflicts
-    let worktree_name = format!("worktree-{}", validated_branch);
+    // Create worktree - use smart naming based on current branch
+    let worktree_name = if use_current {
+        validated_branch.clone()
+    } else {
+        format!("worktree-{}", validated_branch)
+    };
     repo.worktree(&worktree_name, &worktree_path, None)
         .map_err(|e| GitError::Git2Error { source: e })?;
 
@@ -148,6 +159,15 @@ pub fn create_worktree(
         project_id = project.id,
         branch = validated_branch,
         worktree_path = %worktree_path.display()
+    );
+
+    info!(
+        event = "git.worktree.branch_decision",
+        project_id = project.id,
+        requested_branch = validated_branch,
+        current_branch = current_branch.as_deref().unwrap_or("none"),
+        used_current = use_current,
+        worktree_name = worktree_name
     );
 
     // Copy include pattern files if configured

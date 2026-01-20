@@ -66,6 +66,20 @@ pub fn validate_branch_name(branch: &str) -> Result<String, GitError> {
     Ok(trimmed.to_string())
 }
 
+pub fn get_current_branch(repo: &git2::Repository) -> Result<Option<String>, GitError> {
+    let head = repo.head().map_err(|e| GitError::Git2Error { source: e })?;
+    
+    if let Some(branch_name) = head.shorthand() {
+        Ok(Some(branch_name.to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn should_use_current_branch(current_branch: &str, requested_branch: &str) -> bool {
+    current_branch == requested_branch
+}
+
 pub fn is_valid_git_directory(path: &Path) -> bool {
     path.join(".git").exists()
 }
@@ -156,5 +170,13 @@ mod tests {
 
         let non_git_dir = Path::new("/tmp");
         assert!(!is_valid_git_directory(non_git_dir) || non_git_dir.join(".git").exists());
+    }
+
+    #[test]
+    fn test_should_use_current_branch() {
+        assert!(should_use_current_branch("feature-branch", "feature-branch"));
+        assert!(!should_use_current_branch("main", "feature-branch"));
+        assert!(!should_use_current_branch("feature-branch", "main"));
+        assert!(should_use_current_branch("issue-33", "issue-33"));
     }
 }
