@@ -2,6 +2,7 @@ use clap::ArgMatches;
 use tracing::{error, info};
 
 use crate::cleanup;
+use crate::cli::table::truncate;
 use crate::core::events;
 use crate::core::config::ShardsConfig;
 use crate::health;
@@ -108,48 +109,9 @@ fn handle_list_command() -> Result<(), Box<dyn std::error::Error>> {
             if sessions.is_empty() {
                 println!("No active shards found.");
             } else {
-                const TABLE_TOP: &str = "┌────────────────────────────────────┬─────────┬─────────┬─────────────────────┬─────────────┬─────────────┬──────────────────────┐";
-                const TABLE_HEADER: &str = "│ Branch                             │ Agent   │ Status  │ Created             │ Port Range  │ Process     │ Command              │";
-                const TABLE_SEP: &str = "├────────────────────────────────────┼─────────┼─────────┼─────────────────────┼─────────────┼─────────────┼──────────────────────┤";
-                
                 println!("Active shards:");
-                println!("{}", TABLE_TOP);
-                println!("{}", TABLE_HEADER);
-                println!("{}", TABLE_SEP);
-
-                for session in &sessions {
-                    let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
-                    let process_status = session.process_id.map_or("No PID".to_string(), |pid| {
-                        match process::is_process_running(pid) {
-                            Ok(true) => format!("Run({})", pid),
-                            Ok(false) => format!("Stop({})", pid),
-                            Err(e) => {
-                                tracing::warn!(
-                                    event = "cli.list_process_check_failed",
-                                    pid = pid,
-                                    session_branch = &session.branch,
-                                    error = %e
-                                );
-                                format!("Err({})", pid)
-                            }
-                        }
-                    });
-
-                    println!(
-                        "│ {:<32} │ {:<7} │ {:<7} │ {:<19} │ {:<11} │ {:<11} │ {:<20} │",
-                        truncate(&session.branch, 32),
-                        truncate(&session.agent, 7),
-                        format!("{:?}", session.status).to_lowercase(),
-                        truncate(&session.created_at, 19),
-                        truncate(&port_range, 11),
-                        truncate(&process_status, 11),
-                        truncate(&session.command, 20)
-                    );
-                }
-
-                const TABLE_BOTTOM: &str = "└────────────────────────────────────┴─────────┴─────────┴─────────────────────┴─────────────┴─────────────┴──────────────────────┘";
-                
-                println!("{}", TABLE_BOTTOM);
+                let formatter = crate::cli::table::TableFormatter::new(&sessions);
+                formatter.print_table(&sessions);
             }
 
             info!(event = "cli.list_completed", count = sessions.len());
@@ -220,14 +182,6 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
             events::log_app_error(&e);
             Err(e.into())
         }
-    }
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        format!("{:<width$}", s, width = max_len)
-    } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
     }
 }
 
