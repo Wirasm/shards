@@ -85,7 +85,7 @@ impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             preferred: None,
-            spawn_delay_ms: 500,
+            spawn_delay_ms: 1000,
         }
     }
 }

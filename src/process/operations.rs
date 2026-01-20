@@ -187,6 +187,48 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
+
+    #[test]
+    fn test_generate_search_patterns() {
+        let patterns = generate_search_patterns("kiro-cli");
+        assert!(patterns.contains(&"kiro-cli".to_string()));
+        assert!(patterns.contains(&"kiro".to_string()));
+        
+        let patterns = generate_search_patterns("claude-code");
+        assert!(patterns.contains(&"claude-code".to_string()));
+        assert!(patterns.contains(&"claude".to_string()));
+        
+        let patterns = generate_search_patterns("simple");
+        assert_eq!(patterns, vec!["simple".to_string()]);
+    }
+
+    #[test]
+    fn test_find_process_by_name_with_partial_match() {
+        // This would need a running process to test properly
+        // For now, just ensure the function doesn't panic
+        let result = find_process_by_name("nonexistent", None);
+        assert!(result.is_ok());
+    }
+}
+
+/// Generate multiple search patterns for better process matching
+fn generate_search_patterns(name_pattern: &str) -> Vec<String> {
+    let mut patterns = vec![name_pattern.to_string()];
+    
+    // Add partial matches
+    if name_pattern.contains('-') {
+        patterns.push(name_pattern.split('-').next().unwrap_or(name_pattern).to_string());
+    }
+    
+    // Add common variations
+    match name_pattern {
+        "kiro-cli" => patterns.extend(vec!["kiro".to_string(), "kiro-cli".to_string()]),
+        "claude-code" => patterns.extend(vec!["claude".to_string(), "claude-code".to_string()]),
+        "gemini-cli" => patterns.extend(vec!["gemini".to_string(), "gemini-cli".to_string()]),
+        _ => {}
+    }
+    
+    patterns
 }
 
 /// Find a process by name, optionally filtering by command line pattern
@@ -197,18 +239,27 @@ pub fn find_process_by_name(
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
 
+    // Try multiple search strategies
+    let search_patterns = generate_search_patterns(name_pattern);
+    
     for (pid, process) in system.processes() {
         let process_name = process.name().to_string_lossy();
+        let cmd_line = process.cmd().iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
         
-        if !process_name.contains(name_pattern) {
+        // Try each search pattern
+        let name_matches = search_patterns.iter().any(|pattern| {
+            process_name.contains(pattern) || cmd_line.contains(pattern)
+        });
+        
+        if !name_matches {
             continue;
         }
 
+        // If command pattern specified, it must match
         if let Some(cmd_pattern) = command_pattern {
-            let cmd_line = process.cmd().iter()
-                .map(|s| s.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ");
             if !cmd_line.contains(cmd_pattern) {
                 continue;
             }

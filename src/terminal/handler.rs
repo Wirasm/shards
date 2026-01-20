@@ -5,6 +5,74 @@ use tracing::{debug, info, warn};
 use crate::core::config::ShardsConfig;
 use crate::terminal::{errors::TerminalError, operations, types::*};
 
+/// Find agent process with retry logic and exponential backoff
+fn find_agent_process_with_retry(
+    agent_name: &str,
+    command: &str,
+    config: &ShardsConfig,
+) -> Result<(Option<u32>, Option<String>, Option<u64>), TerminalError> {
+    let max_attempts = 5;
+    let mut delay_ms = config.terminal.spawn_delay_ms;
+    
+    for attempt in 1..=max_attempts {
+        info!(
+            event = "terminal.searching_for_agent_process",
+            attempt,
+            max_attempts,
+            delay_ms,
+            agent_name,
+            command
+        );
+        
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        
+        match crate::process::find_process_by_name(agent_name, Some(command)) {
+            Ok(Some(info)) => {
+                info!(
+                    event = "terminal.agent_process_found",
+                    attempt,
+                    pid = info.pid.as_u32(),
+                    process_name = info.name,
+                    agent_name
+                );
+                return Ok((Some(info.pid.as_u32()), Some(info.name), Some(info.start_time)));
+            }
+            Ok(None) => {
+                if attempt == max_attempts {
+                    warn!(
+                        event = "terminal.agent_process_not_found_final",
+                        agent_name,
+                        command,
+                        attempts = max_attempts,
+                        message = "Agent process not found after all retry attempts - session created but process tracking unavailable"
+                    );
+                } else {
+                    info!(
+                        event = "terminal.agent_process_not_found_retry",
+                        attempt,
+                        max_attempts,
+                        agent_name,
+                        next_delay_ms = delay_ms * 2
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    event = "terminal.agent_process_search_error",
+                    attempt,
+                    agent_name,
+                    error = %e
+                );
+            }
+        }
+        
+        // Exponential backoff: 500ms, 1s, 2s, 4s, 8s
+        delay_ms *= 2;
+    }
+    
+    Ok((None, None, None))
+}
+
 pub fn spawn_terminal(
     working_directory: &Path,
     command: &str,
@@ -57,25 +125,10 @@ pub fn spawn_terminal(
         message: format!("Failed to execute {}: {}", spawn_command[0], e),
     })?;
 
-    // Wait for terminal to spawn the agent process
-    let delay_ms = config.terminal.spawn_delay_ms;
-    info!(event = "terminal.waiting_for_agent_spawn", delay_ms, command);
-    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-
-    // Try to find the actual agent process
+    // Try to find the actual agent process with retry logic
     let agent_name = operations::extract_command_name(command);
     let (process_id, process_name, process_start_time) = 
-        match crate::process::find_process_by_name(&agent_name, Some(command)) {
-            Ok(Some(info)) => (Some(info.pid.as_u32()), Some(info.name), Some(info.start_time)),
-            _ => {
-                warn!(
-                    event = "terminal.agent_process_not_found",
-                    agent_name, command,
-                    message = "Agent process not found - session created but process tracking unavailable"
-                );
-                (None, None, None)
-            }
-        };
+        find_agent_process_with_retry(&agent_name, command, config)?;
 
     let result = SpawnResult::new(
         terminal_type.clone(),
