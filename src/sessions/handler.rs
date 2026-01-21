@@ -220,7 +220,7 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
         }
     }
 
-    // 3. Remove git worktree
+    // 4. Remove git worktree
     git::handler::remove_worktree_by_path(&session.worktree_path)
         .map_err(|e| SessionError::GitError { source: e })?;
 
@@ -230,7 +230,7 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
         worktree_path = %session.worktree_path.display()
     );
 
-    // 4. Remove session file (automatically frees port range)
+    // 5. Remove session file (automatically frees port range)
     operations::remove_session_file(&config.sessions_dir(), &session.id)?;
 
     info!(
@@ -462,6 +462,82 @@ mod tests {
         let not_found = operations::find_session_by_name(&sessions_dir, "test-branch")
             .expect("Failed to search for removed session");
         assert!(not_found.is_none());
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_session_with_terminal_type_persistence() {
+        use std::fs;
+        use crate::sessions::operations;
+        use crate::sessions::types::{Session, SessionStatus};
+        use crate::terminal::types::TerminalType;
+
+        // This test verifies the terminal_type field flows correctly through
+        // the session persistence layer - critical for destroy_session to work.
+        //
+        // The destroy_session function relies on:
+        // 1. Session being saved with terminal_type populated
+        // 2. Session being loaded with terminal_type intact
+        // 3. The field being passed to close_terminal()
+
+        // Use unique temp dir per test run to avoid conflicts
+        let unique_id = format!("{}_{}", std::process::id(), std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos());
+        let temp_dir = std::env::temp_dir()
+            .join(format!("shards_test_terminal_type_{}", unique_id));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let sessions_dir = temp_dir.join("sessions");
+        let worktree_dir = temp_dir.join("worktree");
+        fs::create_dir_all(&sessions_dir).expect("Failed to create sessions dir");
+        fs::create_dir_all(&worktree_dir).expect("Failed to create worktree dir");
+
+        // Test all terminal types can be saved and loaded
+        let terminal_test_cases = [
+            (TerminalType::ITerm, "test-iterm"),
+            (TerminalType::TerminalApp, "test-terminalapp"),
+            (TerminalType::Ghostty, "test-ghostty"),
+            (TerminalType::Native, "test-native"),
+        ];
+
+        for (terminal_type, branch_name) in &terminal_test_cases {
+            // Use underscore in id to avoid filesystem issues with slash
+            let session = Session {
+                id: format!("test-project_{}", branch_name),
+                project_id: "test-project".to_string(),
+                branch: branch_name.to_string(),
+                worktree_path: worktree_dir.clone(),
+                agent: "test-agent".to_string(),
+                status: SessionStatus::Active,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                port_range_start: 3000,
+                port_range_end: 3009,
+                port_count: 10,
+                process_id: Some(12345),
+                process_name: Some("test-agent".to_string()),
+                process_start_time: Some(1234567890),
+                terminal_type: Some(terminal_type.clone()),
+                command: "test-command".to_string(),
+                last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            };
+
+            operations::save_session_to_file(&session, &sessions_dir)
+                .expect("Failed to save session");
+
+            let loaded = operations::find_session_by_name(&sessions_dir, branch_name)
+                .expect("Failed to find session")
+                .expect("Session not found");
+
+            assert_eq!(
+                loaded.terminal_type,
+                Some(terminal_type.clone()),
+                "terminal_type {:?} must round-trip correctly",
+                terminal_type
+            );
+        }
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir);

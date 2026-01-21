@@ -233,6 +233,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_close_terminal_returns_ok_for_all_terminal_types() {
+        // close_terminal is designed to ALWAYS return Ok, even if the underlying
+        // AppleScript operation fails. This is intentional - terminal close failure
+        // should not block session destruction.
+        //
+        // This test verifies the critical invariant: close_terminal() never fails.
+        let terminal_types = vec![
+            TerminalType::ITerm,
+            TerminalType::TerminalApp,
+            TerminalType::Ghostty,
+            TerminalType::Native,
+        ];
+
+        for terminal_type in terminal_types {
+            let result = close_terminal(&terminal_type);
+            assert!(
+                result.is_ok(),
+                "close_terminal should always return Ok for {:?}, but got {:?}",
+                terminal_type,
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn test_close_terminal_native_is_noop() {
+        // Native terminal type should be a no-op (returns immediately)
+        // This tests the early return path in close_terminal_window
+        let result = close_terminal(&TerminalType::Native);
+        assert!(result.is_ok());
+    }
+
     // Note: Testing actual terminal spawning is complex and system-dependent
     // Integration tests would be more appropriate for full spawn testing
 }
