@@ -18,22 +18,6 @@ const TERMINAL_SCRIPT: &str = r#"tell application "Terminal"
         return id of newWindow
     end tell"#;
 
-// Ghostty doesn't support window IDs, so we set a unique title
-// The title will be used to find the window when closing
-const GHOSTTY_SCRIPT: &str = r#"try
-        tell application "Ghostty"
-            activate
-            delay 0.5
-        end tell
-        tell application "System Events"
-            -- Set unique window title via ANSI escape sequence, then execute command
-            keystroke "printf '\\033]2;{window_title}\\007' && {command}"
-            keystroke return
-        end tell
-        return "{window_title}"
-    on error errMsg
-        error "Failed to launch Ghostty: " & errMsg
-    end try"#;
 
 // AppleScript templates for terminal closing (with window ID support)
 const ITERM_CLOSE_SCRIPT: &str = r#"tell application "iTerm"
@@ -120,15 +104,18 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
             "-e".to_string(),
             TERMINAL_SCRIPT.replace("{command}", &applescript_escape(&cd_command)),
         ]),
-        TerminalType::Ghostty => Ok(vec![
-            "osascript".to_string(),
-            "-e".to_string(),
-            // For Ghostty, we don't have a session ID yet in build_spawn_command
-            // The window_title will be set when we have the session context
-            GHOSTTY_SCRIPT
-                .replace("{command}", &applescript_escape(&cd_command))
-                .replace("{window_title}", "shards-session"),
-        ]),
+        TerminalType::Ghostty => {
+            // Use Ghostty's direct execution mode (available since Ghostty 1.2.0)
+            // Pass sh, -c, and command as separate arguments - no direct: prefix needed
+            // as Ghostty 1.2.0+ uses execvpe() for -e by default
+            Ok(vec![
+                "ghostty".to_string(),
+                "-e".to_string(),
+                "sh".to_string(),
+                "-c".to_string(),
+                cd_command,
+            ])
+        }
         TerminalType::Native => {
             // Use system default (detect and delegate)
             let detected = detect_terminal()?;
@@ -226,6 +213,34 @@ pub fn execute_spawn_script(
         config.command
     );
 
+    // Ghostty uses direct execution instead of AppleScript
+    if config.terminal_type == TerminalType::Ghostty {
+        debug!(
+            event = "terminal.spawn_ghostty_direct",
+            terminal_type = %config.terminal_type,
+            working_directory = %config.working_directory.display()
+        );
+
+        let output = std::process::Command::new("ghostty")
+            .arg("-e")
+            .arg("sh")
+            .arg("-c")
+            .arg(&cd_command)
+            .spawn()
+            .map_err(|e| TerminalError::SpawnFailed {
+                message: format!("Failed to spawn Ghostty: {}", e),
+            })?;
+
+        debug!(
+            event = "terminal.spawn_ghostty_completed",
+            terminal_type = %config.terminal_type,
+            pid = %output.id()
+        );
+
+        // Return window_title as identifier (Ghostty doesn't have window IDs)
+        return Ok(window_title.map(|s| s.to_string()));
+    }
+
     let script = match config.terminal_type {
         TerminalType::ITerm => {
             ITERM_SCRIPT.replace("{command}", &applescript_escape(&cd_command))
@@ -233,12 +248,7 @@ pub fn execute_spawn_script(
         TerminalType::TerminalApp => {
             TERMINAL_SCRIPT.replace("{command}", &applescript_escape(&cd_command))
         }
-        TerminalType::Ghostty => {
-            let title = window_title.unwrap_or("shards-session");
-            GHOSTTY_SCRIPT
-                .replace("{command}", &applescript_escape(&cd_command))
-                .replace("{window_title}", title)
-        }
+        TerminalType::Ghostty => unreachable!("Handled above"),
         TerminalType::Native => {
             let detected = detect_terminal()?;
             if detected == TerminalType::Native {
@@ -433,6 +443,64 @@ mod tests {
     }
 
     #[test]
+    fn test_build_spawn_command_ghostty() {
+        let config = SpawnConfig::new(
+            TerminalType::Ghostty,
+            std::env::current_dir().unwrap(),
+            "claude".to_string(),
+        );
+
+        let result = build_spawn_command(&config);
+        assert!(result.is_ok());
+
+        let command = result.unwrap();
+        // Ghostty uses direct execution: ghostty -e sh -c "cd ... && command"
+        assert_eq!(command[0], "ghostty");
+        assert_eq!(command[1], "-e");
+        assert_eq!(command[2], "sh");
+        assert_eq!(command[3], "-c");
+        assert!(command[4].contains("claude"));
+    }
+
+    #[test]
+    fn test_build_spawn_command_ghostty_with_spaces() {
+        let config = SpawnConfig::new(
+            TerminalType::Ghostty,
+            std::env::current_dir().unwrap(),
+            "kiro-cli chat --verbose".to_string(),
+        );
+
+        let result = build_spawn_command(&config);
+        assert!(result.is_ok());
+
+        let command = result.unwrap();
+        // Command should be in the shell command argument (index 4)
+        assert!(command[4].contains("kiro-cli chat --verbose"));
+    }
+
+    #[test]
+    fn test_build_spawn_command_ghostty_path_with_single_quote() {
+        // Test that paths with single quotes are properly escaped
+        // We can't create a real directory with quotes, so just verify the escaping logic
+        let escaped = shell_escape("/Users/foo's dir/project");
+        // The escaping should handle the single quote correctly
+        assert!(escaped.contains("foo"));
+        assert!(escaped.contains("dir"));
+        // Should use the shell escaping pattern for single quotes
+        assert!(escaped.contains("'\"'\"'"));
+    }
+
+    #[test]
+    fn test_shell_escape_handles_metacharacters() {
+        // Verify shell escaping handles various special characters
+        assert_eq!(shell_escape("path with spaces"), "'path with spaces'");
+        assert_eq!(shell_escape("$HOME/dir"), "'$HOME/dir'");
+        assert_eq!(shell_escape("dir;rm -rf /"), "'dir;rm -rf /'");
+        assert_eq!(shell_escape("$(whoami)"), "'$(whoami)'");
+        assert_eq!(shell_escape("`id`"), "'`id`'");
+    }
+
+    #[test]
     fn test_build_spawn_command_empty_command() {
         let config = SpawnConfig::new(
             TerminalType::ITerm,
@@ -528,9 +596,9 @@ mod tests {
     #[test]
     fn test_spawn_scripts_have_window_id_return() {
         // Verify spawn scripts have the expected return statements
+        // Note: Ghostty uses direct execution (not AppleScript), so no script to check
         assert!(ITERM_SCRIPT.contains("return windowId"));
         assert!(TERMINAL_SCRIPT.contains("return id of newWindow"));
-        assert!(GHOSTTY_SCRIPT.contains("return \"{window_title}\""));
     }
 
     #[test]
