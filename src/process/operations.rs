@@ -16,6 +16,33 @@ pub fn is_process_running(pid: u32) -> Result<bool, ProcessError> {
     Ok(system.process(pid_obj).is_some())
 }
 
+/// Check if a process name matches an expected name
+///
+/// Uses flexible matching to handle cases where process names may differ
+/// from what was originally captured (e.g., truncation, path variations).
+fn process_name_matches(actual_name: &str, expected_name: &str) -> bool {
+    // Exact match
+    if actual_name == expected_name {
+        return true;
+    }
+
+    // Substring match (handles cases like "kiro-cli-chat" matching "kiro-cli")
+    if actual_name.contains(expected_name) || expected_name.contains(actual_name) {
+        return true;
+    }
+
+    // Base name comparison (strip paths and compare)
+    let actual_base = actual_name.rsplit('/').next().unwrap_or(actual_name);
+    let expected_base = expected_name.rsplit('/').next().unwrap_or(expected_name);
+
+    if actual_base == expected_base {
+        return true;
+    }
+
+    // Check if either contains the other (for compound names like kiro-cli-chat)
+    actual_base.contains(expected_base) || expected_base.contains(actual_base)
+}
+
 /// Kill a process with the given PID, validating it matches expected metadata
 pub fn kill_process(
     pid: u32,
@@ -31,7 +58,7 @@ pub fn kill_process(
             // Validate process identity to prevent PID reuse attacks
             if let Some(name) = expected_name {
                 let actual_name = process.name().to_string_lossy().to_string();
-                if actual_name != name {
+                if !process_name_matches(&actual_name, name) {
                     return Err(ProcessError::PidReused {
                         pid,
                         expected: name.to_string(),
@@ -225,19 +252,64 @@ mod tests {
         let result = find_process_by_name("nonexistent", None);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_command_matches() {
+        // Exact match
+        assert!(command_matches("kiro-cli chat", "kiro-cli chat"));
+
+        // Match with full path
+        assert!(command_matches("/Users/rasmus/.local/bin/kiro-cli-chat chat", "kiro-cli chat"));
+        assert!(command_matches("/usr/bin/kiro-cli-chat chat --flag", "kiro-cli chat"));
+
+        // Match with different binary name containing the pattern
+        assert!(command_matches("kiro-cli-chat chat", "kiro chat"));
+
+        // Flags should be ignored in pattern
+        assert!(command_matches("claude --verbose", "claude --yolo"));
+        assert!(command_matches("claude", "claude --trust-all"));
+
+        // Case insensitive
+        assert!(command_matches("Claude Chat", "claude chat"));
+
+        // Non-match
+        assert!(!command_matches("gemini chat", "kiro chat"));
+        assert!(!command_matches("/usr/bin/vim", "kiro-cli chat"));
+    }
+
+    #[test]
+    fn test_process_name_matches() {
+        // Exact match
+        assert!(process_name_matches("kiro-cli-chat", "kiro-cli-chat"));
+
+        // Substring match (actual contains expected)
+        assert!(process_name_matches("kiro-cli-chat", "kiro-cli"));
+        assert!(process_name_matches("kiro-cli-chat", "kiro"));
+
+        // Substring match (expected contains actual)
+        assert!(process_name_matches("kiro", "kiro-cli-chat"));
+
+        // Base name comparison with paths
+        assert!(process_name_matches("/usr/bin/sleep", "sleep"));
+        assert!(process_name_matches("sleep", "/usr/bin/sleep"));
+
+        // Non-match
+        assert!(!process_name_matches("gemini", "kiro"));
+        assert!(!process_name_matches("claude-code", "kiro-cli"));
+    }
 }
 
 /// Generate multiple search patterns for better process matching
-/// 
+///
 /// Creates a deduplicated list of search patterns to improve process detection reliability.
 /// Includes the original pattern, partial matches (before first dash), and known agent variations.
-/// 
+///
 /// # Examples
-/// 
-/// ```
+///
+/// ```ignore
 /// let patterns = generate_search_patterns("kiro-cli");
 /// // Returns: ["kiro-cli", "kiro"] (deduplicated)
-/// 
+///
 /// let patterns = generate_search_patterns("simple");
 /// // Returns: ["simple"]
 /// ```
@@ -261,6 +333,35 @@ fn generate_search_patterns(name_pattern: &str) -> Vec<String> {
     patterns.into_iter().collect()
 }
 
+/// Check if a command line matches a command pattern
+///
+/// Uses flexible matching to handle cases where:
+/// - The binary path differs (e.g., `/usr/bin/kiro-cli-chat` vs `kiro-cli`)
+/// - Arguments may vary
+///
+/// Returns true if all significant words from the pattern appear in the command line
+fn command_matches(cmd_line: &str, cmd_pattern: &str) -> bool {
+    // Extract significant words from the pattern (skip common flags)
+    let pattern_words: Vec<&str> = cmd_pattern
+        .split_whitespace()
+        .filter(|w| !w.starts_with('-') && !w.starts_with("--"))
+        .collect();
+
+    if pattern_words.is_empty() {
+        return true;
+    }
+
+    let cmd_line_lower = cmd_line.to_lowercase();
+
+    // Check if all pattern words appear in the command line
+    // Use contains for substring matching to handle path differences
+    pattern_words.iter().all(|word| {
+        let word_lower = word.to_lowercase();
+        // Check for exact word or as part of a path/compound name
+        cmd_line_lower.contains(&word_lower)
+    })
+}
+
 /// Find a process by name, optionally filtering by command line pattern
 pub fn find_process_by_name(
     name_pattern: &str,
@@ -271,26 +372,26 @@ pub fn find_process_by_name(
 
     // Try multiple search strategies
     let search_patterns = generate_search_patterns(name_pattern);
-    
+
     for (pid, process) in system.processes() {
         let process_name = process.name().to_string_lossy();
         let cmd_line = process.cmd().iter()
             .map(|s| s.to_string_lossy())
             .collect::<Vec<_>>()
             .join(" ");
-        
+
         // Try each search pattern
         let name_matches = search_patterns.iter().any(|pattern| {
             process_name.contains(pattern) || cmd_line.contains(pattern)
         });
-        
+
         if !name_matches {
             continue;
         }
 
-        // If command pattern specified, it must match
+        // If command pattern specified, use flexible matching
         if let Some(cmd_pattern) = command_pattern
-            && !cmd_line.contains(cmd_pattern) {
+            && !command_matches(&cmd_line, cmd_pattern) {
                 continue;
             }
 
