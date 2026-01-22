@@ -12,7 +12,11 @@ pub fn create_session(
     shards_config: &ShardsConfig,
 ) -> Result<Session, SessionError> {
     let agent = request.agent_or_default(&shards_config.agent.default);
-    let agent_command = shards_config.get_agent_command(&agent);
+    let agent_command = shards_config
+        .get_agent_command(&agent)
+        .map_err(|e| SessionError::ConfigError {
+            message: e.to_string(),
+        })?;
 
     // Warn if agent CLI is not available in PATH
     if let Some(false) = agents::is_agent_available(&agent) {
@@ -370,7 +374,11 @@ pub fn restart_session(
     let base_config = Config::new();
     let shards_config = ShardsConfig::load_hierarchy().unwrap_or_default();
     let agent = agent_override.unwrap_or(session.agent.clone());
-    let agent_command = shards_config.get_agent_command(&agent);
+    let agent_command = shards_config
+        .get_agent_command(&agent)
+        .map_err(|e| SessionError::ConfigError {
+            message: e.to_string(),
+        })?;
 
     // Warn if agent CLI is not available in PATH
     if let Some(false) = agents::is_agent_available(&agent) {

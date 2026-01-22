@@ -31,25 +31,25 @@ pub fn validate_config(config: &ShardsConfig) -> Result<(), ConfigError> {
     }
 
     // Validate terminal preference if set
-    if let Some(ref terminal) = config.terminal.preferred {
-        if !VALID_TERMINALS.contains(&terminal.as_str()) {
-            return Err(ConfigError::InvalidConfiguration {
-                message: format!(
-                    "Invalid terminal '{}'. Valid options: {}",
-                    terminal,
-                    VALID_TERMINALS.join(", ")
-                ),
-            });
-        }
+    if let Some(ref terminal) = config.terminal.preferred
+        && !VALID_TERMINALS.contains(&terminal.as_str())
+    {
+        return Err(ConfigError::InvalidConfiguration {
+            message: format!(
+                "Invalid terminal '{}'. Valid options: {}",
+                terminal,
+                VALID_TERMINALS.join(", ")
+            ),
+        });
     }
 
     // Validate include patterns if configured
-    if let Some(ref include_config) = config.include_patterns {
-        if let Err(e) = include_config.validate() {
-            return Err(ConfigError::InvalidConfiguration {
-                message: format!("Invalid include patterns: {}", e),
-            });
-        }
+    if let Some(ref include_config) = config.include_patterns
+        && let Err(e) = include_config.validate()
+    {
+        return Err(ConfigError::InvalidConfiguration {
+            message: format!("Invalid include patterns: {}", e),
+        });
     }
 
     Ok(())

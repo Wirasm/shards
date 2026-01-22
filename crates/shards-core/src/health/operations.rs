@@ -2,17 +2,17 @@ use crate::health::types::{HealthMetrics, HealthOutput, HealthStatus, ShardHealt
 use crate::process::types::ProcessMetrics;
 use crate::sessions::types::Session;
 use chrono::{DateTime, Utc};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static IDLE_THRESHOLD_MINUTES: AtomicI64 = AtomicI64::new(10);
+static IDLE_THRESHOLD_MINUTES: AtomicU64 = AtomicU64::new(10);
 
 /// Set the idle threshold for health status calculation
-pub fn set_idle_threshold_minutes(minutes: i64) {
+pub fn set_idle_threshold_minutes(minutes: u64) {
     IDLE_THRESHOLD_MINUTES.store(minutes, Ordering::Relaxed);
 }
 
 /// Get the current idle threshold
-pub fn get_idle_threshold_minutes() -> i64 {
+pub fn get_idle_threshold_minutes() -> u64 {
     IDLE_THRESHOLD_MINUTES.load(Ordering::Relaxed)
 }
 
@@ -38,7 +38,8 @@ pub fn calculate_health_status(
     let minutes_since_activity = (now.signed_duration_since(activity_time)).num_minutes();
     let threshold = IDLE_THRESHOLD_MINUTES.load(Ordering::Relaxed);
 
-    if minutes_since_activity < threshold {
+    // Compare as i64 (threshold fits in i64, and minutes_since_activity is i64)
+    if minutes_since_activity < threshold as i64 {
         HealthStatus::Working
     } else if last_message_from_user {
         HealthStatus::Stuck

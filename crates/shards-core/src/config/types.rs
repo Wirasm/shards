@@ -82,7 +82,7 @@ pub struct HealthConfig {
     /// Threshold in minutes before a session is considered idle.
     /// Default: 10 minutes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_threshold_minutes: Option<i64>,
+    pub idle_threshold_minutes: Option<u64>,
 
     /// Interval in seconds between health check refreshes.
     /// Default: 5 seconds.

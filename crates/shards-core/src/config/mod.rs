@@ -64,7 +64,10 @@ impl ShardsConfig {
     /// Get the command to run for a specific agent.
     ///
     /// See [`loading::get_agent_command`] for details.
-    pub fn get_agent_command(&self, agent_name: &str) -> String {
+    pub fn get_agent_command(
+        &self,
+        agent_name: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         loading::get_agent_command(self, agent_name)
     }
 }

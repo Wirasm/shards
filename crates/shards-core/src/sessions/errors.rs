@@ -52,6 +52,9 @@ pub enum SessionError {
 
     #[error("Access denied for process '{pid}'")]
     ProcessAccessDenied { pid: u32 },
+
+    #[error("Configuration error: {message}")]
+    ConfigError { message: String },
 }
 
 impl ShardsError for SessionError {
@@ -71,6 +74,7 @@ impl ShardsError for SessionError {
             SessionError::ProcessNotFound { .. } => "PROCESS_NOT_FOUND",
             SessionError::ProcessKillFailed { .. } => "PROCESS_KILL_FAILED",
             SessionError::ProcessAccessDenied { .. } => "PROCESS_ACCESS_DENIED",
+            SessionError::ConfigError { .. } => "CONFIG_ERROR",
         }
     }
 
@@ -85,6 +89,7 @@ impl ShardsError for SessionError {
                 | SessionError::InvalidPortCount
                 | SessionError::PortRangeExhausted
                 | SessionError::PortAllocationFailed { .. }
+                | SessionError::ConfigError { .. }
         )
     }
 }
