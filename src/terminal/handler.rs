@@ -2,6 +2,10 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 
 use crate::core::config::ShardsConfig;
+use crate::process::{
+    ensure_pid_dir, get_pid_file_path, get_process_info, is_process_running,
+    read_pid_file_with_retry, wrap_command_with_pid_capture,
+};
 use crate::terminal::{errors::TerminalError, operations, types::*};
 
 /// Process info returned from find_agent_process_with_retry
@@ -84,6 +88,7 @@ fn find_agent_process_with_retry(
 /// * `command` - The command to execute
 /// * `config` - The shards configuration
 /// * `session_id` - Optional session ID for unique Ghostty window titles
+/// * `shards_dir` - Optional shards directory for PID file tracking
 ///
 /// Returns a SpawnResult containing the terminal type, process info, and window ID
 pub fn spawn_terminal(
@@ -91,6 +96,7 @@ pub fn spawn_terminal(
     command: &str,
     config: &ShardsConfig,
     session_id: Option<&str>,
+    shards_dir: Option<&Path>,
 ) -> Result<SpawnResult, TerminalError> {
     info!(
         event = "terminal.spawn_started",
@@ -125,10 +131,43 @@ pub fn spawn_terminal(
         working_directory = %working_directory.display()
     );
 
+    // Set up PID file tracking if session_id and shards_dir are provided
+    let pid_file_path = match (session_id, shards_dir) {
+        (Some(sid), Some(sdir)) => {
+            // Ensure PID directory exists
+            ensure_pid_dir(sdir).map_err(|e| TerminalError::SpawnFailed {
+                message: format!("Failed to create PID directory: {}", e),
+            })?;
+
+            let path = get_pid_file_path(sdir, sid);
+            debug!(
+                event = "terminal.pid_file_configured",
+                session_id = sid,
+                pid_file = %path.display()
+            );
+            Some(path)
+        }
+        _ => None,
+    };
+
+    // Wrap command with PID capture if we have a PID file path
+    let actual_command = match &pid_file_path {
+        Some(path) => {
+            let wrapped = wrap_command_with_pid_capture(command, path);
+            debug!(
+                event = "terminal.command_wrapped",
+                original = command,
+                wrapped = %wrapped
+            );
+            wrapped
+        }
+        None => command.to_string(),
+    };
+
     let spawn_config = SpawnConfig::new(
         terminal_type.clone(),
         working_directory.to_path_buf(),
-        command.to_string(),
+        actual_command.clone(),
     );
 
     // Generate unique window title for Ghostty (based on session_id if available)
@@ -148,14 +187,19 @@ pub fn spawn_terminal(
         terminal_window_id = ?terminal_window_id
     );
 
-    // Try to find the actual agent process with retry logic
-    let agent_name = operations::extract_command_name(command);
-    let (process_id, process_name, process_start_time) =
-        find_agent_process_with_retry(&agent_name, command, config)?;
+    // Get process info - prefer PID file, fall back to process search
+    let (process_id, process_name, process_start_time) = match &pid_file_path {
+        Some(path) => read_pid_from_file_with_validation(path, config)?,
+        None => {
+            // Fall back to process search (legacy behavior)
+            let agent_name = operations::extract_command_name(command);
+            find_agent_process_with_retry(&agent_name, command, config)?
+        }
+    };
 
     let result = SpawnResult::new(
         terminal_type.clone(),
-        command.to_string(),
+        command.to_string(), // Store original command, not wrapped
         working_directory.to_path_buf(),
         process_id,
         process_name.clone(),
@@ -174,6 +218,84 @@ pub fn spawn_terminal(
     );
 
     Ok(result)
+}
+
+/// Read PID from file and validate the process exists
+fn read_pid_from_file_with_validation(
+    pid_file: &Path,
+    config: &ShardsConfig,
+) -> ProcessSearchResult {
+    info!(
+        event = "terminal.reading_pid_file",
+        path = %pid_file.display()
+    );
+
+    // Read PID with retry (file may not exist immediately after spawn)
+    let max_attempts = config.terminal.max_retry_attempts;
+    let initial_delay = config.terminal.spawn_delay_ms;
+
+    match read_pid_file_with_retry(pid_file, max_attempts, initial_delay) {
+        Ok(Some(pid)) => {
+            // Verify the process exists and get its info
+            match is_process_running(pid) {
+                Ok(true) => {
+                    // Get full process info
+                    match get_process_info(pid) {
+                        Ok(info) => {
+                            info!(
+                                event = "terminal.pid_file_process_found",
+                                pid,
+                                process_name = %info.name,
+                                start_time = info.start_time
+                            );
+                            Ok((Some(pid), Some(info.name), Some(info.start_time)))
+                        }
+                        Err(e) => {
+                            warn!(
+                                event = "terminal.pid_file_process_info_failed",
+                                pid,
+                                error = %e
+                            );
+                            // Process exists but couldn't get info - still return PID
+                            Ok((Some(pid), None, None))
+                        }
+                    }
+                }
+                Ok(false) => {
+                    warn!(
+                        event = "terminal.pid_file_process_not_running",
+                        pid,
+                        message = "PID from file exists but process is not running"
+                    );
+                    Ok((None, None, None))
+                }
+                Err(e) => {
+                    warn!(
+                        event = "terminal.pid_file_process_check_failed",
+                        pid,
+                        error = %e
+                    );
+                    Ok((None, None, None))
+                }
+            }
+        }
+        Ok(None) => {
+            warn!(
+                event = "terminal.pid_file_not_found",
+                path = %pid_file.display(),
+                message = "PID file not created after spawn - process tracking unavailable"
+            );
+            Ok((None, None, None))
+        }
+        Err(e) => {
+            warn!(
+                event = "terminal.pid_file_read_error",
+                path = %pid_file.display(),
+                error = %e
+            );
+            Ok((None, None, None))
+        }
+    }
 }
 
 pub fn detect_available_terminal() -> Result<TerminalType, TerminalError> {
@@ -245,7 +367,7 @@ mod tests {
     #[test]
     fn test_spawn_terminal_invalid_directory() {
         let config = ShardsConfig::default();
-        let result = spawn_terminal(Path::new("/nonexistent/directory"), "echo hello", &config, None);
+        let result = spawn_terminal(Path::new("/nonexistent/directory"), "echo hello", &config, None, None);
 
         assert!(result.is_err());
         if let Err(e) = result {
@@ -257,7 +379,7 @@ mod tests {
     fn test_spawn_terminal_empty_command() {
         let current_dir = std::env::current_dir().unwrap();
         let config = ShardsConfig::default();
-        let result = spawn_terminal(&current_dir, "", &config, None);
+        let result = spawn_terminal(&current_dir, "", &config, None, None);
 
         assert!(result.is_err());
         if let Err(e) = result {

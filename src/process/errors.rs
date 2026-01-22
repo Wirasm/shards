@@ -23,6 +23,12 @@ pub enum ProcessError {
         expected: String,
         actual: String,
     },
+
+    #[error("PID file error at '{path}': {message}")]
+    PidFileError {
+        path: std::path::PathBuf,
+        message: String,
+    },
 }
 
 impl ShardsError for ProcessError {
@@ -34,6 +40,7 @@ impl ShardsError for ProcessError {
             ProcessError::SystemError { .. } => "PROCESS_SYSTEM_ERROR",
             ProcessError::InvalidPid { .. } => "PROCESS_INVALID_PID",
             ProcessError::PidReused { .. } => "PROCESS_PID_REUSED",
+            ProcessError::PidFileError { .. } => "PROCESS_PID_FILE_ERROR",
         }
     }
 

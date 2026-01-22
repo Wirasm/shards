@@ -1,7 +1,8 @@
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::core::config::{Config, ShardsConfig};
 use crate::git;
+use crate::process::{delete_pid_file, get_pid_file_path};
 use crate::sessions::{errors::SessionError, operations, types::*};
 use crate::terminal;
 
@@ -81,9 +82,9 @@ pub fn create_session(
         branch = worktree.branch
     );
 
-    // 5. Launch terminal (I/O) - pass session_id for unique Ghostty window titles
+    // 5. Launch terminal (I/O) - pass session_id for unique Ghostty window titles and PID tracking
     let spawn_result =
-        terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config, Some(&session_id))
+        terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config, Some(&session_id), Some(&base_config.shards_dir))
             .map_err(|e| SessionError::TerminalError { source: e })?;
 
     // 6. Create session record
@@ -239,7 +240,24 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
         worktree_path = %session.worktree_path.display()
     );
 
-    // 5. Remove session file (automatically frees port range)
+    // 5. Clean up PID file (best-effort, don't fail if missing)
+    let pid_file = get_pid_file_path(&config.shards_dir, &session.id);
+    if let Err(e) = delete_pid_file(&pid_file) {
+        warn!(
+            event = "session.destroy_pid_file_cleanup_failed",
+            session_id = session.id,
+            pid_file = %pid_file.display(),
+            error = %e
+        );
+    } else {
+        info!(
+            event = "session.destroy_pid_file_cleaned",
+            session_id = session.id,
+            pid_file = %pid_file.display()
+        );
+    }
+
+    // 6. Remove session file (automatically frees port range)
     operations::remove_session_file(&config.sessions_dir(), &session.id)?;
 
     info!(
@@ -318,6 +336,7 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
     }
 
     // 4. Determine agent and command
+    let base_config = Config::new();
     let shards_config = ShardsConfig::load_hierarchy().unwrap_or_default();
     let agent = agent_override.unwrap_or(session.agent.clone());
     let agent_command = shards_config.get_agent_command(&agent);
@@ -332,7 +351,7 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
     // 5. Relaunch terminal in existing worktree
     info!(event = "session.restart_spawn_started", worktree_path = %session.worktree_path.display());
 
-    let spawn_result = terminal::handler::spawn_terminal(&session.worktree_path, &agent_command, &shards_config, Some(&session.id))
+    let spawn_result = terminal::handler::spawn_terminal(&session.worktree_path, &agent_command, &shards_config, Some(&session.id), Some(&base_config.shards_dir))
         .map_err(|e| SessionError::TerminalError { source: e })?;
 
     info!(

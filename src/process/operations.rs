@@ -244,10 +244,20 @@ pub fn find_process_by_name(
         }
 
         // If command pattern specified, use flexible matching
-        if let Some(cmd_pattern) = command_pattern
-            && !command_matches(&cmd_line, cmd_pattern) {
+        // But if cmd_line is empty (macOS often can't read process args), skip command check
+        if let Some(cmd_pattern) = command_pattern {
+            if !cmd_line.is_empty() && !command_matches(&cmd_line, cmd_pattern) {
                 continue;
             }
+            // When cmd_line is empty, we can't verify the command pattern,
+            // so we rely on name matching only (already passed above)
+            if cmd_line.is_empty() {
+                debug!(
+                    "find_process_by_name: cmd_line unavailable for PID {}, relying on name match only",
+                    pid
+                );
+            }
+        }
 
         return Ok(Some(ProcessInfo {
             pid: Pid::from_raw(pid.as_u32()),
