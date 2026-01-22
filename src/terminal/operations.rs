@@ -36,19 +36,8 @@ const TERMINAL_CLOSE_SCRIPT: &str = r#"tell application "Terminal"
         end try
     end tell"#;
 
-// Ghostty doesn't support window IDs, so we close by title match
-const GHOSTTY_CLOSE_SCRIPT: &str = r#"tell application "System Events"
-        tell process "Ghostty"
-            try
-                set targetWindows to (windows whose title contains "{window_title}")
-                repeat with targetWindow in targetWindows
-                    click button 1 of targetWindow
-                end repeat
-            on error
-                -- Window may already be closed or not found
-            end try
-        end tell
-    end tell"#;
+// Note: Ghostty window closing uses pkill instead of AppleScript
+// because AppleScript window title matching doesn't work reliably for Ghostty.
 
 #[cfg(target_os = "macos")]
 pub fn detect_terminal() -> Result<TerminalType, TerminalError> {
@@ -105,11 +94,14 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
             TERMINAL_SCRIPT.replace("{command}", &applescript_escape(&cd_command)),
         ]),
         TerminalType::Ghostty => {
-            // Use Ghostty's direct execution mode (available since Ghostty 1.2.0)
-            // Pass sh, -c, and command as separate arguments - no direct: prefix needed
-            // as Ghostty 1.2.0+ uses execvpe() for -e by default
+            // On macOS, ghostty CLI doesn't spawn GUI windows directly.
+            // Must use 'open -na Ghostty.app --args' to launch a new window.
+            // Uses -e flag with sh -c for command execution (Ghostty 1.2.0+)
             Ok(vec![
-                "ghostty".to_string(),
+                "open".to_string(),
+                "-na".to_string(),
+                "Ghostty.app".to_string(),
+                "--args".to_string(),
                 "-e".to_string(),
                 "sh".to_string(),
                 "-c".to_string(),
@@ -213,19 +205,31 @@ pub fn execute_spawn_script(
         config.command
     );
 
-    // Ghostty uses direct execution instead of AppleScript
+    // Ghostty on macOS requires 'open -na Ghostty.app --args' to spawn new windows
     if config.terminal_type == TerminalType::Ghostty {
+        let title = window_title.unwrap_or("shards-session");
+        // Set window title via ANSI escape sequence for later identification
+        // Format: \033]2;title\007 sets the window title
+        let ghostty_command = format!(
+            "printf '\\033]2;{}\\007' && {}",
+            title, cd_command
+        );
+
         debug!(
             event = "terminal.spawn_ghostty_direct",
             terminal_type = %config.terminal_type,
-            working_directory = %config.working_directory.display()
+            working_directory = %config.working_directory.display(),
+            window_title = %title
         );
 
-        let output = std::process::Command::new("ghostty")
+        let output = std::process::Command::new("open")
+            .arg("-na")
+            .arg("Ghostty.app")
+            .arg("--args")
             .arg("-e")
             .arg("sh")
             .arg("-c")
-            .arg(&cd_command)
+            .arg(&ghostty_command)
             .spawn()
             .map_err(|e| TerminalError::SpawnFailed {
                 message: format!("Failed to spawn Ghostty: {}", e),
@@ -237,8 +241,8 @@ pub fn execute_spawn_script(
             pid = %output.id()
         );
 
-        // Return window_title as identifier (Ghostty doesn't have window IDs)
-        return Ok(window_title.map(|s| s.to_string()));
+        // Return window_title as identifier for close_terminal_window
+        return Ok(Some(title.to_string()));
     }
 
     let script = match config.terminal_type {
@@ -340,10 +344,51 @@ pub fn close_terminal_window(
         return Ok(());
     };
 
+    // Ghostty: AppleScript window title matching doesn't work reliably.
+    // Instead, find and kill the Ghostty process by matching command line args.
+    if *terminal_type == TerminalType::Ghostty {
+        debug!(
+            event = "terminal.close_ghostty_pkill",
+            window_title = %id
+        );
+
+        // Use pkill to kill Ghostty processes that contain our session identifier
+        let result = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(format!("Ghostty.*{}", id))
+            .output();
+
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    debug!(
+                        event = "terminal.close_ghostty_completed",
+                        window_title = %id
+                    );
+                } else {
+                    debug!(
+                        event = "terminal.close_ghostty_no_match",
+                        window_title = %id,
+                        message = "No matching Ghostty process found"
+                    );
+                }
+            }
+            Err(e) => {
+                debug!(
+                    event = "terminal.close_ghostty_failed",
+                    window_title = %id,
+                    error = %e,
+                    message = "pkill failed - continuing with destroy"
+                );
+            }
+        }
+        return Ok(());
+    }
+
     let script = match terminal_type {
         TerminalType::ITerm => ITERM_CLOSE_SCRIPT.replace("{window_id}", id),
         TerminalType::TerminalApp => TERMINAL_CLOSE_SCRIPT.replace("{window_id}", id),
-        TerminalType::Ghostty => GHOSTTY_CLOSE_SCRIPT.replace("{window_title}", id),
+        TerminalType::Ghostty => unreachable!("Handled above"),
         TerminalType::Native => {
             // For Native, try to detect what terminal is running
             let detected = detect_terminal()?;
@@ -454,12 +499,15 @@ mod tests {
         assert!(result.is_ok());
 
         let command = result.unwrap();
-        // Ghostty uses direct execution: ghostty -e sh -c "cd ... && command"
-        assert_eq!(command[0], "ghostty");
-        assert_eq!(command[1], "-e");
-        assert_eq!(command[2], "sh");
-        assert_eq!(command[3], "-c");
-        assert!(command[4].contains("claude"));
+        // On macOS, Ghostty requires: open -na Ghostty.app --args -e sh -c "..."
+        assert_eq!(command[0], "open");
+        assert_eq!(command[1], "-na");
+        assert_eq!(command[2], "Ghostty.app");
+        assert_eq!(command[3], "--args");
+        assert_eq!(command[4], "-e");
+        assert_eq!(command[5], "sh");
+        assert_eq!(command[6], "-c");
+        assert!(command[7].contains("claude"));
     }
 
     #[test]
@@ -474,8 +522,8 @@ mod tests {
         assert!(result.is_ok());
 
         let command = result.unwrap();
-        // Command should be in the shell command argument (index 4)
-        assert!(command[4].contains("kiro-cli chat --verbose"));
+        // Command should be in the shell command argument (index 7)
+        assert!(command[7].contains("kiro-cli chat --verbose"));
     }
 
     #[test]
@@ -562,9 +610,9 @@ mod tests {
     #[test]
     fn test_close_terminal_scripts_defined() {
         // Verify close scripts are non-empty
+        // Note: Ghostty uses pkill instead of AppleScript, so no script to check
         assert!(!ITERM_CLOSE_SCRIPT.is_empty());
         assert!(!TERMINAL_CLOSE_SCRIPT.is_empty());
-        assert!(!GHOSTTY_CLOSE_SCRIPT.is_empty());
     }
 
     #[cfg(target_os = "macos")]
@@ -604,8 +652,8 @@ mod tests {
     #[test]
     fn test_close_scripts_have_window_id_placeholders() {
         // Verify close scripts have the expected placeholders
+        // Note: Ghostty uses pkill instead of AppleScript, so no script to check
         assert!(ITERM_CLOSE_SCRIPT.contains("{window_id}"));
         assert!(TERMINAL_CLOSE_SCRIPT.contains("{window_id}"));
-        assert!(GHOSTTY_CLOSE_SCRIPT.contains("{window_title}"));
     }
 }
