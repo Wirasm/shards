@@ -2,11 +2,11 @@
 //!
 //! Stores health snapshots over time for trend analysis.
 
-use std::path::PathBuf;
-use std::fs;
+use crate::health::types::HealthOutput;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::health::types::HealthOutput;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthSnapshot {
@@ -22,11 +22,15 @@ pub struct HealthSnapshot {
 
 impl From<&HealthOutput> for HealthSnapshot {
     fn from(output: &HealthOutput) -> Self {
-        let (cpu_sum, cpu_count) = output.shards.iter()
+        let (cpu_sum, cpu_count) = output
+            .shards
+            .iter()
             .filter_map(|s| s.metrics.cpu_usage_percent)
             .fold((0.0, 0), |(sum, count), cpu| (sum + cpu, count + 1));
 
-        let total_mem: u64 = output.shards.iter()
+        let total_mem: u64 = output
+            .shards
+            .iter()
             .filter_map(|s| s.metrics.memory_usage_mb)
             .sum();
 
@@ -37,7 +41,11 @@ impl From<&HealthOutput> for HealthSnapshot {
             idle: output.idle_count,
             stuck: output.stuck_count,
             crashed: output.crashed_count,
-            avg_cpu_percent: if cpu_count > 0 { Some(cpu_sum / cpu_count as f32) } else { None },
+            avg_cpu_percent: if cpu_count > 0 {
+                Some(cpu_sum / cpu_count as f32)
+            } else {
+                None
+            },
             total_memory_mb: if total_mem > 0 { Some(total_mem) } else { None },
         }
     }
@@ -45,7 +53,12 @@ impl From<&HealthOutput> for HealthSnapshot {
 
 pub fn get_history_dir() -> Result<PathBuf, std::io::Error> {
     dirs::home_dir()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Could not find home directory"))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Could not find home directory",
+            )
+        })
         .map(|p| p.join(".shards").join("health_history"))
 }
 
@@ -81,10 +94,7 @@ pub fn load_history(days: u64) -> Result<Vec<HealthSnapshot>, std::io::Error> {
             if let Ok(content) = fs::read_to_string(entry.path())
                 && let Ok(snapshots) = serde_json::from_str::<Vec<HealthSnapshot>>(&content)
             {
-                all_snapshots.extend(
-                    snapshots.into_iter()
-                        .filter(|s| s.timestamp > cutoff)
-                );
+                all_snapshots.extend(snapshots.into_iter().filter(|s| s.timestamp > cutoff));
             }
         }
     }

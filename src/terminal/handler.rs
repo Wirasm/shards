@@ -19,19 +19,15 @@ fn find_agent_process_with_retry(
 ) -> ProcessSearchResult {
     let max_attempts = config.terminal.max_retry_attempts;
     let mut delay_ms = config.terminal.spawn_delay_ms;
-    
+
     for attempt in 1..=max_attempts {
         info!(
             event = "terminal.searching_for_agent_process",
-            attempt,
-            max_attempts,
-            delay_ms,
-            agent_name,
-            command
+            attempt, max_attempts, delay_ms, agent_name, command
         );
-        
+
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-        
+
         match crate::process::find_process_by_name(agent_name, Some(command)) {
             Ok(Some(info)) => {
                 let total_delay_ms = config.terminal.spawn_delay_ms * (2_u64.pow(attempt) - 1);
@@ -43,7 +39,11 @@ fn find_agent_process_with_retry(
                     process_name = info.name,
                     agent_name
                 );
-                return Ok((Some(info.pid.as_u32()), Some(info.name), Some(info.start_time)));
+                return Ok((
+                    Some(info.pid.as_u32()),
+                    Some(info.name),
+                    Some(info.start_time),
+                ));
             }
             Ok(None) => {
                 if attempt == max_attempts {
@@ -73,11 +73,11 @@ fn find_agent_process_with_retry(
                 );
             }
         }
-        
+
         // Exponential backoff with cap: 1s, 2s, 4s, 8s, 8s
         delay_ms = std::cmp::min(delay_ms * 2, 8000);
     }
-    
+
     Ok((None, None, None))
 }
 
@@ -176,10 +176,8 @@ pub fn spawn_terminal(
         .unwrap_or_else(|| format!("shards-{}", uuid::Uuid::new_v4().simple()));
 
     // Execute spawn script and capture window ID
-    let terminal_window_id = operations::execute_spawn_script(
-        &spawn_config,
-        Some(&ghostty_window_title),
-    )?;
+    let terminal_window_id =
+        operations::execute_spawn_script(&spawn_config, Some(&ghostty_window_title))?;
 
     debug!(
         event = "terminal.spawn_script_executed",
@@ -367,7 +365,13 @@ mod tests {
     #[test]
     fn test_spawn_terminal_invalid_directory() {
         let config = ShardsConfig::default();
-        let result = spawn_terminal(Path::new("/nonexistent/directory"), "echo hello", &config, None, None);
+        let result = spawn_terminal(
+            Path::new("/nonexistent/directory"),
+            "echo hello",
+            &config,
+            None,
+            None,
+        );
 
         assert!(result.is_err());
         if let Err(e) = result {
