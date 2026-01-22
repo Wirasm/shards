@@ -36,6 +36,7 @@
 //! let agent_command = config.get_agent_command("claude");
 //! ```
 
+use crate::agents;
 use crate::files::types::IncludeConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -130,7 +131,7 @@ pub struct AgentSettings {
 }
 
 fn default_agent() -> String {
-    "claude".to_string()
+    agents::default_agent_name().to_string()
 }
 
 impl Default for AgentConfig {
@@ -198,8 +199,7 @@ impl ShardsConfig {
     /// Validate configuration values
     pub fn validate(&self) -> Result<(), crate::errors::ConfigError> {
         // Validate agent name
-        let valid_agents = ["claude", "kiro", "gemini", "codex", "aether"];
-        if !valid_agents.contains(&self.agent.default.as_str()) {
+        if !agents::is_valid_agent(&self.agent.default) {
             return Err(crate::errors::ConfigError::InvalidAgent {
                 agent: self.agent.default.clone(),
             });
@@ -313,14 +313,7 @@ impl ShardsConfig {
             .agent
             .startup_command
             .as_deref()
-            .unwrap_or(match agent_name {
-                "claude" => "claude",
-                "kiro" => "kiro-cli chat",
-                "gemini" => "gemini",
-                "codex" => "codex",
-                "aether" => "aether",
-                _ => agent_name,
-            });
+            .unwrap_or_else(|| agents::get_default_command(agent_name).unwrap_or(agent_name));
 
         let mut full_command = base_command.to_string();
         if let Some(flags) = &self.agent.flags {
