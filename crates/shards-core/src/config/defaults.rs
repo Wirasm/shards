@@ -1,0 +1,151 @@
+//! Default implementations for configuration types.
+//!
+//! This module contains all `Default` implementations and helper functions
+//! for providing default values in serde deserialization.
+
+use crate::agents;
+use crate::config::types::{AgentConfig, Config, HealthConfig, TerminalConfig};
+use std::path::PathBuf;
+
+/// Returns the default agent name.
+///
+/// Used by serde `#[serde(default = "...")]` attribute.
+pub fn default_agent() -> String {
+    agents::default_agent_name().to_string()
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            default: default_agent(),
+            startup_command: None,
+            flags: None,
+        }
+    }
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            preferred: None,
+            spawn_delay_ms: 1000,
+            max_retry_attempts: 5,
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let home_dir = dirs::home_dir().expect("Could not find home directory");
+
+        Self {
+            shards_dir: home_dir.join(".shards"),
+            log_level: std::env::var("SHARDS_LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
+            default_port_count: std::env::var("SHARDS_DEFAULT_PORT_COUNT")
+                .ok()
+                .and_then(|s| s.parse::<u16>().ok())
+                .filter(|&count| count > 0 && count <= 1000)
+                .unwrap_or_else(|| {
+                    if let Ok(val) = std::env::var("SHARDS_DEFAULT_PORT_COUNT") {
+                        eprintln!(
+                            "Warning: Invalid SHARDS_DEFAULT_PORT_COUNT '{}', using default 10",
+                            val
+                        );
+                    }
+                    10
+                }),
+            base_port_range: std::env::var("SHARDS_BASE_PORT_RANGE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3000),
+        }
+    }
+}
+
+impl Config {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.shards_dir.join("worktrees")
+    }
+
+    pub fn sessions_dir(&self) -> PathBuf {
+        self.shards_dir.join("sessions")
+    }
+}
+
+impl HealthConfig {
+    /// Returns the idle threshold in minutes, defaulting to 10.
+    pub fn idle_threshold_minutes(&self) -> i64 {
+        self.idle_threshold_minutes.unwrap_or(10)
+    }
+
+    /// Returns the refresh interval in seconds, defaulting to 5.
+    pub fn refresh_interval_secs(&self) -> u64 {
+        self.refresh_interval_secs.unwrap_or(5)
+    }
+
+    /// Returns the history retention in days, defaulting to 7.
+    pub fn history_retention_days(&self) -> u64 {
+        self.history_retention_days.unwrap_or(7)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::types::ShardsConfig;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::new();
+        assert!(config.shards_dir.to_string_lossy().contains(".shards"));
+        assert_eq!(config.log_level, "info");
+    }
+
+    #[test]
+    fn test_config_paths() {
+        let config = Config::new();
+        assert!(config
+            .worktrees_dir()
+            .to_string_lossy()
+            .contains("worktrees"));
+        assert!(config.sessions_dir().to_string_lossy().contains("sessions"));
+    }
+
+    #[test]
+    fn test_shards_config_default() {
+        let config = ShardsConfig::default();
+        assert_eq!(config.agent.default, "claude");
+        assert!(config.agent.startup_command.is_none());
+        assert!(config.terminal.preferred.is_none());
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn test_health_config_defaults() {
+        let config = ShardsConfig::default();
+        assert_eq!(config.health.idle_threshold_minutes(), 10);
+        assert_eq!(config.health.refresh_interval_secs(), 5);
+        assert!(!config.health.history_enabled);
+        assert_eq!(config.health.history_retention_days(), 7);
+    }
+
+    #[test]
+    fn test_terminal_config_default() {
+        let config = TerminalConfig::default();
+        assert!(config.preferred.is_none());
+        assert_eq!(config.spawn_delay_ms, 1000);
+        assert_eq!(config.max_retry_attempts, 5);
+    }
+
+    #[test]
+    fn test_agent_config_default() {
+        let config = AgentConfig::default();
+        assert_eq!(config.default, "claude");
+        assert!(config.startup_command.is_none());
+        assert!(config.flags.is_none());
+    }
+}
