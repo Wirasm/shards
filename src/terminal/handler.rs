@@ -234,12 +234,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // DANGEROUS: Actually closes terminal windows via AppleScript - run manually only
     fn test_close_terminal_returns_ok_for_all_terminal_types() {
+        // WARNING: This test executes real AppleScript that closes terminal windows!
+        // It will close the frontmost window of iTerm, Terminal.app, or send Cmd+W to Ghostty.
+        // Only run manually when no important terminal windows are open.
+        //
         // close_terminal is designed to ALWAYS return Ok, even if the underlying
         // AppleScript operation fails. This is intentional - terminal close failure
         // should not block session destruction.
-        //
-        // This test verifies the critical invariant: close_terminal() never fails.
         let terminal_types = vec![
             TerminalType::ITerm,
             TerminalType::TerminalApp,
@@ -259,9 +262,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // DANGEROUS: Actually closes terminal windows via AppleScript - run manually only
     fn test_close_terminal_native_is_noop() {
-        // Native terminal type should be a no-op (returns immediately)
-        // This tests the early return path in close_terminal_window
+        // WARNING: This test executes real AppleScript via detect_terminal -> close_terminal_window.
+        // Only run manually when no important terminal windows are open.
         let result = close_terminal(&TerminalType::Native);
         assert!(result.is_ok());
     }

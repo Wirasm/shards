@@ -335,9 +335,12 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore] // DANGEROUS: Actually closes iTerm windows via AppleScript - run manually only
     fn test_close_terminal_window_graceful_fallback() {
-        // Closing when no window exists should not error
-        // This tests the graceful fallback behavior
+        // WARNING: This test executes real AppleScript that closes the current iTerm window!
+        // Only run manually when no important iTerm windows are open.
+        //
+        // Closing when no window exists should not error - tests graceful fallback behavior.
         let result = close_terminal_window(&TerminalType::ITerm);
         // Should succeed even if no iTerm window exists
         assert!(result.is_ok());
