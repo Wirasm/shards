@@ -201,25 +201,14 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
     );
 
     // 2. Close terminal window first (before killing process)
+    // This is fire-and-forget - errors are logged but never block destruction
     if let Some(ref terminal_type) = session.terminal_type {
         info!(
             event = "session.destroy_close_terminal",
             terminal_type = %terminal_type,
             window_id = ?session.terminal_window_id
         );
-        // Best-effort - don't fail destroy if terminal close fails
-        if let Err(e) =
-            terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref())
-        {
-            warn!(
-                event = "session.destroy_terminal_close_failed",
-                session_id = session.id,
-                terminal_type = %terminal_type,
-                window_id = ?session.terminal_window_id,
-                error = %e,
-                "Terminal window may need to be closed manually"
-            );
-        }
+        terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
     }
 
     // 3. Kill process if PID is tracked

@@ -1,0 +1,120 @@
+//! AppleScript execution utilities for terminal backends.
+
+use crate::terminal::errors::TerminalError;
+use tracing::{debug, warn};
+
+/// Execute an AppleScript and return the stdout as window ID.
+#[cfg(target_os = "macos")]
+pub fn execute_spawn_script(
+    script: &str,
+    terminal_name: &str,
+) -> Result<Option<String>, TerminalError> {
+    debug!(event = "terminal.applescript_executing", terminal = terminal_name);
+
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| TerminalError::AppleScriptExecution {
+            message: format!("Failed to execute osascript for {}: {}", terminal_name, e),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(TerminalError::SpawnFailed {
+            message: format!("{} AppleScript failed: {}", terminal_name, stderr.trim()),
+        });
+    }
+
+    let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    debug!(
+        event = "terminal.applescript_completed",
+        terminal = terminal_name,
+        window_id = %window_id
+    );
+
+    if window_id.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(window_id))
+    }
+}
+
+/// Close a window via AppleScript (fire-and-forget, errors logged).
+#[cfg(target_os = "macos")]
+pub fn close_applescript_window(script: &str, terminal_name: &str, window_id: &str) {
+    debug!(
+        event = "terminal.close_started",
+        terminal = terminal_name,
+        window_id = %window_id
+    );
+
+    match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            debug!(
+                event = "terminal.close_completed",
+                terminal = terminal_name,
+                window_id = %window_id
+            );
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                event = "terminal.close_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                stderr = %stderr.trim(),
+                message = "AppleScript close failed - window may remain open"
+            );
+        }
+        Err(e) => {
+            warn!(
+                event = "terminal.close_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                error = %e,
+                message = "Failed to execute osascript"
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn execute_spawn_script(
+    _script: &str,
+    _terminal_name: &str,
+) -> Result<Option<String>, TerminalError> {
+    Ok(None)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn close_applescript_window(_script: &str, _terminal_name: &str, _window_id: &str) {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_execute_spawn_script_non_macos() {
+        #[cfg(not(target_os = "macos"))]
+        {
+            use super::execute_spawn_script;
+            let result = execute_spawn_script("test script", "test_terminal");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn test_close_applescript_window_non_macos_does_not_panic() {
+        #[cfg(not(target_os = "macos"))]
+        {
+            use super::close_applescript_window;
+            // Should not panic on non-macOS
+            close_applescript_window("test script", "test_terminal", "123");
+        }
+    }
+}

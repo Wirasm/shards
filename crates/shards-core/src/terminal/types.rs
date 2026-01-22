@@ -2,7 +2,7 @@ use crate::terminal::errors::TerminalError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TerminalType {
     ITerm,
     TerminalApp,
@@ -10,11 +10,15 @@ pub enum TerminalType {
     Native, // System default
 }
 
+/// Configuration for spawning a terminal window.
+///
+/// Fields are private to enforce validation at construction time.
+/// Use accessor methods to read values.
 #[derive(Debug, Clone)]
 pub struct SpawnConfig {
-    pub terminal_type: TerminalType,
-    pub working_directory: PathBuf,
-    pub command: String,
+    terminal_type: TerminalType,
+    working_directory: PathBuf,
+    command: String,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +38,10 @@ pub struct SpawnResult {
 }
 
 impl SpawnConfig {
+    /// Create a new spawn configuration without validation.
+    ///
+    /// This constructor allows creating configs that may be invalid (e.g., for testing
+    /// or when validation will be done separately). Use `try_new()` for validated construction.
     pub fn new(terminal_type: TerminalType, working_directory: PathBuf, command: String) -> Self {
         Self {
             terminal_type,
@@ -42,7 +50,39 @@ impl SpawnConfig {
         }
     }
 
-    /// Validate the spawn configuration
+    /// Create a new spawn configuration with validation.
+    ///
+    /// Returns an error if the command is empty or the working directory doesn't exist.
+    pub fn try_new(
+        terminal_type: TerminalType,
+        working_directory: PathBuf,
+        command: String,
+    ) -> Result<Self, TerminalError> {
+        let config = Self {
+            terminal_type,
+            working_directory,
+            command,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Get the terminal type.
+    pub fn terminal_type(&self) -> &TerminalType {
+        &self.terminal_type
+    }
+
+    /// Get the working directory path.
+    pub fn working_directory(&self) -> &std::path::Path {
+        &self.working_directory
+    }
+
+    /// Get the command to execute.
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    /// Validate the spawn configuration.
     pub fn validate(&self) -> Result<(), TerminalError> {
         if self.command.trim().is_empty() {
             return Err(TerminalError::InvalidCommand);
@@ -111,9 +151,9 @@ mod tests {
             "echo hello".to_string(),
         );
 
-        assert_eq!(config.terminal_type, TerminalType::ITerm);
-        assert_eq!(config.working_directory, PathBuf::from("/tmp/test"));
-        assert_eq!(config.command, "echo hello");
+        assert_eq!(*config.terminal_type(), TerminalType::ITerm);
+        assert_eq!(config.working_directory(), PathBuf::from("/tmp/test"));
+        assert_eq!(config.command(), "echo hello");
     }
 
     #[test]
@@ -124,9 +164,9 @@ mod tests {
             "kiro-cli chat".to_string(),
         );
 
-        assert_eq!(config.terminal_type, TerminalType::Ghostty);
-        assert_eq!(config.working_directory, PathBuf::from("/tmp/test"));
-        assert_eq!(config.command, "kiro-cli chat");
+        assert_eq!(*config.terminal_type(), TerminalType::Ghostty);
+        assert_eq!(config.working_directory(), PathBuf::from("/tmp/test"));
+        assert_eq!(config.command(), "kiro-cli chat");
     }
 
     #[test]
@@ -137,9 +177,39 @@ mod tests {
             "echo hello".to_string(),
         );
 
-        assert_eq!(config.terminal_type, TerminalType::Native);
-        assert_eq!(config.working_directory, PathBuf::from("/tmp/test"));
-        assert_eq!(config.command, "echo hello");
+        assert_eq!(*config.terminal_type(), TerminalType::Native);
+        assert_eq!(config.working_directory(), PathBuf::from("/tmp/test"));
+        assert_eq!(config.command(), "echo hello");
+    }
+
+    #[test]
+    fn test_spawn_config_try_new_valid() {
+        let result = SpawnConfig::try_new(
+            TerminalType::ITerm,
+            std::env::current_dir().unwrap(),
+            "echo hello".to_string(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_spawn_config_try_new_invalid_command() {
+        let result = SpawnConfig::try_new(
+            TerminalType::ITerm,
+            std::env::current_dir().unwrap(),
+            "".to_string(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_spawn_config_try_new_invalid_directory() {
+        let result = SpawnConfig::try_new(
+            TerminalType::ITerm,
+            PathBuf::from("/nonexistent/directory/path"),
+            "echo hello".to_string(),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
