@@ -1,6 +1,7 @@
 use sysinfo::{Pid as SysinfoPid, ProcessesToUpdate, System};
 use std::sync::Mutex;
 use std::sync::LazyLock;
+use tracing::debug;
 
 use crate::process::errors::ProcessError;
 use crate::process::types::{Pid, ProcessInfo, ProcessMetrics, ProcessStatus};
@@ -16,31 +17,50 @@ pub fn is_process_running(pid: u32) -> Result<bool, ProcessError> {
     Ok(system.process(pid_obj).is_some())
 }
 
+/// Minimum length required for prefix matching to prevent false positives
+/// with short names like "sh", "vi", "go"
+const MIN_PREFIX_MATCH_LENGTH: usize = 5;
+
+/// Extract the base name from a path, handling both Unix (/) and Windows (\) separators
+fn extract_base_name(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or(name)
+}
+
 /// Check if a process name matches an expected name
 ///
-/// Uses flexible matching to handle cases where process names may differ
-/// from what was originally captured (e.g., truncation, path variations).
+/// Uses strict matching to prevent PID reuse attacks:
+/// 1. Exact match (most secure)
+/// 2. Base name match after stripping paths
+/// 3. Prefix match only for names >= 5 characters (to avoid "sh" matching "bash")
+///
+/// Returns false rather than risk killing the wrong process.
 fn process_name_matches(actual_name: &str, expected_name: &str) -> bool {
-    // Exact match
+    // Exact match - most secure
     if actual_name == expected_name {
         return true;
     }
 
-    // Substring match (handles cases like "kiro-cli-chat" matching "kiro-cli")
-    if actual_name.contains(expected_name) || expected_name.contains(actual_name) {
-        return true;
-    }
+    // Extract base names (strip paths) for comparison
+    let actual_base = extract_base_name(actual_name);
+    let expected_base = extract_base_name(expected_name);
 
-    // Base name comparison (strip paths and compare)
-    let actual_base = actual_name.rsplit('/').next().unwrap_or(actual_name);
-    let expected_base = expected_name.rsplit('/').next().unwrap_or(expected_name);
-
+    // Base name exact match
     if actual_base == expected_base {
         return true;
     }
 
-    // Check if either contains the other (for compound names like kiro-cli-chat)
-    actual_base.contains(expected_base) || expected_base.contains(actual_base)
+    // Prefix match: only allow if expected name is long enough to be safe
+    // This handles cases like "kiro-cli-chat" matching expected "kiro-cli"
+    if expected_base.len() >= MIN_PREFIX_MATCH_LENGTH && actual_base.starts_with(expected_base) {
+        debug!(
+            "process_name_matches: prefix match - actual='{}', expected='{}'",
+            actual_name, expected_name
+        );
+        return true;
+    }
+
+    // Reject rather than risk killing the wrong process
+    false
 }
 
 /// Kill a process with the given PID, validating it matches expected metadata
@@ -127,6 +147,118 @@ pub fn get_process_metrics(pid: u32) -> Result<ProcessMetrics, ProcessError> {
     }
 }
 
+/// Generate multiple search patterns for better process matching
+///
+/// Creates a deduplicated list of search patterns to improve process detection reliability.
+/// Includes the original pattern, partial matches (before first dash), and known agent variations.
+///
+/// # Examples
+///
+/// ```ignore
+/// let patterns = generate_search_patterns("kiro-cli");
+/// // Returns: ["kiro-cli", "kiro"] (deduplicated)
+///
+/// let patterns = generate_search_patterns("simple");
+/// // Returns: ["simple"]
+/// ```
+fn generate_search_patterns(name_pattern: &str) -> Vec<String> {
+    let mut patterns = std::collections::HashSet::new();
+    patterns.insert(name_pattern.to_string());
+
+    // Add partial matches
+    if name_pattern.contains('-') {
+        patterns.insert(name_pattern.split('-').next().unwrap_or(name_pattern).to_string());
+    }
+
+    // Add common variations
+    match name_pattern {
+        "kiro-cli" => { patterns.insert("kiro".to_string()); },
+        "claude-code" => { patterns.insert("claude".to_string()); },
+        "gemini-cli" => { patterns.insert("gemini".to_string()); },
+        _ => {}
+    }
+
+    patterns.into_iter().collect()
+}
+
+/// Check if a command line matches a command pattern
+///
+/// Uses flexible matching to handle cases where:
+/// - The binary path differs (e.g., `/usr/bin/kiro-cli-chat` vs `kiro-cli`)
+/// - Arguments may vary
+///
+/// Returns true if all significant words from the pattern appear in the command line.
+/// Returns false for empty or flag-only patterns to prevent matching any command.
+fn command_matches(cmd_line: &str, cmd_pattern: &str) -> bool {
+    // Extract significant words from the pattern (skip common flags)
+    let pattern_words: Vec<&str> = cmd_pattern
+        .split_whitespace()
+        .filter(|w| !w.starts_with('-') && !w.starts_with("--"))
+        .collect();
+
+    // Empty or flag-only patterns should not match anything
+    if pattern_words.is_empty() {
+        debug!(
+            "command_matches: rejecting empty/flag-only pattern '{}' for cmd '{}'",
+            cmd_pattern, cmd_line
+        );
+        return false;
+    }
+
+    let cmd_line_lower = cmd_line.to_lowercase();
+
+    // Check if all pattern words appear in the command line
+    // Use contains for substring matching to handle path differences
+    pattern_words.iter().all(|word| {
+        let word_lower = word.to_lowercase();
+        // Check for exact word or as part of a path/compound name
+        cmd_line_lower.contains(&word_lower)
+    })
+}
+
+/// Find a process by name, optionally filtering by command line pattern
+pub fn find_process_by_name(
+    name_pattern: &str,
+    command_pattern: Option<&str>,
+) -> Result<Option<ProcessInfo>, ProcessError> {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+
+    // Try multiple search strategies
+    let search_patterns = generate_search_patterns(name_pattern);
+
+    for (pid, process) in system.processes() {
+        let process_name = process.name().to_string_lossy();
+        let cmd_line = process.cmd().iter()
+            .map(|s| s.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Try each search pattern
+        let name_matches = search_patterns.iter().any(|pattern| {
+            process_name.contains(pattern) || cmd_line.contains(pattern)
+        });
+
+        if !name_matches {
+            continue;
+        }
+
+        // If command pattern specified, use flexible matching
+        if let Some(cmd_pattern) = command_pattern
+            && !command_matches(&cmd_line, cmd_pattern) {
+                continue;
+            }
+
+        return Ok(Some(ProcessInfo {
+            pid: Pid::from_raw(pid.as_u32()),
+            name: process_name.to_string(),
+            status: ProcessStatus::from(process.status()),
+            start_time: process.start_time(),
+        }));
+    }
+
+    Ok(None)
+}
 
 #[cfg(test)]
 mod tests {
@@ -278,16 +410,25 @@ mod tests {
     }
 
     #[test]
+    fn test_command_matches_empty_patterns() {
+        // Empty patterns should NOT match anything (security fix)
+        assert!(!command_matches("any command", ""));
+        assert!(!command_matches("claude chat", "   "));
+
+        // Flag-only patterns should NOT match anything
+        assert!(!command_matches("any command", "--flag"));
+        assert!(!command_matches("kiro-cli chat", "--verbose --debug"));
+        assert!(!command_matches("claude", "-v -x"));
+    }
+
+    #[test]
     fn test_process_name_matches() {
         // Exact match
         assert!(process_name_matches("kiro-cli-chat", "kiro-cli-chat"));
 
-        // Substring match (actual contains expected)
+        // Prefix match (actual starts with expected, expected >= 5 chars)
         assert!(process_name_matches("kiro-cli-chat", "kiro-cli"));
-        assert!(process_name_matches("kiro-cli-chat", "kiro"));
-
-        // Substring match (expected contains actual)
-        assert!(process_name_matches("kiro", "kiro-cli-chat"));
+        assert!(process_name_matches("claude-code-agent", "claude-code"));
 
         // Base name comparison with paths
         assert!(process_name_matches("/usr/bin/sleep", "sleep"));
@@ -297,111 +438,74 @@ mod tests {
         assert!(!process_name_matches("gemini", "kiro"));
         assert!(!process_name_matches("claude-code", "kiro-cli"));
     }
-}
 
-/// Generate multiple search patterns for better process matching
-///
-/// Creates a deduplicated list of search patterns to improve process detection reliability.
-/// Includes the original pattern, partial matches (before first dash), and known agent variations.
-///
-/// # Examples
-///
-/// ```ignore
-/// let patterns = generate_search_patterns("kiro-cli");
-/// // Returns: ["kiro-cli", "kiro"] (deduplicated)
-///
-/// let patterns = generate_search_patterns("simple");
-/// // Returns: ["simple"]
-/// ```
-fn generate_search_patterns(name_pattern: &str) -> Vec<String> {
-    let mut patterns = std::collections::HashSet::new();
-    patterns.insert(name_pattern.to_string());
-    
-    // Add partial matches
-    if name_pattern.contains('-') {
-        patterns.insert(name_pattern.split('-').next().unwrap_or(name_pattern).to_string());
-    }
-    
-    // Add common variations
-    match name_pattern {
-        "kiro-cli" => { patterns.insert("kiro".to_string()); },
-        "claude-code" => { patterns.insert("claude".to_string()); },
-        "gemini-cli" => { patterns.insert("gemini".to_string()); },
-        _ => {}
-    }
-    
-    patterns.into_iter().collect()
-}
+    #[test]
+    fn test_process_name_matches_security() {
+        // Short patterns should NOT match via prefix (prevents "sh" matching "bash")
+        // "kiro" is 4 chars, less than MIN_PREFIX_MATCH_LENGTH (5)
+        assert!(!process_name_matches("kiro-cli-chat", "kiro"));
 
-/// Check if a command line matches a command pattern
-///
-/// Uses flexible matching to handle cases where:
-/// - The binary path differs (e.g., `/usr/bin/kiro-cli-chat` vs `kiro-cli`)
-/// - Arguments may vary
-///
-/// Returns true if all significant words from the pattern appear in the command line
-fn command_matches(cmd_line: &str, cmd_pattern: &str) -> bool {
-    // Extract significant words from the pattern (skip common flags)
-    let pattern_words: Vec<&str> = cmd_pattern
-        .split_whitespace()
-        .filter(|w| !w.starts_with('-') && !w.starts_with("--"))
-        .collect();
+        // Short names that could match many processes
+        assert!(!process_name_matches("bash", "sh"));
+        assert!(!process_name_matches("fish", "fi"));
+        assert!(!process_name_matches("vim", "vi"));
 
-    if pattern_words.is_empty() {
-        return true;
+        // Reverse direction (expected contains actual) is NOT supported
+        assert!(!process_name_matches("kiro", "kiro-cli-chat"));
+        assert!(!process_name_matches("sh", "bash"));
+
+        // Arbitrary substring matching is NOT supported
+        assert!(!process_name_matches("my-kiro-daemon", "kiro"));
     }
 
-    let cmd_line_lower = cmd_line.to_lowercase();
+    #[test]
+    fn test_process_name_matches_windows_paths() {
+        // Windows-style paths should also work
+        assert!(process_name_matches("C:\\Program Files\\app\\sleep.exe", "sleep.exe"));
+        assert!(process_name_matches("sleep.exe", "C:\\Windows\\System32\\sleep.exe"));
 
-    // Check if all pattern words appear in the command line
-    // Use contains for substring matching to handle path differences
-    pattern_words.iter().all(|word| {
-        let word_lower = word.to_lowercase();
-        // Check for exact word or as part of a path/compound name
-        cmd_line_lower.contains(&word_lower)
-    })
-}
-
-/// Find a process by name, optionally filtering by command line pattern
-pub fn find_process_by_name(
-    name_pattern: &str,
-    command_pattern: Option<&str>,
-) -> Result<Option<ProcessInfo>, ProcessError> {
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::All, true);
-
-    // Try multiple search strategies
-    let search_patterns = generate_search_patterns(name_pattern);
-
-    for (pid, process) in system.processes() {
-        let process_name = process.name().to_string_lossy();
-        let cmd_line = process.cmd().iter()
-            .map(|s| s.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        // Try each search pattern
-        let name_matches = search_patterns.iter().any(|pattern| {
-            process_name.contains(pattern) || cmd_line.contains(pattern)
-        });
-
-        if !name_matches {
-            continue;
-        }
-
-        // If command pattern specified, use flexible matching
-        if let Some(cmd_pattern) = command_pattern
-            && !command_matches(&cmd_line, cmd_pattern) {
-                continue;
-            }
-
-        return Ok(Some(ProcessInfo {
-            pid: Pid::from_raw(pid.as_u32()),
-            name: process_name.to_string(),
-            status: ProcessStatus::from(process.status()),
-            start_time: process.start_time(),
-        }));
+        // Mixed path separators
+        assert!(process_name_matches("C:\\bin/sleep", "sleep"));
     }
 
-    Ok(None)
+    #[test]
+    fn test_extract_base_name() {
+        // Unix paths
+        assert_eq!(extract_base_name("/usr/bin/sleep"), "sleep");
+        assert_eq!(extract_base_name("/home/user/.local/bin/kiro-cli"), "kiro-cli");
+
+        // Windows paths
+        assert_eq!(extract_base_name("C:\\Program Files\\app\\test.exe"), "test.exe");
+        assert_eq!(extract_base_name("D:\\bin\\tool.exe"), "tool.exe");
+
+        // No path
+        assert_eq!(extract_base_name("simple"), "simple");
+
+        // Empty string
+        assert_eq!(extract_base_name(""), "");
+    }
+
+    #[test]
+    fn test_kill_process_rejects_mismatched_name() {
+        // Spawn a test process
+        let mut child = Command::new("sleep")
+            .arg("10")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Failed to spawn test process");
+
+        let pid = child.id();
+
+        // Trying to kill with wrong expected name should fail
+        let result = kill_process(pid, Some("definitely-not-sleep"), None);
+        assert!(matches!(
+            result,
+            Err(ProcessError::PidReused { pid: _, expected: _, actual: _ })
+        ));
+
+        // Clean up
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
