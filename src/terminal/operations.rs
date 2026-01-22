@@ -199,21 +199,14 @@ pub fn close_terminal_window(terminal_type: &TerminalType) -> Result<(), Termina
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Don't fail if window was already closed - this is expected behavior
-        if stderr.contains("window") || stderr.contains("count") {
-            debug!(
-                event = "terminal.close_window_not_found",
-                terminal_type = %terminal_type,
-                message = "Window may have been closed manually"
-            );
-            return Ok(());
-        }
-        warn!(
-            event = "terminal.close_failed",
+        // All AppleScript failures are non-fatal - terminal close should never block destroy.
+        // Common cases: window already closed, app not running, permission issues.
+        debug!(
+            event = "terminal.close_failed_non_fatal",
             terminal_type = %terminal_type,
-            stderr = %stderr
+            stderr = %stderr.trim(),
+            message = "Terminal close failed - continuing with destroy"
         );
-        // Non-fatal - don't block destroy on terminal close failure
         return Ok(());
     }
 
