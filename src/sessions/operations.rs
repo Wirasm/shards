@@ -439,6 +439,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -487,6 +488,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -537,6 +539,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -590,6 +593,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -648,6 +652,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -667,6 +672,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -729,6 +735,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -777,6 +784,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -826,6 +834,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -879,6 +888,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -900,6 +910,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -923,6 +934,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };
@@ -947,6 +959,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
         };

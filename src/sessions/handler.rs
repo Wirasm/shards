@@ -81,9 +81,9 @@ pub fn create_session(
         branch = worktree.branch
     );
 
-    // 5. Launch terminal (I/O)
+    // 5. Launch terminal (I/O) - pass session_id for unique Ghostty window titles
     let spawn_result =
-        terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config)
+        terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config, Some(&session_id))
             .map_err(|e| SessionError::TerminalError { source: e })?;
 
     // 6. Create session record
@@ -104,10 +104,12 @@ pub fn create_session(
         process_name: spawn_result.process_name.clone(),
         process_start_time: spawn_result.process_start_time,
         terminal_type: Some(spawn_result.terminal_type.clone()),
-        command: spawn_result.command_executed.trim()
-            .is_empty()
-            .then(|| format!("{} (command not captured)", validated.agent))
-            .unwrap_or_else(|| spawn_result.command_executed.clone()),
+        terminal_window_id: spawn_result.terminal_window_id.clone(),
+        command: if spawn_result.command_executed.trim().is_empty() {
+            format!("{} (command not captured)", validated.agent)
+        } else {
+            spawn_result.command_executed.clone()
+        },
     };
 
     // 7. Save session to file
@@ -183,9 +185,16 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
 
     // 2. Close terminal window first (before killing process)
     if let Some(ref terminal_type) = session.terminal_type {
-        info!(event = "session.destroy_close_terminal", terminal_type = %terminal_type);
+        info!(
+            event = "session.destroy_close_terminal",
+            terminal_type = %terminal_type,
+            window_id = ?session.terminal_window_id
+        );
         // Best-effort - don't fail destroy if terminal close fails
-        let _ = terminal::handler::close_terminal(terminal_type);
+        let _ = terminal::handler::close_terminal(
+            terminal_type,
+            session.terminal_window_id.as_deref(),
+        );
     }
 
     // 3. Kill process if PID is tracked
@@ -323,13 +332,14 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
     // 5. Relaunch terminal in existing worktree
     info!(event = "session.restart_spawn_started", worktree_path = %session.worktree_path.display());
 
-    let spawn_result = terminal::handler::spawn_terminal(&session.worktree_path, &agent_command, &shards_config)
+    let spawn_result = terminal::handler::spawn_terminal(&session.worktree_path, &agent_command, &shards_config, Some(&session.id))
         .map_err(|e| SessionError::TerminalError { source: e })?;
 
     info!(
         event = "session.restart_spawn_completed",
         process_id = spawn_result.process_id,
-        process_name = ?spawn_result.process_name
+        process_name = ?spawn_result.process_name,
+        terminal_window_id = ?spawn_result.terminal_window_id
     );
 
     // Capture process metadata immediately for PID reuse protection
@@ -344,6 +354,7 @@ pub fn restart_session(name: &str, agent_override: Option<String>) -> Result<Ses
     session.process_name = process_name;
     session.process_start_time = process_start_time;
     session.terminal_type = Some(spawn_result.terminal_type.clone());
+    session.terminal_window_id = spawn_result.terminal_window_id.clone();
     session.status = SessionStatus::Active;
     session.last_activity = Some(chrono::Utc::now().to_rfc3339());
 
@@ -425,6 +436,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None,
+            terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
         };
@@ -520,6 +532,7 @@ mod tests {
                 process_name: Some("test-agent".to_string()),
                 process_start_time: Some(1234567890),
                 terminal_type: Some(terminal_type.clone()),
+                terminal_window_id: Some("1596".to_string()),
                 command: "test-command".to_string(),
                 last_activity: Some(chrono::Utc::now().to_rfc3339()),
             };
@@ -588,6 +601,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: Some(TerminalType::ITerm), // Key: terminal_type is set
+            terminal_window_id: Some("1596".to_string()),
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
         };
@@ -653,6 +667,7 @@ mod tests {
             process_name: None,
             process_start_time: None,
             terminal_type: None, // Key: terminal_type is NOT set (old session)
+            terminal_window_id: None, // Key: terminal_window_id is NOT set (old session)
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
         };
@@ -718,6 +733,7 @@ mod tests {
             process_name: Some("test-agent".to_string()),
             process_start_time: Some(1234567890),
             terminal_type: Some(TerminalType::ITerm),
+            terminal_window_id: Some("1596".to_string()),
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
         };
