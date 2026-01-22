@@ -32,7 +32,7 @@ pub trait TerminalBackend: Send + Sync {
         window_title: Option<&str>,
     ) -> Result<Option<String>, TerminalError>;
 
-    /// Close a terminal window.
+    /// Close a terminal window (fire-and-forget).
     ///
     /// # Arguments
     /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
@@ -40,8 +40,9 @@ pub trait TerminalBackend: Send + Sync {
     /// # Behavior
     /// - If window_id is None, skips close (logs debug message)
     /// - If window_id is Some, attempts to close that specific window
-    /// - Close failures are non-fatal and logged as debug/warn
-    fn close_window(&self, window_id: Option<&str>) -> Result<(), TerminalError>;
+    /// - Close failures are non-fatal and logged at warn level
+    /// - Returns () because close operations should never block session destruction
+    fn close_window(&self, window_id: Option<&str>);
 }
 
 #[cfg(test)]
@@ -72,9 +73,7 @@ mod tests {
             Ok(window_title.map(|s| s.to_string()))
         }
 
-        fn close_window(&self, _window_id: Option<&str>) -> Result<(), TerminalError> {
-            Ok(())
-        }
+        fn close_window(&self, _window_id: Option<&str>) {}
     }
 
     #[test]
@@ -101,7 +100,7 @@ mod tests {
     #[test]
     fn test_terminal_backend_close_window() {
         let backend = MockBackend;
-        let result = backend.close_window(Some("123"));
-        assert!(result.is_ok());
+        // close_window returns () - just verify it doesn't panic
+        backend.close_window(Some("123"));
     }
 }

@@ -51,28 +51,19 @@ pub fn detect_terminal() -> Result<TerminalType, TerminalError> {
     debug!(event = "terminal.detection_started");
 
     // Check in preference order: Ghostty > iTerm > Terminal.app
-    if get_backend(&TerminalType::Ghostty)
-        .map(|b| b.is_available())
-        .unwrap_or(false)
-    {
-        debug!(event = "terminal.detected", terminal = "ghostty");
-        return Ok(TerminalType::Ghostty);
-    }
+    let terminals = [
+        TerminalType::Ghostty,
+        TerminalType::ITerm,
+        TerminalType::TerminalApp,
+    ];
 
-    if get_backend(&TerminalType::ITerm)
-        .map(|b| b.is_available())
-        .unwrap_or(false)
-    {
-        debug!(event = "terminal.detected", terminal = "iterm");
-        return Ok(TerminalType::ITerm);
-    }
-
-    if get_backend(&TerminalType::TerminalApp)
-        .map(|b| b.is_available())
-        .unwrap_or(false)
-    {
-        debug!(event = "terminal.detected", terminal = "terminal");
-        return Ok(TerminalType::TerminalApp);
+    for terminal_type in terminals {
+        if let Some(backend) = get_backend(&terminal_type)
+            && backend.is_available()
+        {
+            debug!(event = "terminal.detected", terminal = backend.name());
+            return Ok(terminal_type);
+        }
     }
 
     warn!(

@@ -310,7 +310,7 @@ pub fn detect_available_terminal() -> Result<TerminalType, TerminalError> {
     Ok(terminal_type)
 }
 
-/// Close a terminal window for a session
+/// Close a terminal window for a session (fire-and-forget).
 ///
 /// This is a best-effort operation used during session destruction.
 /// It will not fail if the terminal window is already closed or the terminal
@@ -321,35 +321,21 @@ pub fn detect_available_terminal() -> Result<TerminalType, TerminalError> {
 /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
 ///
 /// If window_id is None, the close is skipped to avoid closing the wrong window.
-pub fn close_terminal(
-    terminal_type: &TerminalType,
-    window_id: Option<&str>,
-) -> Result<(), TerminalError> {
+/// Errors are logged but never returned - terminal close should never block session destruction.
+pub fn close_terminal(terminal_type: &TerminalType, window_id: Option<&str>) {
     info!(
         event = "terminal.close_started",
         terminal_type = %terminal_type,
         window_id = ?window_id
     );
 
-    let result = operations::close_terminal_window(terminal_type, window_id);
+    operations::close_terminal_window(terminal_type, window_id);
 
-    match &result {
-        Ok(()) => info!(
-            event = "terminal.close_completed",
-            terminal_type = %terminal_type,
-            window_id = ?window_id
-        ),
-        Err(e) => warn!(
-            event = "terminal.close_failed",
-            terminal_type = %terminal_type,
-            window_id = ?window_id,
-            error = %e,
-            message = "Terminal window close failed - it may need to be closed manually"
-        ),
-    }
-
-    // Return actual result so callers can decide how to handle failures
-    result
+    info!(
+        event = "terminal.close_completed",
+        terminal_type = %terminal_type,
+        window_id = ?window_id
+    );
 }
 
 #[cfg(test)]
@@ -394,14 +380,13 @@ mod tests {
 
     #[test]
     #[ignore] // DANGEROUS: Actually closes terminal windows via AppleScript - run manually only
-    fn test_close_terminal_returns_ok_for_all_terminal_types() {
+    fn test_close_terminal_does_not_panic_for_all_terminal_types() {
         // WARNING: This test executes real AppleScript that closes terminal windows!
         // It will close the window with the specified ID (or skip if None).
         // Only run manually when no important terminal windows are open.
         //
-        // close_terminal is designed to ALWAYS return Ok, even if the underlying
-        // AppleScript operation fails. This is intentional - terminal close failure
-        // should not block session destruction.
+        // close_terminal returns () - terminal close failure should not block
+        // session destruction.
         let terminal_types = vec![
             TerminalType::ITerm,
             TerminalType::TerminalApp,
@@ -410,29 +395,23 @@ mod tests {
         ];
 
         for terminal_type in terminal_types {
-            // Test with None window_id - should skip close and return Ok
-            let result = close_terminal(&terminal_type, None);
-            assert!(
-                result.is_ok(),
-                "close_terminal should always return Ok for {:?}, but got {:?}",
-                terminal_type,
-                result
-            );
+            // Test with None window_id - should skip close and not panic
+            close_terminal(&terminal_type, None);
         }
     }
 
     #[test]
     #[ignore] // DANGEROUS: Actually closes terminal windows via AppleScript - run manually only
-    fn test_close_terminal_native_is_noop() {
+    fn test_close_terminal_native_does_not_panic() {
         // WARNING: This test executes real AppleScript via detect_terminal -> close_terminal_window.
         // Only run manually when no important terminal windows are open.
-        let result = close_terminal(&TerminalType::Native, None);
-        assert!(result.is_ok());
+        close_terminal(&TerminalType::Native, None);
     }
 
     #[test]
     fn test_close_terminal_with_no_window_id_skips() {
         // When window_id is None, close should be skipped to avoid closing wrong window
+        // close_terminal returns () - just verify it doesn't panic
         let terminal_types = vec![
             TerminalType::ITerm,
             TerminalType::TerminalApp,
@@ -440,12 +419,7 @@ mod tests {
         ];
 
         for terminal_type in terminal_types {
-            let result = close_terminal(&terminal_type, None);
-            assert!(
-                result.is_ok(),
-                "close_terminal with None window_id should return Ok for {:?}",
-                terminal_type
-            );
+            close_terminal(&terminal_type, None);
         }
     }
 

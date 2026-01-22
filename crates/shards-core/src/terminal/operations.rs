@@ -29,12 +29,16 @@ pub fn detect_terminal() -> Result<TerminalType, TerminalError> {
 ///
 /// Note: This function is kept for backward compatibility, but the actual
 /// spawn logic is now in the backend implementations.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use execute_spawn_script() instead. This function duplicates backend logic and will be removed in a future version."
+)]
 pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, TerminalError> {
     config.validate()?;
 
-    let cd_command = build_cd_command(&config.working_directory, &config.command);
+    let cd_command = build_cd_command(config.working_directory(), config.command());
 
-    match config.terminal_type {
+    match config.terminal_type() {
         TerminalType::ITerm => Ok(vec![
             "osascript".to_string(),
             "-e".to_string(),
@@ -86,9 +90,10 @@ pub fn build_spawn_command(config: &SpawnConfig) -> Result<Vec<String>, Terminal
             }
             let native_config = SpawnConfig::new(
                 detected,
-                config.working_directory.clone(),
-                config.command.clone(),
+                config.working_directory().to_path_buf(),
+                config.command().to_string(),
             );
+            #[allow(deprecated)]
             build_spawn_command(&native_config)
         }
     }
@@ -140,9 +145,9 @@ pub fn execute_spawn_script(
     config.validate()?;
 
     // Resolve Native to actual terminal type
-    let terminal_type = match config.terminal_type {
+    let terminal_type = match config.terminal_type() {
         TerminalType::Native => registry::detect_terminal()?,
-        ref t => t.clone(),
+        t => t.clone(),
     };
 
     let backend =
@@ -151,8 +156,8 @@ pub fn execute_spawn_script(
     // Create config with resolved terminal type
     let resolved_config = SpawnConfig::new(
         terminal_type,
-        config.working_directory.clone(),
-        config.command.clone(),
+        config.working_directory().to_path_buf(),
+        config.command().to_string(),
     );
 
     backend.execute_spawn(&resolved_config, window_title)
@@ -171,7 +176,7 @@ pub fn execute_spawn_script(
     Ok(None)
 }
 
-/// Close a terminal window by terminal type and window ID.
+/// Close a terminal window by terminal type and window ID (fire-and-forget).
 ///
 /// This function delegates to the appropriate backend via the registry.
 ///
@@ -182,34 +187,33 @@ pub fn execute_spawn_script(
 /// # Behavior
 /// - If window_id is None, skips close (logs debug message)
 /// - If window_id is Some, attempts to close that specific window
-/// - Close failures are non-fatal and logged as debug/warn
+/// - Close failures are non-fatal and logged at warn level
+/// - Returns () because close operations should never block session destruction
 #[cfg(target_os = "macos")]
-pub fn close_terminal_window(
-    terminal_type: &TerminalType,
-    window_id: Option<&str>,
-) -> Result<(), TerminalError> {
+pub fn close_terminal_window(terminal_type: &TerminalType, window_id: Option<&str>) {
     // Resolve Native to actual terminal type
     let resolved_type = match terminal_type {
-        TerminalType::Native => registry::detect_terminal()?,
+        TerminalType::Native => match registry::detect_terminal() {
+            Ok(t) => t,
+            Err(_) => return, // No terminal to close
+        },
         t => t.clone(),
     };
 
-    let backend = registry::get_backend(&resolved_type).ok_or(TerminalError::NoTerminalFound)?;
+    let Some(backend) = registry::get_backend(&resolved_type) else {
+        return; // No backend found, nothing to close
+    };
 
-    backend.close_window(window_id)
+    backend.close_window(window_id);
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn close_terminal_window(
-    _terminal_type: &TerminalType,
-    _window_id: Option<&str>,
-) -> Result<(), TerminalError> {
+pub fn close_terminal_window(_terminal_type: &TerminalType, _window_id: Option<&str>) {
     // Terminal closing not yet implemented for non-macOS platforms
     debug!(
         event = "terminal.close_not_supported",
         platform = std::env::consts::OS
     );
-    Ok(())
 }
 
 #[cfg(test)]
@@ -223,6 +227,7 @@ mod tests {
         let _result = detect_terminal();
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_iterm() {
         let config = SpawnConfig::new(
@@ -240,6 +245,7 @@ mod tests {
         assert!(command[2].contains("cc"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_terminal_app() {
         let config = SpawnConfig::new(
@@ -257,6 +263,7 @@ mod tests {
         assert!(command[2].contains("kiro-cli"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_ghostty() {
         let config = SpawnConfig::new(
@@ -280,6 +287,7 @@ mod tests {
         assert!(command[7].contains("claude"));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_ghostty_with_spaces() {
         let config = SpawnConfig::new(
@@ -317,6 +325,7 @@ mod tests {
         assert_eq!(shell_escape("`id`"), "'`id`'");
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_empty_command() {
         let config = SpawnConfig::new(
@@ -329,6 +338,7 @@ mod tests {
         assert!(matches!(result, Err(TerminalError::InvalidCommand)));
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_build_spawn_command_nonexistent_directory() {
         let config = SpawnConfig::new(
@@ -379,14 +389,10 @@ mod tests {
     #[test]
     fn test_close_terminal_window_skips_when_no_id() {
         // When window_id is None, close should be skipped to avoid closing wrong window
-        let result = close_terminal_window(&TerminalType::ITerm, None);
-        assert!(result.is_ok());
-
-        let result = close_terminal_window(&TerminalType::TerminalApp, None);
-        assert!(result.is_ok());
-
-        let result = close_terminal_window(&TerminalType::Ghostty, None);
-        assert!(result.is_ok());
+        // close_terminal_window returns () - just verify it doesn't panic
+        close_terminal_window(&TerminalType::ITerm, None);
+        close_terminal_window(&TerminalType::TerminalApp, None);
+        close_terminal_window(&TerminalType::Ghostty, None);
     }
 
     #[test]

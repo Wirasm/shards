@@ -1,29 +1,13 @@
 //! Platform-specific detection utilities.
 
-/// Check if a macOS application exists.
+use std::path::Path;
+
+/// Check if a macOS application exists in /Applications.
 ///
-/// Checks both running processes and the /Applications directory.
+/// Uses simple filesystem check instead of spawning processes.
 #[cfg(target_os = "macos")]
 pub fn app_exists_macos(app_name: &str) -> bool {
-    std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(format!(
-            r#"tell application "System Events" to exists application process "{}""#,
-            app_name
-        ))
-        .output()
-        .map(|output| {
-            output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "true"
-        })
-        .unwrap_or(false)
-        ||
-        // Also check if app exists in Applications
-        std::process::Command::new("test")
-            .arg("-d")
-            .arg(format!("/Applications/{}.app", app_name))
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+    Path::new(&format!("/Applications/{}.app", app_name)).exists()
 }
 
 /// Check if a macOS application exists.

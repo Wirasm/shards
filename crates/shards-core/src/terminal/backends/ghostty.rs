@@ -34,7 +34,7 @@ impl TerminalBackend for GhosttyBackend {
         config: &SpawnConfig,
         window_title: Option<&str>,
     ) -> Result<Option<String>, TerminalError> {
-        let cd_command = build_cd_command(&config.working_directory, &config.command);
+        let cd_command = build_cd_command(config.working_directory(), config.command());
         let title = window_title.unwrap_or("shards-session");
 
         // Shell-escape the title to prevent injection if it contains special characters
@@ -49,8 +49,8 @@ impl TerminalBackend for GhosttyBackend {
 
         debug!(
             event = "terminal.spawn_ghostty_starting",
-            terminal_type = %config.terminal_type,
-            working_directory = %config.working_directory.display(),
+            terminal_type = %config.terminal_type(),
+            working_directory = %config.working_directory().display(),
             window_title = %title
         );
 
@@ -71,8 +71,8 @@ impl TerminalBackend for GhosttyBackend {
                 message: format!(
                     "Failed to spawn Ghostty (title='{}', cwd='{}', cmd='{}'): {}",
                     title,
-                    config.working_directory.display(),
-                    config.command,
+                    config.working_directory().display(),
+                    config.command(),
                     e
                 ),
             })?;
@@ -83,15 +83,15 @@ impl TerminalBackend for GhosttyBackend {
                     "Ghostty launch failed with exit code: {:?} (title='{}', cwd='{}', cmd='{}')",
                     status.code(),
                     title,
-                    config.working_directory.display(),
-                    config.command
+                    config.working_directory().display(),
+                    config.command()
                 ),
             });
         }
 
         debug!(
             event = "terminal.spawn_ghostty_launched",
-            terminal_type = %config.terminal_type,
+            terminal_type = %config.terminal_type(),
             window_title = %title,
             message = "open command completed successfully, Ghostty window should be visible"
         );
@@ -114,14 +114,14 @@ impl TerminalBackend for GhosttyBackend {
     }
 
     #[cfg(target_os = "macos")]
-    fn close_window(&self, window_id: Option<&str>) -> Result<(), TerminalError> {
+    fn close_window(&self, window_id: Option<&str>) {
         let Some(id) = window_id else {
             debug!(
                 event = "terminal.close_skipped_no_id",
                 terminal = "ghostty",
                 message = "No window ID available, skipping close to avoid closing wrong window"
             );
-            return Ok(());
+            return;
         };
 
         debug!(
@@ -164,17 +164,14 @@ impl TerminalBackend for GhosttyBackend {
                 );
             }
         }
-
-        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn close_window(&self, _window_id: Option<&str>) -> Result<(), TerminalError> {
+    fn close_window(&self, _window_id: Option<&str>) {
         debug!(
             event = "terminal.close_not_supported",
             platform = std::env::consts::OS
         );
-        Ok(())
     }
 }
 
@@ -198,8 +195,8 @@ mod tests {
     #[test]
     fn test_ghostty_close_window_skips_when_no_id() {
         let backend = GhosttyBackend;
-        let result = backend.close_window(None);
-        assert!(result.is_ok());
+        // close_window returns () - just verify it doesn't panic
+        backend.close_window(None);
     }
 
     #[test]
@@ -224,7 +221,7 @@ mod tests {
         // The title escaping should work correctly
         let title = "shards-test-session";
         let escaped_title = shell_escape(title);
-        let cd_command = build_cd_command(&config.working_directory, &config.command);
+        let cd_command = build_cd_command(config.working_directory(), config.command());
         let ghostty_command = format!(
             "printf '\\033]2;'{}'\\007' && {}",
             escaped_title, cd_command

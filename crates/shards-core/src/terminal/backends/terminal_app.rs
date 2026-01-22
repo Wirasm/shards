@@ -1,9 +1,10 @@
 //! Terminal.app backend implementation.
 
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::terminal::{
     common::{
+        applescript::{close_applescript_window, execute_spawn_script},
         detection::app_exists_macos,
         escape::{applescript_escape, build_cd_command},
     },
@@ -20,12 +21,9 @@ const TERMINAL_SCRIPT: &str = r#"tell application "Terminal"
     end tell"#;
 
 /// AppleScript template for Terminal.app window closing (with window ID support).
+/// Errors are handled in Rust, not AppleScript, for proper logging.
 const TERMINAL_CLOSE_SCRIPT: &str = r#"tell application "Terminal"
-        try
-            close window id {window_id}
-        on error
-            -- Window may already be closed
-        end try
+        close window id {window_id}
     end tell"#;
 
 /// Backend implementation for Terminal.app.
@@ -50,43 +48,10 @@ impl TerminalBackend for TerminalAppBackend {
         config: &SpawnConfig,
         _window_title: Option<&str>,
     ) -> Result<Option<String>, TerminalError> {
-        let cd_command = build_cd_command(&config.working_directory, &config.command);
+        let cd_command = build_cd_command(config.working_directory(), config.command());
         let script = TERMINAL_SCRIPT.replace("{command}", &applescript_escape(&cd_command));
 
-        debug!(
-            event = "terminal.spawn_script_executing",
-            terminal_type = "terminal_app",
-            working_directory = %config.working_directory.display()
-        );
-
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .map_err(|e| TerminalError::AppleScriptExecution {
-                message: format!("Failed to execute Terminal.app spawn script: {}", e),
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(TerminalError::SpawnFailed {
-                message: format!("Terminal.app AppleScript failed: {}", stderr.trim()),
-            });
-        }
-
-        let window_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        debug!(
-            event = "terminal.spawn_script_completed",
-            terminal_type = "terminal_app",
-            window_id = %window_id
-        );
-
-        if window_id.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(window_id))
-        }
+        execute_spawn_script(&script, self.display_name())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -103,61 +68,26 @@ impl TerminalBackend for TerminalAppBackend {
     }
 
     #[cfg(target_os = "macos")]
-    fn close_window(&self, window_id: Option<&str>) -> Result<(), TerminalError> {
+    fn close_window(&self, window_id: Option<&str>) {
         let Some(id) = window_id else {
             debug!(
                 event = "terminal.close_skipped_no_id",
                 terminal = "terminal_app",
                 message = "No window ID available, skipping close to avoid closing wrong window"
             );
-            return Ok(());
+            return;
         };
 
         let script = TERMINAL_CLOSE_SCRIPT.replace("{window_id}", id);
-
-        debug!(
-            event = "terminal.close_started",
-            terminal = "terminal_app",
-            window_id = %id
-        );
-
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .map_err(|e| TerminalError::AppleScriptExecution {
-                message: format!("Failed to execute Terminal.app close script: {}", e),
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // All AppleScript failures are non-fatal - terminal close should never block destroy.
-            warn!(
-                event = "terminal.close_failed_non_fatal",
-                terminal = "terminal_app",
-                window_id = %id,
-                stderr = %stderr.trim(),
-                message = "Terminal close failed - continuing with destroy"
-            );
-            return Ok(());
-        }
-
-        debug!(
-            event = "terminal.close_completed",
-            terminal = "terminal_app",
-            window_id = %id
-        );
-
-        Ok(())
+        close_applescript_window(&script, self.name(), id);
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn close_window(&self, _window_id: Option<&str>) -> Result<(), TerminalError> {
+    fn close_window(&self, _window_id: Option<&str>) {
         debug!(
             event = "terminal.close_not_supported",
             platform = std::env::consts::OS
         );
-        Ok(())
     }
 }
 
@@ -181,8 +111,8 @@ mod tests {
     #[test]
     fn test_terminal_app_close_window_skips_when_no_id() {
         let backend = TerminalAppBackend;
-        let result = backend.close_window(None);
-        assert!(result.is_ok());
+        // close_window returns () - just verify it doesn't panic
+        backend.close_window(None);
     }
 
     #[test]
