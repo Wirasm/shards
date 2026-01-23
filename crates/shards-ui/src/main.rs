@@ -9,39 +9,71 @@ use gpui::{
 };
 use shards_core::{Session, session_ops};
 
+/// Process status for a shard, distinguishing between running, stopped, and unknown states
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessStatus {
+    /// Process is confirmed running
+    Running,
+    /// Process is confirmed stopped (or no PID exists)
+    Stopped,
+    /// Could not determine status (process check failed)
+    Unknown,
+}
+
 /// Display data for a shard, combining Session with computed process status
 #[derive(Clone)]
 struct ShardDisplay {
     session: Session,
-    is_running: bool,
+    status: ProcessStatus,
 }
 
 impl ShardDisplay {
     fn from_session(session: Session) -> Self {
-        let is_running = session
-            .process_id
-            .map(|pid| shards_core::process::is_process_running(pid).unwrap_or(false))
-            .unwrap_or(false);
+        let status = session.process_id.map_or(ProcessStatus::Stopped, |pid| {
+            match shards_core::process::is_process_running(pid) {
+                Ok(true) => ProcessStatus::Running,
+                Ok(false) => ProcessStatus::Stopped,
+                Err(e) => {
+                    tracing::warn!(
+                        event = "ui.shard_list.process_check_failed",
+                        pid = pid,
+                        branch = &session.branch,
+                        error = %e
+                    );
+                    ProcessStatus::Unknown
+                }
+            }
+        });
 
-        Self {
-            session,
-            is_running,
-        }
+        Self { session, status }
+    }
+
+    fn session(&self) -> &Session {
+        &self.session
+    }
+
+    fn status(&self) -> ProcessStatus {
+        self.status
     }
 }
 
-/// Main view displaying the shard list
+/// Main view displaying the shard list.
+///
+/// This view holds a point-in-time snapshot of shard data loaded
+/// at construction. Data does not refresh automatically - the
+/// window must be reopened to see updates (Phase 3 behavior).
 struct ShardListView {
     displays: Vec<ShardDisplay>,
+    load_error: Option<String>,
 }
 
 impl ShardListView {
     fn new() -> Self {
-        let sessions = match session_ops::list_sessions() {
-            Ok(s) => s,
+        let (sessions, load_error) = match session_ops::list_sessions() {
+            Ok(s) => (s, None),
             Err(e) => {
-                tracing::warn!(event = "ui.shard_list.load_failed", error = %e);
-                Vec::new()
+                tracing::error!(event = "ui.shard_list.load_failed", error = %e);
+                (Vec::new(), Some(e.to_string()))
             }
         };
 
@@ -50,13 +82,45 @@ impl ShardListView {
             .map(ShardDisplay::from_session)
             .collect();
 
-        Self { displays }
+        Self {
+            displays,
+            load_error,
+        }
+    }
+
+    fn displays(&self) -> &[ShardDisplay] {
+        &self.displays
+    }
+
+    fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
     }
 }
 
 impl Render for ShardListView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let content = if self.displays.is_empty() {
+        let content = if let Some(error_msg) = self.load_error() {
+            // Error state - show error message
+            div()
+                .flex()
+                .flex_1()
+                .justify_center()
+                .items_center()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(rgb(0xff6b6b))
+                        .child("Error loading shards"),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(0x888888))
+                        .text_sm()
+                        .child(error_msg.to_string()),
+                )
+        } else if self.displays().is_empty() {
+            // Empty state - no shards exist
             div()
                 .flex()
                 .flex_1()
@@ -65,7 +129,8 @@ impl Render for ShardListView {
                 .text_color(rgb(0x888888))
                 .child("No active shards")
         } else {
-            let item_count = self.displays.len();
+            // List state - show shards
+            let item_count = self.displays().len();
             div().flex_1().child(
                 uniform_list("shard-list", item_count, {
                     let displays = self.displays.clone();
@@ -73,10 +138,10 @@ impl Render for ShardListView {
                         range
                             .map(|ix| {
                                 let display = &displays[ix];
-                                let status_color = if display.is_running {
-                                    rgb(0x00ff00)
-                                } else {
-                                    rgb(0xff0000)
+                                let status_color = match display.status() {
+                                    ProcessStatus::Running => rgb(0x00ff00), // Green
+                                    ProcessStatus::Stopped => rgb(0xff0000), // Red
+                                    ProcessStatus::Unknown => rgb(0xffa500), // Orange
                                 };
 
                                 div()
@@ -91,17 +156,17 @@ impl Render for ShardListView {
                                         div()
                                             .flex_1()
                                             .text_color(rgb(0xffffff))
-                                            .child(display.session.branch.clone()),
+                                            .child(display.session().branch.clone()),
                                     )
                                     .child(
                                         div()
                                             .text_color(rgb(0x888888))
-                                            .child(display.session.agent.clone()),
+                                            .child(display.session().agent.clone()),
                                     )
                                     .child(
                                         div()
                                             .text_color(rgb(0x666666))
-                                            .child(display.session.project_id.clone()),
+                                            .child(display.session().project_id.clone()),
                                     )
                             })
                             .collect()
