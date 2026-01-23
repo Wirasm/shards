@@ -13,3 +13,4 @@ path = "src/main.rs"
 shards-core.workspace = true
 gpui.workspace = true
 core-text.workspace = true  # Pin to fix gpui dependency conflict
+tracing.workspace = true
