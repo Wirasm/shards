@@ -4,10 +4,12 @@
 - **Language**: Rust (2024 edition)
 - **CLI Framework**: clap 4.0 with derive macros
 - **Git Operations**: git2 crate for worktree management
-- **Terminal Integration**: Platform-specific terminal launching with terminal type selection (Ghostty, iTerm, Terminal.app, Native on macOS; planned for Linux/Windows)
-- **Session Storage**: File-based persistence in `.shards/sessions/` (planned)
+- **Terminal Integration**: Platform-specific terminal launching (Ghostty > iTerm > Terminal.app on macOS)
+- **Session Storage**: File-based JSON persistence in `~/.shards/sessions/`
+- **Configuration**: Hierarchical TOML config (CLI → project → user → defaults)
 - **Logging**: Structured JSON logging with tracing and tracing-subscriber
 - **Error Handling**: thiserror for feature-specific error types
+- **Process Management**: sysinfo crate for process monitoring
 - **Cross-platform Support**: Conditional compilation for platform-specific features
 
 ## Architecture Overview
@@ -20,60 +22,70 @@
          │                       ▼                       ▼
          │              ┌──────────────────┐    ┌─────────────────┐
          │              │  Terminal        │    │  Worktree       │
-         │              │  Handler         │    │  (.shards/*)    │
+         │              │  Handler         │    │  (~/.shards/)   │
          │              └──────────────────┘    └─────────────────┘
          │                       │
+         │                       ▼
+         │              ┌──────────────────┐
+         │              │  Agents          │
+         │              │  Registry        │
+         │              └──────────────────┘
+         │                       │
          ▼                       ▼
-┌─────────────────┐    ┌──────────────────┐
-│  Core Logging   │    │ Native Terminal  │
-│  & Events       │    │ (agent process)  │
-└─────────────────┘    └──────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Core Logging   │    │ Native Terminal  │    │  Health/Cleanup │
+│  & Events       │    │ (agent process)  │    │  Monitoring     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
 ## Vertical Slice Architecture
 
 ### Feature Slices
-- **sessions/**: Session lifecycle management with handler/operations pattern
-- **git/**: Git worktree operations with structured logging
-- **terminal/**: Cross-platform terminal launching with async spawning
-- **cli/**: Command-line interface with clap integration
+- **sessions/**: Session lifecycle (create, list, destroy, restart, status)
+- **git/**: Git worktree operations via git2
+- **terminal/**: Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app)
+- **agents/**: Agent backend system (claude, kiro, gemini, codex, aether)
+- **health/**: Session health monitoring with CPU/memory metrics
+- **cleanup/**: Orphaned resource cleanup with multiple strategies
+- **process/**: PID tracking with process reuse protection
+- **files/**: File operations for worktree setup
 
 ### Core Infrastructure
-- **config.rs**: Application configuration with environment variables
-- **logging.rs**: Structured JSON logging setup with tracing
-- **errors.rs**: Base error traits and common error handling
-- **events.rs**: Application lifecycle events (startup, shutdown, errors)
+- **config/**: Hierarchical TOML configuration (loading, defaults, validation, types)
+- **logging/**: Structured JSON logging setup with tracing
+- **errors/**: Base ShardsError trait with error_code() and is_user_error()
+- **events/**: Application lifecycle events (startup, shutdown, errors)
 
 ## Development Environment
-- Rust 1.89.0 or later
+- Rust 1.89.0 or later (2024 edition)
 - Git repository (required for worktree operations)
-- Platform-specific terminal emulator
+- macOS with Ghostty, iTerm, or Terminal.app
 
 ## Code Standards
 - **Vertical slice architecture**: Features organized by domain, not layers
 - **Handler/Operations pattern**: I/O orchestration separate from pure business logic
-- **Structured logging**: Event-based logging with consistent naming conventions
-- **Feature-specific errors**: thiserror-based error types with helpful messages
+- **Structured logging**: Event naming `{layer}.{domain}.{action}_{state}`
+- **Feature-specific errors**: thiserror-based with error codes
 - **No unwrap/expect**: Explicit error handling with `?` operator
-- **Cross-platform compatibility**: Conditional compilation for platform features
+- **No silent failures**: Always surface errors, log fallbacks
+- **Type safety**: Full use of Rust's type system
 
 ## Testing Strategy
-- **Unit tests**: Collocated with code, especially in `operations.rs` modules
-- **Integration tests**: Cross-feature workflows testing complete CLI commands
-- **Manual testing**: Platform-specific terminal launching and Git operations
+- **Unit tests**: Collocated with code in `#[cfg(test)]` modules
+- **Integration tests**: Session lifecycle workflows
+- **All PRs must pass**: `cargo fmt --check`, `cargo clippy --all -- -D warnings`, `cargo test --all`
 
 ## Deployment Process
-- Cargo build for local development
-- Future: Binary releases for multiple platforms
+- `cargo build --all` for local development
+- `cargo build --release` for optimized builds
 
 ## Performance Requirements
 - Fast startup time for CLI operations
 - Efficient Git operations for worktree management
 - Minimal resource usage for session tracking
-- Async terminal spawning to prevent blocking
 
 ## Security Considerations
-- No sensitive data storage
+- No sensitive data storage in session files
 - Safe file system operations with proper error handling
 - Proper cleanup of temporary resources
-- Atomic file operations for session persistence
+- Branch name validation to prevent injection

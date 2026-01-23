@@ -6,7 +6,7 @@ Shards is a CLI tool that manages multiple AI coding agents in isolated Git work
 
 ## When to Use Shards
 
-### ✅ **Perfect Use Cases**  
+### ✅ **Perfect Use Cases**
 - **Parallel development**: Work on multiple features/bugs simultaneously with different AI agents
 - **Context isolation**: Prevent agents from conflicting over the same working directory
 - **Background tasks**: Let an AI agent work on a side issue while you focus on something else
@@ -17,6 +17,14 @@ Shards is a CLI tool that manages multiple AI coding agents in isolated Git work
 - Single-threaded development (just use your main branch)
 - Non-Git projects (Shards requires a Git repository)
 - Projects where you need agents to share the same working directory
+
+## Supported Agents
+
+- **claude** - Claude Code CLI (default)
+- **kiro** - Kiro CLI
+- **gemini** - Gemini CLI
+- **codex** - OpenAI Codex CLI
+- **aether** - Aether CLI
 
 ## How to Use Shards
 
@@ -32,36 +40,55 @@ Shards is a CLI tool that manages multiple AI coding agents in isolated Git work
    shards list
    ```
 
-3. **Remove shard when done**:
+3. **Check health of all shards**:
+   ```bash
+   shards health
+   ```
+
+4. **Remove shard when done**:
    ```bash
    shards destroy <branch>
    ```
 
-### **Common Commands for AI Agents**
+### **All Commands**
 
 ```bash
-# Create Kiro CLI shard for bug fixing
-shards create bug-fix-123 --agent kiro
-
-# Create Claude shard for feature development
+# Create shard with specific agent
 shards create feature-auth --agent claude
 
-# Create Gemini shard for refactoring
-shards create refactor-api --agent gemini
-
-# Check all active sessions
+# List all active shards
 shards list
 
-# Clean up finished work
-shards destroy bug-fix-123
+# Get detailed status of a shard
+shards status feature-auth
+
+# Restart an agent in existing worktree
+shards restart feature-auth
+shards restart feature-auth --agent kiro  # Switch agent
+
+# Health monitoring
+shards health                    # All shards
+shards health feature-auth       # Single shard
+shards health --watch            # Live dashboard
+shards health --json             # JSON output
+
+# Clean up orphaned resources
+shards cleanup
+shards cleanup --orphans         # Only orphaned worktrees/branches
+shards cleanup --stopped         # Only stopped sessions
+shards cleanup --older-than 7    # Sessions older than N days
+
+# Destroy shard (kills process, removes worktree)
+shards destroy feature-auth
 ```
 
 ## What Happens When You Create a Shard
 
 1. **Git worktree created** in `~/.shards/worktrees/<project>/<branch>/`
-2. **New branch created** with user-specified branch name
-3. **Agent launched** in native terminal window in the worktree directory
-4. **Session tracked** (persistence planned)
+2. **New branch created** (or uses existing branch if specified)
+3. **Port range allocated** (10 ports per session, starting from 3000)
+4. **Agent launched** in terminal window (Ghostty > iTerm > Terminal.app)
+5. **Session persisted** to `~/.shards/sessions/<session-id>.json`
 
 ## AI Agent Integration
 
@@ -75,8 +102,9 @@ shards create my-task --agent kiro
 
 # This will:
 # - Create a new Git worktree
-# - Launch a terminal with Kiro CLI
-# - Track the session for later cleanup
+# - Launch a terminal with the agent
+# - Track the session with process info
+# - Allocate dedicated port range
 ```
 
 ### **Agent-to-Agent Workflow**
@@ -87,6 +115,9 @@ shards create claude-review --agent claude
 
 # Agent B can later check what's running
 shards list
+
+# Check health status
+shards health
 
 # Agent A can clean up when done
 shards destroy claude-review
@@ -102,34 +133,56 @@ shards destroy claude-review
 ### **Lifecycle Management**
 - Always `shards destroy <branch>` when done to clean up worktrees
 - Use `shards list` to see what's currently active
-- Session persistence and cleanup commands are planned
+- Use `shards health` to monitor agent status
+- Use `shards cleanup` to remove orphaned resources
 
-### **Command Structure**
-- Simple commands: `shards create test --agent claude`
-- Different agents: `shards create kiro-task --agent kiro`
-- Custom branches: `shards create feature-auth --agent gemini`
+### **Configuration**
+Shards supports hierarchical configuration (highest priority wins):
+1. CLI arguments
+2. Project config: `.shards/config.toml`
+3. User config: `~/.shards/config.toml`
+4. Defaults
+
+Example config:
+```toml
+[agent]
+default = "claude"
+
+[terminal]
+preferred = "ghostty"
+
+[agents.claude]
+startup_command = "claude"
+flags = "--dangerously-skip-permissions"
+```
 
 ## Troubleshooting
 
 ### **Common Issues**
 - **"Not in a Git repository"**: Run shards from within a Git project
-- **"Shard already exists"**: Use a different name or stop the existing shard first
-- **Terminal doesn't open**: Check if your terminal emulator is supported
+- **"Shard already exists"**: Use a different name or destroy the existing shard first
+- **Terminal doesn't open**: Check if your terminal emulator is supported (Ghostty, iTerm, Terminal.app on macOS)
 
 ### **Recovery Commands**
 ```bash
-# Check what's actually running
+# Check what's running
 shards list
 
-# Clean up when destroy is implemented
+# Check health status
+shards health
+
+# Clean up orphaned resources
+shards cleanup --orphans
+
+# Force destroy a stuck shard
 shards destroy <branch-name>
 ```
 
 ## Requirements
 
 - Must be run from within a Git repository
-- Requires native terminal emulator (Terminal.app, gnome-terminal, etc.)
-- Works on macOS, Linux, and Windows
+- macOS: Ghostty (preferred), iTerm, or Terminal.app
+- Supported agents must be installed and in PATH
 
 ---
 

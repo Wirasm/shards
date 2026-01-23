@@ -8,52 +8,103 @@ SHARDS/
 │   │   ├── src/
 │   │   │   ├── lib.rs     # Library root with public exports
 │   │   │   ├── config/    # Foundation: configuration
-│   │   │   │   └── mod.rs # Application configuration
+│   │   │   │   ├── mod.rs       # Config module exports
+│   │   │   │   ├── types.rs     # ShardsConfig, AgentConfig, etc.
+│   │   │   │   ├── loading.rs   # Config file loading logic
+│   │   │   │   ├── defaults.rs  # Default values
+│   │   │   │   └── validation.rs # Config validation
 │   │   │   ├── logging/   # Foundation: structured logging
-│   │   │   │   └── mod.rs # Logging setup
+│   │   │   │   └── mod.rs # init_logging() with JSON output
 │   │   │   ├── errors/    # Foundation: base error traits
-│   │   │   │   └── mod.rs # Error definitions
+│   │   │   │   └── mod.rs # ShardsError trait, ConfigError
 │   │   │   ├── events/    # Foundation: application lifecycle
-│   │   │   │   └── mod.rs # Lifecycle events
+│   │   │   │   └── mod.rs # log_app_startup(), log_app_error()
 │   │   │   ├── sessions/  # Feature slice: session lifecycle
 │   │   │   │   ├── mod.rs         # Public API exports
-│   │   │   │   ├── handler.rs     # I/O orchestration
+│   │   │   │   ├── handler.rs     # create/list/destroy/restart_session
 │   │   │   │   ├── operations.rs  # Pure business logic
-│   │   │   │   ├── types.rs       # Feature-specific types
-│   │   │   │   └── errors.rs      # Feature-specific errors
+│   │   │   │   ├── types.rs       # Session, CreateSessionRequest
+│   │   │   │   ├── errors.rs      # SessionError
+│   │   │   │   ├── ports.rs       # Port range allocation
+│   │   │   │   ├── persistence.rs # Session file I/O
+│   │   │   │   └── validation.rs  # Input validation
 │   │   │   ├── git/       # Feature slice: worktree management
 │   │   │   │   ├── mod.rs         # Public API exports
-│   │   │   │   ├── handler.rs     # Git I/O operations
+│   │   │   │   ├── handler.rs     # detect_project, create/remove_worktree
 │   │   │   │   ├── operations.rs  # Pure git logic
-│   │   │   │   ├── types.rs       # Git data structures
-│   │   │   │   └── errors.rs      # Git-specific errors
+│   │   │   │   ├── types.rs       # Project, Worktree
+│   │   │   │   └── errors.rs      # GitError
 │   │   │   ├── terminal/  # Feature slice: terminal launching
 │   │   │   │   ├── mod.rs         # Public API exports
-│   │   │   │   ├── handler.rs     # Terminal spawning
-│   │   │   │   ├── operations.rs  # Terminal detection logic
-│   │   │   │   ├── types.rs       # Terminal data structures
-│   │   │   │   └── errors.rs      # Terminal-specific errors
+│   │   │   │   ├── handler.rs     # spawn_terminal, close_terminal
+│   │   │   │   ├── operations.rs  # Terminal detection
+│   │   │   │   ├── traits.rs      # TerminalBackend trait
+│   │   │   │   ├── registry.rs    # Backend registration
+│   │   │   │   ├── types.rs       # SpawnConfig, SpawnResult, TerminalType
+│   │   │   │   ├── errors.rs      # TerminalError
+│   │   │   │   ├── backends/      # Terminal implementations
+│   │   │   │   │   ├── mod.rs
+│   │   │   │   │   ├── ghostty.rs
+│   │   │   │   │   ├── iterm.rs
+│   │   │   │   │   └── terminal_app.rs
+│   │   │   │   └── common/        # Shared utilities
+│   │   │   │       ├── mod.rs
+│   │   │   │       ├── applescript.rs
+│   │   │   │       ├── detection.rs
+│   │   │   │       └── escape.rs
+│   │   │   ├── agents/    # Feature slice: agent backend system
+│   │   │   │   ├── mod.rs         # Public API exports
+│   │   │   │   ├── traits.rs      # AgentBackend trait
+│   │   │   │   ├── registry.rs    # Agent lookup and validation
+│   │   │   │   ├── types.rs       # AgentType enum
+│   │   │   │   ├── errors.rs      # AgentError
+│   │   │   │   └── backends/      # Agent implementations
+│   │   │   │       ├── mod.rs
+│   │   │   │       ├── claude.rs
+│   │   │   │       ├── kiro.rs
+│   │   │   │       ├── gemini.rs
+│   │   │   │       ├── codex.rs
+│   │   │   │       └── aether.rs
 │   │   │   ├── health/    # Feature slice: health monitoring
+│   │   │   │   ├── mod.rs, handler.rs, operations.rs
+│   │   │   │   ├── types.rs       # HealthOutput, ShardHealth, HealthStatus
+│   │   │   │   ├── errors.rs, storage.rs
 │   │   │   ├── cleanup/   # Feature slice: cleanup operations
+│   │   │   │   ├── mod.rs, handler.rs, operations.rs
+│   │   │   │   ├── types.rs       # CleanupStrategy, CleanupSummary
+│   │   │   │   └── errors.rs
 │   │   │   ├── process/   # Feature slice: process management
+│   │   │   │   ├── mod.rs, operations.rs
+│   │   │   │   ├── types.rs       # ProcessInfo, ProcessStatus
+│   │   │   │   ├── errors.rs, pid_file.rs
 │   │   │   └── files/     # Feature slice: file operations
+│   │   │       ├── mod.rs, handler.rs, operations.rs
+│   │   │       ├── types.rs       # IncludeConfig
+│   │   │       └── errors.rs
 │   │   └── Cargo.toml     # Core library dependencies
 │   ├── shards/            # CLI binary
 │   │   ├── src/
-│   │   │   ├── main.rs    # CLI entry point
+│   │   │   ├── main.rs    # CLI entry point (calls init_logging)
 │   │   │   ├── app.rs     # Clap application definition
 │   │   │   ├── commands.rs # CLI command handlers
 │   │   │   └── table.rs   # Table formatting utilities
 │   │   └── Cargo.toml     # CLI binary dependencies
-│   └── shards-ui/         # Future: GPUI-based UI (placeholder)
+│   └── shards-ui/         # Future: TUI (placeholder)
 │       └── Cargo.toml     # UI dependencies
-├── .shards/               # Local worktrees directory (created at runtime)
-│   └── <branch-name>/     # Individual shard worktrees
+├── .shards/               # Project-level config directory
+│   └── config.toml        # Project-specific configuration
+├── ~/.shards/             # User-level data directory (at runtime)
+│   ├── config.toml        # User configuration
+│   ├── sessions/          # Session JSON files
+│   └── worktrees/         # Worktree directories
+│       └── <project>/
+│           └── <branch>/
 ├── .kiro/                 # Kiro CLI configuration and steering docs
 │   └── steering/          # Project steering documentation
 ├── target/                # Cargo build artifacts
 ├── Cargo.toml             # Workspace manifest
 ├── Cargo.lock             # Dependency lock file
+├── CLAUDE.md              # Claude Code instructions (source of truth)
 └── README.md              # Project documentation
 ```
 
@@ -78,8 +129,9 @@ SHARDS/
 ## File Naming Conventions
 - **Rust modules**: Snake case (e.g., `handler.rs`, `operations.rs`, `types.rs`)
 - **Branch names**: User-defined branch names for shards
-- **Worktree directories**: `.shards/<branch-name>/` in repository root
-- **Session files**: `.shards/sessions/<session-id>.json` (planned for persistence)
+- **Worktree directories**: `~/.shards/worktrees/<project>/<branch>/`
+- **Session files**: `~/.shards/sessions/<session-id>.json`
+- **Session ID format**: `<project-id>_<branch-name>`
 
 ## Module Organization
 
@@ -112,17 +164,25 @@ Feature slices include: `sessions/`, `git/`, `terminal/`, `health/`, `cleanup/`,
 - **crates/shards-core/Cargo.toml**: Core library dependencies
 - **crates/shards/Cargo.toml**: CLI binary dependencies
 - **crates/shards-ui/Cargo.toml**: UI placeholder dependencies
-- **.shards/sessions/**: Session persistence files (planned)
-- **.gitignore**: Excludes build artifacts and local worktrees
-- **No complex config files**: Keep configuration minimal and environment-based
+- **~/.shards/sessions/*.json**: Session persistence files
+- **~/.shards/config.toml**: User-level configuration
+- **.shards/config.toml**: Project-level configuration
+- **.gitignore**: Excludes build artifacts and local config
+
+### Configuration Hierarchy (highest priority wins)
+1. CLI arguments
+2. Project config (`.shards/config.toml`)
+3. User config (`~/.shards/config.toml`)
+4. Defaults
 
 ## Documentation Structure
+- **CLAUDE.md**: Primary source of truth for AI agents (checked into repo)
 - **README.md**: User-facing documentation with usage examples
-- **.kiro/steering/**: Project steering documentation
-  - `architecture.md`: Complete architecture specification
+- **.kiro/steering/**: Supplementary project documentation
+  - `architecture.md`: Architecture patterns and logging conventions
   - `product.md`: Product requirements and objectives
-  - `progress.md`: Current implementation status
-  - `tech.md`: Technical stack and implementation details
+  - `progress.md`: Development log (historical)
+  - `tech.md`: Technical stack details
   - `structure.md`: This file - project organization
   - `ai-instruction.md`: AI agent usage instructions
 - **Inline documentation**: Rust doc comments for public APIs

@@ -10,13 +10,17 @@
 crates/
 ├── shards-core/       # Core library with all business logic
 │   └── src/
-│       ├── config/    # Foundation: configuration
+│       ├── config/    # Foundation: configuration (loading, defaults, validation, types)
 │       ├── logging/   # Foundation: structured logging
 │       ├── errors/    # Foundation: base error traits
 │       ├── events/    # Foundation: application lifecycle
 │       ├── sessions/  # Feature slice: session lifecycle
 │       ├── git/       # Feature slice: worktree management
 │       ├── terminal/  # Feature slice: terminal launching
+│       │   ├── backends/   # Terminal implementations (ghostty, iterm, terminal_app)
+│       │   └── common/     # Shared utilities (applescript, detection, escape)
+│       ├── agents/    # Feature slice: agent backend system
+│       │   └── backends/   # Agent implementations (claude, kiro, gemini, codex, aether)
 │       ├── health/    # Feature slice: health monitoring
 │       ├── cleanup/   # Feature slice: cleanup operations
 │       ├── process/   # Feature slice: process management
@@ -27,7 +31,7 @@ crates/
 │       ├── app.rs     # Clap application definition
 │       ├── commands.rs # CLI command handlers
 │       └── table.rs   # Table formatting utilities
-└── shards-ui/         # Future: GPUI-based UI
+└── shards-ui/         # Future: TUI (minimal)
 ```
 
 ### Feature Slice Structure
@@ -63,68 +67,67 @@ Code moves to `shared/` only when three features need it. Until then, duplicate 
 
 ## Logging Strategy
 
-**Event Naming Convention**: `{domain}.{component}.{action}_{state}`
+**Event Naming Convention**: `{layer}.{domain}.{action}_{state}`
+
+| Layer | Crate | Description |
+|-------|-------|-------------|
+| `cli` | `crates/shards/` | User-facing CLI commands |
+| `core` | `crates/shards-core/` | Core library logic |
+
+**Domains**: `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`
+
+**State suffixes**: `_started`, `_completed`, `_failed`, `_skipped`
 
 ### Standard Events
 
 | Event | When |
 |-------|------|
-| `session.create_started` | Handler begins |
-| `session.create_completed` | Success |
-| `session.create_failed` | Failure |
-| `git.worktree.create_completed` | Worktree added |
-| `terminal.spawn_completed` | Terminal launched |
+| `cli.create_started` | CLI command begins |
+| `core.session.create_started` | Handler begins |
+| `core.session.create_completed` | Success |
+| `core.session.create_failed` | Failure |
+| `core.git.worktree.create_completed` | Worktree added |
+| `core.terminal.spawn_completed` | Terminal launched |
 
 ### Implementation Pattern
 
 ```rust
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
-pub fn create_session(name: &str, command: &str) -> Result<Session, SessionError> {
+pub fn create_session(request: CreateSessionRequest, config: &ShardsConfig) -> Result<Session, SessionError> {
     info!(
-        event = "session.create_started",
-        name = name,
-        command = command
+        event = "core.session.create_started",
+        branch = request.branch,
+        agent = agent
     );
-    
-    match operations::create_session(name, command) {
-        Ok(session) => {
-            info!(
-                event = "session.create_completed",
-                session_id = session.id,
-                name = name
-            );
-            Ok(session)
-        }
-        Err(e) => {
-            error!(
-                event = "session.create_failed",
-                name = name,
-                error = %e,
-                error_type = std::any::type_name::<SessionError>()
-            );
-            Err(e)
-        }
-    }
+
+    // ... operations ...
+
+    info!(
+        event = "core.session.create_completed",
+        session_id = session.id,
+        branch = session.branch,
+        process_id = session.process_id
+    );
+    Ok(session)
 }
 ```
 
 ### Required Fields by Context
 
-- **Session ops**: `name`, `session_id`, `command`
-- **Git ops**: `repo_path`, `branch`, `worktree_path`
-- **Terminal ops**: `terminal_type`, `command`
-- **Errors**: `error`, `error_type`
+- **Session ops**: `branch`, `session_id`, `agent`, `process_id`
+- **Git ops**: `branch`, `worktree_path`, `project_id`
+- **Terminal ops**: `terminal_type`, `window_title`, `working_directory`
+- **Errors**: `error` (with `%e` for Display format)
 
 ### Log Levels
 
 | Level | Use For |
 |-------|---------|
-| `error!` | Operation failed, needs attention |
-| `warn!` | Unexpected but recoverable |
-| `info!` | Key lifecycle events |
-| `debug!` | Detailed operation info |
-| `trace!` | Very verbose (command output, paths) |
+| `error!` | Operation failed, requires attention |
+| `warn!` | Degraded operation, fallback used, non-critical issues |
+| `info!` | Operation lifecycle (_started, _completed), user-relevant events |
+| `debug!` | Internal state, retry attempts, detailed flow |
 
 ### Structured Logging Setup
 
@@ -147,36 +150,42 @@ pub fn init_logging() {
 
 **Key Benefits**:
 - Grep-friendly: `grep "_failed"` finds all failures
-- Hierarchical: `grep "session\."` finds all session events
+- Layer-aware: `grep "core\."` for library, `grep "cli\."` for CLI
+- Hierarchical: `grep "core\.session\."` finds all session events
 - AI-parseable: Structured JSON for log analysis
-- OpenTelemetry-aligned: Standard semantic conventions
 
 ## Handler/Operations Pattern
 
 ### Handler Layer (I/O Orchestration)
 ```rust
 // crates/shards-core/src/sessions/handler.rs
-pub fn create_session(name: &str, command: &str) -> Result<Session, SessionError> {
-    info!(event = "session.create_started", name = name);
-    
+pub fn create_session(
+    request: CreateSessionRequest,
+    shards_config: &ShardsConfig,
+) -> Result<Session, SessionError> {
+    let agent = request.agent_or_default(&shards_config.agent.default);
+
+    info!(event = "core.session.create_started", branch = request.branch, agent = agent);
+
     // 1. Validate input (pure)
-    let validated = operations::validate_session_request(name, command)?;
-    
-    // 2. Check existing (I/O)
-    if registry::session_exists(&validated.name)? {
-        return Err(SessionError::AlreadyExists { name: validated.name });
-    }
-    
-    // 3. Create worktree (I/O)
-    let worktree = git::create_worktree(&validated.name)?;
-    
-    // 4. Launch terminal (I/O)
-    terminal::spawn(&validated.command, &worktree.path)?;
-    
-    // 5. Save session (I/O)
-    let session = registry::save_session(validated, worktree)?;
-    
-    info!(event = "session.create_completed", session_id = session.id);
+    let validated = operations::validate_session_request(&request.branch, &agent_command, &agent)?;
+
+    // 2. Detect git project (I/O)
+    let project = git::handler::detect_project()?;
+
+    // 3. Allocate port range (I/O)
+    let (port_start, port_end) = operations::allocate_port_range(&sessions_dir, port_count, base_port)?;
+
+    // 4. Create worktree (I/O)
+    let worktree = git::handler::create_worktree(&shards_dir, &project, &validated.name, Some(shards_config))?;
+
+    // 5. Launch terminal (I/O)
+    let spawn_result = terminal::handler::spawn_terminal(&worktree.path, &validated.command, shards_config, Some(&session_id), Some(&shards_dir))?;
+
+    // 6. Save session (I/O)
+    operations::save_session_to_file(&session, &sessions_dir)?;
+
+    info!(event = "core.session.create_completed", session_id = session.id, branch = validated.name);
     Ok(session)
 }
 ```
@@ -184,24 +193,23 @@ pub fn create_session(name: &str, command: &str) -> Result<Session, SessionError
 ### Operations Layer (Pure Logic)
 ```rust
 // crates/shards-core/src/sessions/operations.rs
-pub fn validate_session_request(name: &str, command: &str) -> Result<ValidatedRequest, SessionError> {
-    if name.is_empty() {
-        return Err(SessionError::InvalidName);
+pub fn validate_session_request(branch: &str, command: &str, agent: &str) -> Result<ValidatedRequest, SessionError> {
+    if branch.is_empty() {
+        return Err(SessionError::InvalidName { reason: "Branch name cannot be empty".to_string() });
     }
-    
     if command.is_empty() {
-        return Err(SessionError::InvalidCommand);
+        return Err(SessionError::InvalidCommand { reason: "Command cannot be empty".to_string() });
     }
-    
-    Ok(ValidatedRequest {
-        name: name.to_string(),
-        command: command.to_string(),
-    })
+    Ok(ValidatedRequest { name: branch.to_string(), command: command.to_string(), agent: agent.to_string() })
 }
 
-pub fn calculate_port_range(session_index: u32) -> (u16, u16) {
-    let base_port = 3000 + (session_index * 100);
-    (base_port, base_port + 99)
+pub fn allocate_port_range(sessions_dir: &Path, count: u16, base: u16) -> Result<(u16, u16), SessionError> {
+    // Finds next available port range by scanning existing sessions
+    // Returns (start_port, end_port)
+}
+
+pub fn generate_session_id(project_id: &str, branch: &str) -> String {
+    format!("{}_{}", project_id, branch)
 }
 ```
 
