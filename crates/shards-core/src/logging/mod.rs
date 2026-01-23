@@ -5,6 +5,7 @@ pub fn init_logging() {
         .with(
             tracing_subscriber::fmt::layer()
                 .json()
+                .with_writer(std::io::stderr)
                 .with_current_span(false)
                 .with_span_list(false),
         )
