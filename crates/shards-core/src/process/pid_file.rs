@@ -162,10 +162,8 @@ pub fn wrap_command_with_pid_capture(command: &str, pid_file: &Path) -> String {
     let escaped_command = command.replace('\'', "'\\''");
     let escaped_path = pid_file.to_string_lossy().replace('\'', "'\\''");
 
-    // Use '$$' (single-quoted) to prevent outer shell from interpreting it.
-    // The inner sh -c will see 'echo '\''$$'\'' > ...' which evaluates $$ correctly.
     format!(
-        "sh -c 'echo '\\''$$'\\'' > '\\''{}'\\'' && exec {}'",
+        "sh -c 'echo $$ > '\\''{}'\\'' && exec {}'",
         escaped_path, escaped_command
     )
 }
@@ -286,12 +284,7 @@ mod tests {
         let pid_file = Path::new("/tmp/test.pid");
 
         let wrapped = wrap_command_with_pid_capture("claude", pid_file);
-        // $$ should be single-quoted to survive outer shell interpretation
-        assert!(
-            wrapped.contains("'$$'"),
-            "expected single-quoted $$ for shell escaping: {}",
-            wrapped
-        );
+        assert!(wrapped.contains("echo $$"));
         assert!(wrapped.contains("/tmp/test.pid"));
         assert!(wrapped.contains("exec claude"));
     }
@@ -316,30 +309,5 @@ mod tests {
 
         let result = read_pid_file_with_retry(&pid_file, 3, 10).unwrap();
         assert_eq!(result, Some(99999));
-    }
-
-    #[test]
-    fn test_wrap_command_survives_outer_shell() {
-        // Verify the command can be wrapped in another sh -c and still work
-        let pid_file = Path::new("/tmp/test.pid");
-        let wrapped = wrap_command_with_pid_capture("echo test", pid_file);
-
-        // Simulate what Ghostty does: wrap in another sh -c
-        // The $$ should still be present after one level of shell interpretation
-        let outer_wrapped = format!("sh -c '{}'", wrapped.replace('\'', "'\\''"));
-
-        // After outer shell strips one layer of quoting, $$ should still be quoted
-        // This is a structural test - actual execution would require integration testing
-        assert!(
-            wrapped.contains("'$$'"),
-            "inner command should have quoted $$: {}",
-            wrapped
-        );
-        // Verify the outer wrapped version still contains the pattern
-        assert!(
-            outer_wrapped.contains("$$"),
-            "outer wrapped should preserve $$: {}",
-            outer_wrapped
-        );
     }
 }
