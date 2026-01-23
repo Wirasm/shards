@@ -9,7 +9,7 @@
 
 ## Summary
 
-Added GPUI as a dependency to the `shards-ui` crate. The crate now compiles with GPUI available, establishing the build foundation for future UI work. Due to an upstream dependency conflict in GPUI 0.2.2 (see [zed-industries/zed#47168](https://github.com/zed-industries/zed/issues/47168)), the `font-kit` feature was disabled to work around a `core_graphics` version mismatch.
+Added GPUI as a dependency to the `shards-ui` crate with full font rendering support. The crate now compiles with GPUI available, establishing the build foundation for future UI work. A `core_graphics` version conflict was resolved by pinning `core-text` to version 21.0.0.
 
 ---
 
@@ -17,19 +17,20 @@ Added GPUI as a dependency to the `shards-ui` crate. The crate now compiles with
 
 | Metric     | Predicted | Actual | Reasoning |
 |------------|-----------|--------|-----------|
-| Complexity | LOW       | MEDIUM | Encountered upstream dependency conflict requiring workaround |
+| Complexity | LOW       | MEDIUM | Encountered dependency conflict requiring version pin |
 | Confidence | HIGH      | HIGH   | Root cause identified and resolved with documented workaround |
 
 **Deviation from plan:**
 
-The original plan did not anticipate the `core_graphics` version conflict in GPUI 0.2.2. The `zed-font-kit` crate requires both `core-graphics 0.24.0` (direct) and `core-graphics 0.25.0` (via `core-text 21.1.0`), causing type mismatches.
+The original plan did not anticipate the `core_graphics` version conflict. GPUI's font-kit dependency requires `core-graphics 0.24.0`, but `core-text 21.1.0` (released Jan 2026) pulls in `core-graphics 0.25.0`, causing type mismatches.
 
-**Workaround applied:** Disabled the `font-kit` default feature:
+**Solution applied:** Pin `core-text` to version 21.0.0:
 ```toml
-gpui = { version = "0.2", default-features = false }
+gpui = "0.2"
+core-text = "=21.0.0"
 ```
 
-This allows GPUI to compile for scaffolding purposes. The `font-kit` feature will need to be re-enabled when the upstream issue is resolved (likely in GPUI 0.2.3+) for actual text rendering in Phase 2+.
+This keeps all macOS graphics dependencies on consistent versions and preserves full font rendering capability.
 
 ---
 
@@ -37,7 +38,7 @@ This allows GPUI to compile for scaffolding purposes. The `font-kit` feature wil
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 1 | Add gpui to workspace dependencies | `Cargo.toml` | Completed (with workaround) |
+| 1 | Add gpui to workspace dependencies | `Cargo.toml` | Completed |
 | 2 | Reference gpui from workspace in shards-ui | `crates/shards-ui/Cargo.toml` | Completed |
 | 3 | Import gpui to prove compilation | `crates/shards-ui/src/main.rs` | Completed |
 
@@ -60,37 +61,33 @@ This allows GPUI to compile for scaffolding purposes. The `font-kit` feature wil
 
 | File | Action | Lines |
 |------|--------|-------|
-| `Cargo.toml` | UPDATE | +4 (gpui workspace dep with feature config) |
-| `crates/shards-ui/Cargo.toml` | UPDATE | -2/+1 (removed comment, added gpui.workspace) |
+| `Cargo.toml` | UPDATE | +5 (gpui and core-text workspace deps) |
+| `crates/shards-ui/Cargo.toml` | UPDATE | -2/+2 (removed comment, added gpui and core-text) |
 | `crates/shards-ui/src/main.rs` | UPDATE | +3/-2 (added gpui import, updated messages) |
 
 ---
 
 ## Deviations from Plan
 
-1. **Feature flags added**: Plan specified `gpui = "0.2"` but implementation required `gpui = { version = "0.2", default-features = false }` to work around upstream bug.
-
-2. **No patches needed**: Initial attempts to patch `core-foundation-rs` crates were unsuccessful due to version locking. Disabling `font-kit` was cleaner.
+1. **Added core-text pin**: Plan specified only `gpui = "0.2"` but implementation required pinning `core-text = "=21.0.0"` to resolve version conflict.
 
 ---
 
 ## Issues Encountered
 
-### GPUI 0.2.2 core_graphics Version Conflict
+### core_graphics Version Conflict
 
-**Problem**: `zed-font-kit v0.14.1-zed` has incompatible transitive dependencies:
-- Uses `core-graphics 0.24.0` directly
-- Uses `core-text 21.1.0` which requires `core-graphics 0.25.0`
+**Problem**: GPUI's font rendering stack has incompatible transitive dependencies:
+- `zed-font-kit` uses `core-graphics 0.24.0` directly
+- `core-text 21.1.0` requires `core-graphics 0.25.0`
 
-This causes type mismatches like:
+This causes type mismatches:
 ```
 expected `core_graphics::font::CGFont`, found a different `core_graphics::font::CGFont`
 note: two different versions of crate `core_graphics` are being used
 ```
 
-**Resolution**: Disabled `font-kit` feature. This is acceptable for scaffolding since no text rendering is needed in Phase 1.
-
-**Tracking**: [zed-industries/zed#47168](https://github.com/zed-industries/zed/issues/47168)
+**Resolution**: Pin `core-text = "=21.0.0"` which uses `core-graphics 0.24.0`, aligning all dependencies.
 
 ---
 
@@ -100,19 +97,15 @@ No new tests written - this is a scaffolding phase with no new functionality to 
 
 ---
 
-## Notes for Phase 2
+## Notes for Future
 
-When implementing the actual GPUI window in Phase 2:
-
-1. **Monitor [#47168](https://github.com/zed-industries/zed/issues/47168)** for upstream fix
-2. Once fixed, re-enable font-kit: change to `gpui = "0.2"` or `gpui = { version = "0.2.x", features = ["font-kit"] }`
-3. Font rendering will be needed for any text in the UI
+The `core-text` pin can be removed once GPUI publishes a version with aligned dependencies. Monitor GPUI releases for this fix.
 
 ---
 
 ## Next Steps
 
-- [ ] Review implementation
-- [ ] Create PR: `gh pr create` or `/prp-pr`
+- [x] Review implementation
+- [x] Create PR
 - [ ] Merge when approved
 - [ ] Continue with Phase 2: Window creation

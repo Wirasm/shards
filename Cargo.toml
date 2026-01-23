@@ -34,6 +34,8 @@ clap = { version = "4.0", features = ["derive"] }
 shards-core = { path = "crates/shards-core" }
 
 # UI dependencies
-# Disable font-kit feature to avoid core_graphics version conflict
-# See: https://github.com/zed-industries/zed/issues/47168
-gpui = { version = "0.2", default-features = false }
+gpui = "0.2"
+# Pin core-text to 21.0.0 to avoid core_graphics version conflict.
+# core-text 21.1.0 pulls in core-graphics 0.25.0, but gpui's font-kit dependency
+# requires core-graphics 0.24.0, causing type mismatches at compile time.
+core-text = "=21.0.0"
