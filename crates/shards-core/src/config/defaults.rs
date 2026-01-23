@@ -14,6 +14,20 @@ pub fn default_agent() -> String {
     agents::default_agent_name().to_string()
 }
 
+/// Returns the default spawn delay in milliseconds (1000ms).
+///
+/// Used by serde `#[serde(default = "...")]` attribute.
+pub fn default_spawn_delay_ms() -> u64 {
+    1000
+}
+
+/// Returns the default max retry attempts (5).
+///
+/// Used by serde `#[serde(default = "...")]` attribute.
+pub fn default_max_retry_attempts() -> u32 {
+    5
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
@@ -179,5 +193,39 @@ mod tests {
         assert_eq!(config.default, "claude");
         assert!(config.startup_command.is_none());
         assert!(config.flags.is_none());
+    }
+
+    #[test]
+    fn test_terminal_config_serde_defaults() {
+        // Test that TOML deserialization with missing fields uses correct defaults
+        let toml_str = r#"
+[terminal]
+preferred = "ghostty"
+"#;
+        let config: ShardsConfig = toml::from_str(toml_str).unwrap();
+
+        // These should be the documented defaults, NOT 0
+        assert_eq!(
+            config.terminal.spawn_delay_ms, 1000,
+            "spawn_delay_ms should default to 1000, not 0"
+        );
+        assert_eq!(
+            config.terminal.max_retry_attempts, 5,
+            "max_retry_attempts should default to 5, not 0"
+        );
+        assert_eq!(config.terminal.preferred, Some("ghostty".to_string()));
+    }
+
+    #[test]
+    fn test_terminal_config_empty_section_serde_defaults() {
+        // Test with completely empty terminal section
+        let toml_str = r#"
+[agent]
+default = "claude"
+"#;
+        let config: ShardsConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.terminal.spawn_delay_ms, 1000);
+        assert_eq!(config.terminal.max_retry_attempts, 5);
     }
 }
