@@ -32,3 +32,8 @@ clap = { version = "4.0", features = ["derive"] }
 
 # Internal workspace dependencies
 shards-core = { path = "crates/shards-core" }
+
+# UI dependencies
+# Disable font-kit feature to avoid core_graphics version conflict
+# See: https://github.com/zed-industries/zed/issues/47168
+gpui = { version = "0.2", default-features = false }
