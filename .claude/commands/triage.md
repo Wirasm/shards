@@ -2,7 +2,7 @@
 description: Triage GitHub issues by applying type, effort, priority, and area labels
 argument-hint: "[unlabeled|all|N|N-M]"
 model: sonnet
-allowed-tools: Bash, Read
+allowed-tools: Bash, Read, Glob, Grep
 ---
 
 # Triage GitHub Issues
@@ -79,9 +79,31 @@ Ask yourself: What happens if this isn't fixed for 6 months? Does it block users
    # Then filter to numbers within range
    ```
 
-3. **For each issue, think through the classification:**
+3. **For each issue, think through classification AND relationships:**
 
-   Before applying labels, reason through each decision:
+   As you read each issue, you're building a mental map of the problem space. Before applying labels, reason through each decision.
+
+   **Duplicate and relationship detection:**
+
+   As you process each issue, ask yourself:
+   - Have I seen another issue describing the same underlying problem?
+   - Could this issue be solved by the same fix as another issue?
+   - Are these issues different symptoms of a shared root cause?
+   - Would fixing one issue automatically fix or impact another?
+
+   If you're uncertain whether two issues are related, you can explore the codebase to understand the affected code paths. Use `Glob` and `Grep` to find relevant files, and `Read` to examine the implementation. Understanding how the code actually works will help you determine if issues that sound different might actually touch the same code.
+
+   Relationships aren't just duplicates. Consider:
+   - **Duplicate**: Same problem reported differently (mark one as duplicate)
+   - **Related**: Different problems that share context or could be addressed together
+   - **Blocking**: One issue must be fixed before another can be addressed
+   - **Supersedes**: A broader issue that encompasses a narrower one
+
+   Keep track of relationships you discover. You'll report them in the summary.
+
+   **Label classification:**
+
+   Now reason through the labels:
 
    **Type label (pick one primary):**
 
@@ -147,6 +169,17 @@ Ask yourself: What happens if this isn't fixed for 6 months? Does it block users
    - Issues triaged: X
    - Already labeled (skipped): Y
    - By priority: P0(n), P1(n), P2(n), P3(n)
+
+   ## Relationships Discovered
+
+   If you found any duplicates, related issues, or blocking relationships, list them here:
+
+   | Issues | Relationship | Notes |
+   |--------|--------------|-------|
+   | #61, #62 | Related | Both involve config/logging UX issues |
+   | #67, #60 | Related | Both affect PID file handling |
+
+   If no relationships were found, state: "No duplicates or notable relationships discovered."
    ```
 
 ## Important Notes
@@ -159,3 +192,4 @@ Ask yourself: What happens if this isn't fixed for 6 months? Does it block users
 - **Area labels can stack** - An issue can touch multiple areas (e.g., `core.config` + `cli`).
 - **When uncertain, ask** - If an issue is ambiguous, ask the user rather than guessing.
 - **Check issue body** - The title alone often isn't enough context; read the full description.
+- **Use the codebase** - You have access to explore the code. If understanding a relationship requires seeing how modules connect, go look. Don't guess when you can verify.
