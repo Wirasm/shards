@@ -1,27 +1,57 @@
 # Shards CLI E2E Testing Guide
 
-Run this after every merge to main to verify the CLI works correctly.
+Run this to verify the CLI works correctly. Can be run from any location: main branch, feature branch, or inside a worktree.
 
-## Pre-flight
+## Pre-flight: Locate Yourself
 
-1. Ensure you're in the SHARDS repository root
-2. Ensure you're on the main branch with latest changes
-3. Build the release binary:
-   ```bash
-   cargo build --release --bin shards
-   ```
+Before running tests, determine your current context:
+
+```bash
+# Where am I?
+pwd
+
+# What branch am I on?
+git branch --show-current
+
+# Am I in a worktree?
+git rev-parse --show-toplevel
+```
+
+**Context determines the test target:**
+
+| Location | What you're testing |
+|----------|---------------------|
+| Main branch in main repo | The merged/released code |
+| Feature branch in main repo | Your changes before merging |
+| Inside a worktree (`~/.shards/worktrees/...`) | Changes in that isolated workspace |
+
+## Build from Current Location
+
+Build the release binary from wherever you are:
+
+```bash
+cargo build --release --bin shards
+```
+
+This builds from your current branch/worktree code. The binary will be at `./target/release/shards`.
+
+**Verify the build is from your code:**
+```bash
+git log -1 --oneline  # Note the commit
+./target/release/shards --version  # Should match
+```
 
 ## Test Sequence
 
-Execute these tests in order. After each command, verify the expected output. If something fails, investigate and fix before continuing.
+Execute these tests in order. Use `./target/release/shards` for all commands.
 
-### Phase 1: Clean State Verification
+### Phase 1: Clean State Check
 ```bash
 ./target/release/shards list
 ```
-**Expected**: Either "No active shards found." or a table of existing shards. Note any existing shards - they should not be affected by our tests.
+**Expected**: Shows existing shards or "No active shards found." Note any existing shards - they should not be affected.
 
-### Phase 2: Create a Test Shard
+### Phase 2: Create Test Shard
 ```bash
 ./target/release/shards create e2e-test-shard --agent claude
 ```
@@ -29,153 +59,153 @@ Execute these tests in order. After each command, verify the expected output. If
 - Success message
 - Branch: `e2e-test-shard`
 - Worktree path shown
-- Port range allocated (e.g., 3000-3009)
-- A new Ghostty terminal window opens with Claude
+- Port range allocated
+- Terminal window opens with Claude
 
-**If it fails**: Check if branch already exists (`git branch -a | grep e2e-test`), check disk space, check if in a git repo.
+**If it fails**:
+- Branch exists? `git branch -a | grep e2e-test`
+- In a git repo? `git status`
+- Disk space? `df -h`
 
-### Phase 3: Verify Shard Appears in List
+### Phase 3: List Shows the Shard
 ```bash
 ./target/release/shards list
 ```
-**Expected**: Table shows `e2e-test-shard` with:
-- Agent: claude
-- Status: active
-- Process: Running with a PID
+**Expected**: Table shows `e2e-test-shard` with status active, process running.
 
-### Phase 4: Check Detailed Status
+### Phase 4: Status Details
 ```bash
 ./target/release/shards status e2e-test-shard
 ```
-**Expected**: Detailed box showing:
-- Branch, Agent, Status
-- Worktree path exists
-- Process is Running with PID
-- Process Name: claude
+**Expected**: Detailed info box with process running, PID shown.
 
-### Phase 5: Health Check (All Shards)
+### Phase 5: Health (All)
 ```bash
 ./target/release/shards health
 ```
-**Expected**: Health dashboard table with:
-- Status icon (green for Working)
-- CPU and Memory metrics
-- Summary line showing totals
+**Expected**: Dashboard table with Working status, CPU/memory metrics.
 
-### Phase 6: Health Check (Single Shard)
+### Phase 6: Health (Single)
 ```bash
 ./target/release/shards health e2e-test-shard
 ```
-**Expected**: Detailed health for just this shard
+**Expected**: Detailed health for just this shard.
 
-### Phase 7: Test Cleanup --orphans Flag
+### Phase 7: Cleanup --orphans
 ```bash
 ./target/release/shards cleanup --orphans
 ```
-**Expected**: "No orphaned resources found" (since our shard has a valid session)
+**Expected**: "No orphaned resources found" (shard has valid session).
 
-### Phase 8: Restart the Shard
+### Phase 8: Restart
 ```bash
 ./target/release/shards restart e2e-test-shard
 ```
-**Expected**:
-- Success message
-- Agent process restarted
-- Terminal window may flash/reload
+**Expected**: Success, agent restarted.
 
-### Phase 9: Restart with Different Agent (Optional)
-```bash
-./target/release/shards restart e2e-test-shard --agent kiro
-```
-**Expected**: Shard now running with kiro agent instead of claude
-**Note**: Skip if kiro is not installed
-
-### Phase 10: Destroy the Test Shard
+### Phase 9: Destroy
 ```bash
 ./target/release/shards destroy e2e-test-shard
 ```
-**Expected**:
-- Success message
-- Terminal window closes
-- Worktree removed
+**Expected**: Success, terminal closes, worktree removed.
 
-### Phase 11: Verify Clean State
+### Phase 10: Verify Clean
 ```bash
 ./target/release/shards list
 ```
-**Expected**: `e2e-test-shard` no longer appears. Only shards that existed before the test remain.
+**Expected**: `e2e-test-shard` gone, only pre-existing shards remain.
 
-## Edge Case Tests
+## Edge Cases
 
-Run these after the main sequence to test error handling:
+Test error handling after the main sequence:
 
-### Edge Case 1: Create Duplicate Shard
+### Destroy Non-existent
 ```bash
-./target/release/shards create edge-test --agent claude
-./target/release/shards create edge-test --agent claude
+./target/release/shards destroy fake-shard-xyz
 ```
-**Expected**: Second create should fail with "already exists" error
-**Cleanup**: `./target/release/shards destroy edge-test`
+**Expected**: Error "not found"
 
-### Edge Case 2: Destroy Non-existent Shard
+### Status Non-existent
 ```bash
-./target/release/shards destroy this-does-not-exist
+./target/release/shards status fake-shard-xyz
 ```
-**Expected**: Error message indicating shard not found
+**Expected**: Error "not found"
 
-### Edge Case 3: Status of Non-existent Shard
-```bash
-./target/release/shards status this-does-not-exist
-```
-**Expected**: Error message indicating shard not found
-
-### Edge Case 4: Invalid Agent
-```bash
-./target/release/shards create invalid-agent-test --agent not-a-real-agent
-```
-**Expected**: Error about invalid agent type
-
-### Edge Case 5: Cleanup When Nothing to Clean
+### Cleanup Empty
 ```bash
 ./target/release/shards cleanup --stopped
 ```
-**Expected**: "No orphaned resources found" message
+**Expected**: "No orphaned resources found"
 
-### Edge Case 6: Health with JSON Output
+### Health JSON
 ```bash
 ./target/release/shards health --json
 ```
-**Expected**: Valid JSON output that can be parsed
+**Expected**: Valid JSON output
 
 ## Test Report
 
-After running all tests, summarize:
+Summarize results:
 
 | Test | Status | Notes |
 |------|--------|-------|
+| Location | | (branch/worktree name) |
 | Build | | |
-| List (empty) | | |
 | Create | | |
-| List (with shard) | | |
+| List | | |
 | Status | | |
 | Health (all) | | |
 | Health (single) | | |
 | Cleanup --orphans | | |
 | Restart | | |
 | Destroy | | |
-| List (clean) | | |
+| Clean state | | |
 | Edge cases | | |
 
-**All tests must pass before considering a merge successful.**
+**All tests must pass.**
+
+## Special Considerations
+
+### Testing from a Worktree
+
+If you're inside a shards worktree (e.g., `~/.shards/worktrees/shards/feature-x/`):
+- You're testing the code from that worktree's branch
+- The test shard will be created as a nested worktree (this is fine)
+- Make sure to destroy test shards before destroying the parent worktree
+
+### Testing from a Feature Branch
+
+If you're on a feature branch in the main repo:
+- You're testing your uncommitted/committed changes
+- Good for verifying changes before creating a PR
+- The binary reflects your branch's code, not main
+
+### Comparing Against Main
+
+To compare behavior between your changes and main:
+```bash
+# Build your branch
+cargo build --release --bin shards
+cp ./target/release/shards /tmp/shards-feature
+
+# Switch to main and build
+git checkout main
+cargo build --release --bin shards
+cp ./target/release/shards /tmp/shards-main
+
+# Now you can compare
+/tmp/shards-main list
+/tmp/shards-feature list
+```
 
 ## Troubleshooting
 
-**Terminal doesn't open**: Check if Ghostty is installed, try `--terminal iterm` or `--terminal terminal`
+**Terminal doesn't open**: Try `--terminal iterm` or `--terminal terminal`
 
-**Process not tracked**: PID file may not have been written. Check `~/.shards/pids/`
+**Process not tracked**: Check `~/.shards/pids/`
 
-**Worktree already exists**: Run `git worktree list` and `git worktree prune`
+**Worktree exists**: Run `git worktree list` and `git worktree prune`
 
-**Port conflict**: Another shard may be using the ports. Run `shards list` to check
+**Port conflict**: Run `shards list` to check existing shards
 
-**Structured logging noise**: The JSON log lines are expected. Look for the human-readable output (success messages, tables)
+**JSON log noise**: Normal - look for human-readable success messages and tables
