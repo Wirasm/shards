@@ -30,5 +30,10 @@ uuid = { version = "1", features = ["v4"] }
 # CLI-only dependencies
 clap = { version = "4.0", features = ["derive"] }
 
+# UI dependencies
+# NOTE: GPUI 0.2.2 has dependency conflicts (core-graphics version mismatch)
+# Waiting for stable GPUI release or dependency resolution
+# gpui = "0.2.2"  # Commented out due to compilation issues
+
 # Internal workspace dependencies
 shards-core = { path = "crates/shards-core" }
