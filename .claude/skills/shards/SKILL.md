@@ -57,7 +57,43 @@ Creates an isolated workspace with:
 **Examples**
 ```bash
 shards create feature-auth --agent kiro --terminal ghostty
-shards create bug-fix-123 --agent claude --flags '--trust-all-tools'
+shards create bug-fix-123 --agent claude
+```
+
+### Autonomous Mode (YOLO / Trust All Tools)
+
+Each agent has its own flag for skipping permission prompts. Pass via `--flags`:
+
+**Claude Code** - `--dangerously-skip-permissions`
+```bash
+shards create feature-x --agent claude --flags '--dangerously-skip-permissions'
+```
+
+**Kiro CLI** - `--trust-all-tools` (or `--trust-tools <list>` for specific tools)
+```bash
+shards create feature-x --agent kiro --flags '--trust-all-tools'
+```
+
+**Codex CLI** - `--full-auto` (sandboxed) or `--dangerously-bypass-approvals-and-sandbox` (unrestricted)
+```bash
+# Sandboxed autonomous mode (recommended)
+shards create feature-x --agent codex --flags '--full-auto'
+
+# Fully unrestricted (dangerous)
+shards create feature-x --agent codex --flags '--dangerously-bypass-approvals-and-sandbox'
+```
+
+Or set in config for persistent use:
+```toml
+# ~/.shards/config.toml
+[agents.claude]
+flags = "--dangerously-skip-permissions"
+
+[agents.kiro]
+flags = "--trust-all-tools"
+
+[agents.codex]
+flags = "--full-auto"
 ```
 
 ### List All Shards
