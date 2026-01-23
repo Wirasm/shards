@@ -56,15 +56,36 @@ pub struct CreateFormState {
 impl Default for CreateFormState {
     fn default() -> Self {
         let agents = shards_core::agents::valid_agent_names();
-        let default_agent = "claude";
-        let index = agents.iter().position(|&a| a == default_agent).unwrap_or(0);
+        let default_agent = shards_core::agents::default_agent_name();
+
+        if agents.is_empty() {
+            tracing::error!(
+                event = "ui.create_form.no_agents_available",
+                "Agent list is empty - using hardcoded fallback"
+            );
+            return Self {
+                branch_name: String::new(),
+                selected_agent: default_agent.to_string(),
+                selected_agent_index: 0,
+            };
+        }
+
+        let index = agents
+            .iter()
+            .position(|&a| a == default_agent)
+            .unwrap_or_else(|| {
+                tracing::info!(
+                    event = "ui.create_form.default_agent_not_found",
+                    default = default_agent,
+                    selected = agents[0],
+                    "Default agent not in list, using first available"
+                );
+                0
+            });
 
         Self {
             branch_name: String::new(),
-            selected_agent: agents
-                .get(index)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| default_agent.to_string()),
+            selected_agent: agents[index].to_string(),
             selected_agent_index: index,
         }
     }

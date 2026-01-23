@@ -28,12 +28,11 @@ pub fn create_shard(branch: &str, agent: &str) -> Result<Session, String> {
     let config = match ShardsConfig::load_hierarchy() {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!(
+            tracing::error!(
                 event = "ui.create_shard.config_load_failed",
-                error = %e,
-                "Falling back to default config"
+                error = %e
             );
-            ShardsConfig::default()
+            return Err(format!("Failed to load config: {e}"));
         }
     };
 

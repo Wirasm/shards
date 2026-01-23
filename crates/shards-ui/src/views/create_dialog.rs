@@ -8,7 +8,7 @@ use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
 use crate::state::AppState;
 use crate::views::MainView;
 
-/// Available agent names for selection, sorted alphabetically.
+/// Available agent names for selection (pre-sorted by shards-core).
 pub fn agent_options() -> Vec<&'static str> {
     shards_core::agents::valid_agent_names()
 }
@@ -28,7 +28,7 @@ pub fn render_create_dialog(state: &AppState, cx: &mut Context<MainView>) -> imp
     let branch_name = state.create_form.branch_name.clone();
     let create_error = state.create_error.clone();
 
-    // Overlay background (click Escape or Cancel to dismiss)
+    // Overlay background (press Escape or click Cancel to dismiss)
     div()
         .id("dialog-overlay")
         .absolute()

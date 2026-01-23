@@ -66,6 +66,13 @@ impl MainView {
     /// Cycle to the next agent in the list.
     pub fn on_agent_cycle(&mut self, cx: &mut Context<Self>) {
         let agents = create_dialog::agent_options();
+        if agents.is_empty() {
+            tracing::error!(event = "ui.create_dialog.no_agents_available");
+            self.state.create_error =
+                Some("No agents available. Check shards-core configuration.".to_string());
+            cx.notify();
+            return;
+        }
         let next_index = (self.state.create_form.selected_agent_index + 1) % agents.len();
         self.state.create_form.selected_agent_index = next_index;
         self.state.create_form.selected_agent = agents[next_index].to_string();
@@ -78,8 +85,8 @@ impl MainView {
 
     /// Handle keyboard input when the create dialog is open.
     ///
-    /// Handles branch name input (alphanumeric, -, _, /), form submission (Enter),
-    /// dialog dismissal (Escape), and agent cycling (Tab).
+    /// Handles branch name input (alphanumeric, -, _, /, space converts to hyphen),
+    /// form submission (Enter), dialog dismissal (Escape), and agent cycling (Tab).
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.state.show_create_dialog {
             return;
@@ -109,8 +116,9 @@ impl MainView {
             }
             key if key.len() == 1 => {
                 // Single character - add to branch name if valid for branch names
-                let c = key.chars().next().unwrap();
-                if c.is_alphanumeric() || c == '-' || c == '_' || c == '/' {
+                if let Some(c) = key.chars().next()
+                    && (c.is_alphanumeric() || c == '-' || c == '_' || c == '/')
+                {
                     self.state.create_form.branch_name.push(c);
                     cx.notify();
                 }
