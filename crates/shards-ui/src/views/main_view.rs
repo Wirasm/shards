@@ -56,7 +56,12 @@ impl MainView {
                 self.state.refresh_sessions();
             }
             Err(e) => {
-                // Error - show in dialog
+                tracing::warn!(
+                    event = "ui.dialog_submit.error_displayed",
+                    branch = %branch,
+                    agent = %agent,
+                    error = %e
+                );
                 self.state.create_error = Some(e);
             }
         }
@@ -112,6 +117,11 @@ impl MainView {
                 self.state.refresh_sessions();
             }
             Err(e) => {
+                tracing::warn!(
+                    event = "ui.confirm_destroy.error_displayed",
+                    branch = %branch,
+                    error = %e
+                );
                 self.state.confirm_error = Some(e);
             }
         }
@@ -135,6 +145,11 @@ impl MainView {
                 self.state.refresh_sessions();
             }
             Err(e) => {
+                tracing::warn!(
+                    event = "ui.relaunch_click.error_displayed",
+                    branch = branch,
+                    error = %e
+                );
                 // NO SILENT FAILURES - show error inline
                 self.state.relaunch_error = Some((branch.to_string(), e));
             }
@@ -142,16 +157,24 @@ impl MainView {
         cx.notify();
     }
 
-    /// Handle keyboard input when the create dialog is open.
+    /// Handle keyboard input for dialogs.
     ///
-    /// Handles branch name input (alphanumeric, -, _, /, space converts to hyphen),
+    /// When create dialog is open: handles branch name input (alphanumeric, -, _, /, space converts to hyphen),
     /// form submission (Enter), dialog dismissal (Escape), and agent cycling (Tab).
+    /// When confirm dialog is open: handles dialog dismissal (Escape).
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.state.show_create_dialog {
+        let key_str = event.keystroke.key.to_string();
+
+        // Handle confirm dialog escape
+        if self.state.show_confirm_dialog && key_str == "escape" {
+            self.on_confirm_cancel(cx);
             return;
         }
 
-        let key_str = event.keystroke.key.to_string();
+        // Create dialog keyboard handling
+        if !self.state.show_create_dialog {
+            return;
+        }
 
         match key_str.as_str() {
             "backspace" => {

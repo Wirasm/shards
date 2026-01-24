@@ -83,7 +83,8 @@ pub fn refresh_sessions() -> (Vec<ShardDisplay>, Option<String>) {
 
 /// Destroy a shard by branch name.
 ///
-/// Removes the session, worktree, and kills any running process.
+/// Thin wrapper around shards-core's `destroy_session`, which handles
+/// terminal cleanup, process termination, worktree removal, and session file deletion.
 pub fn destroy_shard(branch: &str) -> Result<(), String> {
     tracing::info!(event = "ui.destroy_shard.started", branch = branch);
 

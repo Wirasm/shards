@@ -157,3 +157,78 @@ impl Default for AppState {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reset_confirm_dialog_clears_all_fields() {
+        // Create state with confirm dialog open and an error
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: true,
+            confirm_target_branch: Some("feature-branch".to_string()),
+            confirm_error: Some("Some error".to_string()),
+            relaunch_error: None,
+        };
+
+        state.reset_confirm_dialog();
+
+        assert!(!state.show_confirm_dialog);
+        assert!(state.confirm_target_branch.is_none());
+        assert!(state.confirm_error.is_none());
+    }
+
+    #[test]
+    fn test_clear_relaunch_error() {
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            relaunch_error: Some(("branch".to_string(), "error".to_string())),
+        };
+
+        state.clear_relaunch_error();
+
+        assert!(state.relaunch_error.is_none());
+    }
+
+    #[test]
+    fn test_process_status_from_session_no_pid() {
+        use shards_core::sessions::types::SessionStatus;
+        use std::path::PathBuf;
+
+        let session = Session {
+            id: "test-id".to_string(),
+            branch: "test-branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+        };
+
+        let display = ShardDisplay::from_session(session);
+        assert_eq!(display.status, ProcessStatus::Stopped);
+    }
+}

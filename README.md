@@ -18,6 +18,23 @@ Shards eliminates context switching between scattered terminals when working wit
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **Agent-Friendly**: Designed for programmatic use by AI assistants
 
+## GUI (Experimental)
+
+A native graphical interface is under development using GPUI. The UI provides visual shard management as an alternative to the CLI.
+
+```bash
+# Build and run the experimental GPUI GUI
+cargo run -p shards-ui
+```
+
+The GUI currently supports:
+- Shard listing with status indicators
+- Creating new shards with agent selection
+- Relaunching stopped agents
+- Destroying shards with confirmation dialog
+
+See the [PRD](.claude/PRPs/prds/gpui-native-terminal-ui.prd.md) for the development roadmap.
+
 ## Installation
 
 ```bash
