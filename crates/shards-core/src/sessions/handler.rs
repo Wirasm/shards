@@ -1,4 +1,4 @@
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::agents;
 use crate::config::{Config, ShardsConfig};
@@ -699,14 +699,32 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
         }
     }
 
-    // 4. Clear process info and set status to Stopped
+    // 4. Delete PID file so next open() won't read stale PID
+    let pid_file = get_pid_file_path(&config.shards_dir, &session.id);
+    if let Err(e) = delete_pid_file(&pid_file) {
+        // Best-effort - don't fail if missing
+        debug!(
+            event = "core.session.stop_pid_file_cleanup_failed",
+            session_id = &session.id,
+            pid_file = %pid_file.display(),
+            error = %e
+        );
+    } else {
+        debug!(
+            event = "core.session.stop_pid_file_cleaned",
+            session_id = &session.id,
+            pid_file = %pid_file.display()
+        );
+    }
+
+    // 5. Clear process info and set status to Stopped
     session.process_id = None;
     session.process_name = None;
     session.process_start_time = None;
     session.status = SessionStatus::Stopped;
     session.last_activity = Some(chrono::Utc::now().to_rfc3339());
 
-    // 5. Save updated session (keep worktree, keep session file)
+    // 6. Save updated session (keep worktree, keep session file)
     operations::save_session_to_file(&session, &config.sessions_dir())?;
 
     info!(
