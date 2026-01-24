@@ -87,6 +87,17 @@ shards destroy <branch>
 shards destroy <branch> --force
 ```
 
+### Note on deprecated commands
+
+The `restart` command is deprecated. Use `open` instead:
+```bash
+# Old (deprecated, still works with warning)
+shards restart <branch>
+
+# New (preferred)
+shards open <branch>
+```
+
 ### Clean up orphaned shards
 ```bash
 shards cleanup
