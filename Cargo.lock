@@ -4967,6 +4967,7 @@ dependencies = [
  "clap",
  "serde_json",
  "shards-core",
+ "tempfile",
  "tracing",
 ]
 

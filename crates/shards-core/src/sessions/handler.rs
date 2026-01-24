@@ -372,7 +372,7 @@ pub fn restart_session(
         Ok(config) => config,
         Err(e) => {
             warn!(
-                event = "core.session.config_load_failed",
+                event = "core.config.load_failed",
                 error = %e,
                 session_id = %session.id,
                 "Config load failed during restart, using defaults"

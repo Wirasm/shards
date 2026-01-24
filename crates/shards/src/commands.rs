@@ -12,14 +12,21 @@ use shards_core::session_ops as session_handler;
 use crate::table::truncate;
 
 /// Load configuration with warning on errors.
-/// Falls back to defaults if config loading fails, but warns the user.
+///
+/// Falls back to defaults if config loading fails, but notifies the user via:
+/// - stderr message for immediate visibility
+/// - structured log event `cli.config.load_failed` for debugging
 fn load_config_with_warning() -> ShardsConfig {
     match ShardsConfig::load_hierarchy() {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Warning: Could not load config: {}. Using defaults.", e);
+            eprintln!(
+                "Warning: Could not load config: {}. Using defaults.\n\
+                 Tip: Check ~/.shards/config.toml and ./.shards/config.toml for syntax errors.",
+                e
+            );
             warn!(
-                event = "cli.config_load_failed",
+                event = "cli.config.load_failed",
                 error = %e,
                 "Config load failed, using defaults"
             );
@@ -65,7 +72,6 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
         .get_one::<String>("branch")
         .ok_or("Branch argument is required")?;
 
-    // Load config hierarchy (warns user on errors)
     let mut config = load_config_with_warning();
 
     // Apply CLI overrides only if provided

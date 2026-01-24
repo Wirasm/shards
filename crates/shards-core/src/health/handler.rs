@@ -5,9 +5,18 @@ use tracing::{info, warn};
 
 /// Get health status for all sessions in current project
 pub fn get_health_all_sessions() -> Result<HealthOutput, HealthError> {
-    // Load config and apply thresholds
-    if let Ok(config) = crate::config::ShardsConfig::load_hierarchy() {
-        operations::set_idle_threshold_minutes(config.health.idle_threshold_minutes());
+    // Load config and apply thresholds (warn on errors, use defaults)
+    match crate::config::ShardsConfig::load_hierarchy() {
+        Ok(config) => {
+            operations::set_idle_threshold_minutes(config.health.idle_threshold_minutes());
+        }
+        Err(e) => {
+            warn!(
+                event = "core.config.load_failed",
+                error = %e,
+                "Config load failed during health check, using default idle threshold"
+            );
+        }
     }
 
     info!(event = "core.health.get_all_started");
