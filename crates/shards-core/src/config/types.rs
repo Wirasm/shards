@@ -134,7 +134,7 @@ pub struct TerminalConfig {
     #[serde(default = "super::defaults::default_spawn_delay_ms")]
     pub spawn_delay_ms: u64,
 
-    /// Maximum retry attempts for terminal spawn.
+    /// Maximum retry attempts for process discovery after terminal spawn.
     /// Default: 5.
     #[serde(default = "super::defaults::default_max_retry_attempts")]
     pub max_retry_attempts: u32,
