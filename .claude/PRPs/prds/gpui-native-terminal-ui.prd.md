@@ -141,22 +141,24 @@ Build a native GPUI application as a **visual dashboard** for shard management. 
 | 2 | Empty Window | GPUI opens a window | Window appears |
 | 3 | Shard List View | Display existing shards | See shards from ~/.shards/sessions/ |
 | 4 | Create Shard | Create button + dialog | Creates shard, launches external terminal |
-| 5 | Destroy & Restart | Management buttons | Can destroy and restart shards |
-| 6 | Status Dashboard | Health indicators, refresh | Live status updates |
-| 7 | Favorites | Quick-spawn repos | Favorites work |
-| 8 | Theme & Components | Color palette + reusable UI components | Polished design, extracted TextInput/Button/Modal |
-| 9 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse |
+| 5 | Destroy & Restart | Management buttons | Can destroy and restart shards (basic) |
+| 6 | Shard Lifecycle & Git Safety | Open/Stop/Destroy with git checks | Full lifecycle management (core + CLI + UI) |
+| 7 | Status Dashboard | Health indicators, refresh | Live status updates, auto-refresh |
+| 8 | Favorites | Quick-spawn repos | Favorites work |
+| 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted TextInput/Button/Modal |
+| 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse |
 
 ### Dependency Graph
 
 ```
-Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9
-   │         │         │          │          │          │         │         │         │
-   │         │         │          │          │          │         │         │         └─ Power user (keyboard control)
-   │         │         │          │          │          │         │         └─ Polish (theme + components)
-   │         │         │          │          │          │         └─ Convenience
-   │         │         │          │          │          └─ Polish (live updates)
-   │         │         │          │          └─ Full management (destroy, restart)
+Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9 → Phase 10
+   │         │         │          │          │          │          │         │         │         │
+   │         │         │          │          │          │          │         │         │         └─ Power user (keyboard)
+   │         │         │          │          │          │          │         │         └─ Polish (theme)
+   │         │         │          │          │          │          │         └─ Convenience (favorites)
+   │         │         │          │          │          │          └─ Polish (live updates)
+   │         │         │          │          │          └─ Full lifecycle (open/stop/destroy + git safety)
+   │         │         │          │          └─ Basic management (destroy, restart)
    │         │         │          └─ Core action (create shard)
    │         │         └─ Core view (see shards)
    │         └─ GPUI works
@@ -342,11 +344,11 @@ shards list
 
 ---
 
-### Phase 5: Destroy & Restart
+### Phase 5: Destroy & Restart (Basic)
 
-**Goal**: Buttons to destroy and restart shards.
+**Goal**: Buttons to destroy and restart shards (basic implementation).
 
-**Why this phase exists**: Complete the management loop - not just create, but also destroy and restart.
+**Why this phase exists**: Complete the basic management loop - not just create, but also destroy and restart. This is a minimal implementation; Phase 6 adds proper lifecycle semantics and git safety.
 
 **Files to Modify**:
 | File | Change |
@@ -390,10 +392,410 @@ shards list  # Confirms shard is gone
 **What NOT to do**:
 - Don't add bulk operations yet
 - Don't add keyboard shortcuts yet
+- Don't add git safety checks yet (that's Phase 6)
 
 ---
 
-### Phase 6: Status Dashboard
+### Phase 6: Shard Lifecycle & Git Safety
+
+**Goal**: Proper Open/Stop/Destroy semantics with git-aware safety checks. Applies to core, CLI, and UI.
+
+**Why this phase exists**: Phase 5 added basic destroy/restart, but the UX is incomplete:
+- No way to "stop" an agent without destroying the shard
+- Destroy removes worktree without checking for uncommitted work
+- No git safety checks (uncommitted files, unpushed branches)
+- Branch behavior on destroy is undefined
+
+This phase fixes all of that with a proper lifecycle model that works consistently across CLI and UI.
+
+---
+
+#### Mental Model
+
+**Read this section carefully - it defines the conceptual foundation.**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          SHARD                                  │
+│                  (Isolation Environment)                        │
+│                                                                 │
+│   Today: Git Worktree                                           │
+│   Future: Docker, Seatbelt sandbox, VM, remote machine, etc.    │
+│                                                                 │
+│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
+│   │  Terminal   │  │  Terminal   │  │    IDE      │            │
+│   │  + Agent    │  │  + Agent    │  │  (future)   │            │
+│   │  (claude)   │  │  (kiro)     │  │             │            │
+│   └─────────────┘  └─────────────┘  └─────────────┘            │
+│                                                                 │
+│   Multiple processes can run in the same shard                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Shard** = The isolation environment where work happens
+- Currently implemented as a git worktree
+- Contains the code, has its own branch
+- Persists until explicitly destroyed
+- Future: Could be Docker container, VM, remote machine
+
+**Agent** = A terminal session running an AI agent
+- Terminal + AI (claude, kiro, etc.) running in it
+- Ephemeral - can be started/stopped without affecting the shard
+- Future: Multiple agents per shard, IDE windows, etc.
+
+**Key insight**: Closing an agent terminal should NOT destroy the shard. These are separate concepts:
+- Stop agent = Close terminal, shard persists (work preserved)
+- Destroy shard = Delete environment entirely (work gone)
+
+---
+
+#### Shard Lifecycle States
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SHARD LIFECYCLE                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   CREATE ──▶ RUNNING ◀──▶ STOPPED ──▶ DESTROY                   │
+│              (green)      (gray)       (gone)                   │
+│                │              │                                 │
+│                │   Stop       │   Open                          │
+│                └──────────────┘                                 │
+│                                                                 │
+│   • RUNNING: Agent terminal open, AI working                    │
+│   • STOPPED: Terminal closed, shard preserved, work safe        │
+│   • DESTROY: Everything cleaned up (with safety checks)         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Three Actions
+
+| Action | CLI Command | UI Button | What It Does |
+|--------|-------------|-----------|--------------|
+| **Open** | `shards open <branch>` | [▶] | Launch agent terminal in existing shard |
+| **Stop** | `shards stop <branch>` | [⏹] | Close agent terminal, keep shard intact |
+| **Destroy** | `shards destroy <branch>` | [🗑] | Delete shard entirely (with git checks) |
+
+**Button visibility by state:**
+
+| State | Buttons Shown |
+|-------|---------------|
+| Running (green) | [⏹] Stop, [🗑] Destroy |
+| Stopped (gray) | [▶] Open, [🗑] Destroy |
+
+---
+
+#### Git-Aware Destroy
+
+Before destroying a shard, check git state and warn/block appropriately.
+
+**Safety checks (in order):**
+
+| Check | Condition | Behavior |
+|-------|-----------|----------|
+| Uncommitted changes | `git status` shows modified files | ❌ **Block**: "Commit or stash changes first" |
+| Untracked files | `git status` shows untracked files | ⚠️ **Warn**: "Untracked files will be deleted" |
+| Unpushed commits | Local branch ahead of remote | ⚠️ **Warn**: "X unpushed commits will remain on branch" |
+| No remote branch | Branch never pushed | ⚠️ **Warn**: "Branch only exists locally" |
+| Branch merged | Branch merged to main | ✅ **Safe**: "Branch merged. Safe to destroy." |
+
+**CLI behavior:**
+```bash
+# Normal destroy - prompts for confirmation on warnings
+shards destroy my-feature
+# > Warning: 3 unpushed commits on branch 'my-feature'
+# > Destroy shard? (worktree will be removed, branch preserved) [y/N]
+
+# Force destroy - skip prompts (for scripts)
+shards destroy my-feature --force
+
+# Dry run - show what would happen
+shards destroy my-feature --dry-run
+```
+
+**UI behavior:**
+- Destroy dialog shows contextual warnings based on git state
+- Block message if uncommitted changes (disable Destroy button)
+- Warning message with details if unpushed/untracked
+
+---
+
+#### Branch Behavior on Destroy
+
+**Default: Preserve the branch.** Only the worktree is removed.
+
+| Scenario | Default Behavior | With `--delete-branch` |
+|----------|------------------|------------------------|
+| Branch merged to main | Keep branch | Delete branch |
+| Branch has open PR | Keep branch | Keep branch (warn) |
+| Branch has unpushed commits | Keep branch | Keep branch (error) |
+| Branch pushed, no PR | Keep branch | Delete branch |
+
+**CLI flag:**
+```bash
+# Default: remove worktree, keep branch
+shards destroy my-feature
+
+# Also delete the branch (if safe)
+shards destroy my-feature --delete-branch
+# > Error: Cannot delete branch with unpushed commits
+# > Use --force to delete anyway
+
+# Force delete branch even if not merged
+shards destroy my-feature --delete-branch --force
+```
+
+**UI behavior:**
+- Checkbox in destroy dialog: "Also delete branch" (unchecked by default)
+- Disabled if branch has unpushed commits (show tooltip explaining why)
+
+---
+
+#### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `crates/shards-core/src/git/status.rs` | Git status checks (uncommitted, untracked, unpushed) |
+| `crates/shards-core/src/sessions/stop.rs` | Stop session operation (kill process, keep worktree) |
+
+#### Files to Modify
+
+| File | Change |
+|------|--------|
+| `crates/shards-core/src/sessions/handler.rs` | Add `stop_session()`, update `destroy_session()` with git checks |
+| `crates/shards-core/src/git/handler.rs` | Add branch deletion, merge detection |
+| `crates/shards/src/commands/mod.rs` | Add `stop` and `open` commands |
+| `crates/shards/src/commands/destroy.rs` | Add `--force`, `--delete-branch`, `--dry-run` flags |
+| `crates/shards-ui/src/views/shard_list.rs` | Update buttons: [▶]/[⏹] based on state |
+| `crates/shards-ui/src/views/confirm_dialog.rs` | Add git status warnings, delete-branch checkbox |
+| `crates/shards-ui/src/actions.rs` | Add `stop_shard()`, `open_shard()` |
+
+---
+
+#### Core Implementation
+
+**New: `stop_session(branch: &str)`**
+```rust
+// 1. Find session by branch
+// 2. Kill process (if running)
+// 3. Update session status to Stopped
+// 4. Keep worktree intact
+// 5. Keep session file (so shard still appears in list)
+```
+
+**New: `open_session(branch: &str, agent: Option<&str>)`**
+```rust
+// 1. Find session by branch
+// 2. Verify worktree still exists
+// 3. Spawn new terminal with agent
+// 4. Update session with new process info
+// 5. Update status to Running
+```
+
+**Updated: `destroy_session(branch: &str, options: DestroyOptions)`**
+```rust
+pub struct DestroyOptions {
+    pub force: bool,           // Skip safety checks
+    pub delete_branch: bool,   // Also delete git branch
+    pub dry_run: bool,         // Just report what would happen
+}
+
+// 1. Find session by branch
+// 2. Run git safety checks (unless force)
+//    - Check uncommitted changes → block
+//    - Check untracked files → warn
+//    - Check unpushed commits → warn
+// 3. If dry_run, return report without doing anything
+// 4. Kill process (if running)
+// 5. Remove worktree
+// 6. Optionally delete branch (if delete_branch && safe)
+// 7. Remove session file
+```
+
+**New: Git status checks**
+```rust
+pub struct WorktreeGitStatus {
+    pub has_uncommitted_changes: bool,
+    pub uncommitted_files: Vec<String>,
+    pub has_untracked_files: bool,
+    pub untracked_files: Vec<String>,
+    pub unpushed_commit_count: u32,
+    pub has_remote_branch: bool,
+    pub is_merged_to_main: bool,
+}
+
+pub fn check_worktree_status(path: &Path) -> Result<WorktreeGitStatus, GitError>;
+```
+
+---
+
+#### CLI Commands
+
+**New: `shards open`**
+```bash
+shards open <branch> [--agent <agent>]
+
+# Examples:
+shards open my-feature              # Open with default agent
+shards open my-feature --agent kiro # Open with specific agent
+```
+
+**New: `shards stop`**
+```bash
+shards stop <branch>
+
+# Examples:
+shards stop my-feature    # Stop agent, keep shard
+shards stop --all         # Stop all running agents (future)
+```
+
+**Updated: `shards destroy`**
+```bash
+shards destroy <branch> [--force] [--delete-branch] [--dry-run]
+
+# Examples:
+shards destroy my-feature                    # Interactive, keeps branch
+shards destroy my-feature --delete-branch    # Also delete branch if safe
+shards destroy my-feature --force            # Skip all checks
+shards destroy my-feature --dry-run          # Show what would happen
+```
+
+---
+
+#### UI Changes
+
+**Shard list row buttons:**
+```
+Running:  ● feature-auth    claude    my-proj    [⏹] [🗑]
+Stopped:  ○ fix-bug         kiro      my-proj    [▶] [🗑]
+```
+
+**Destroy dialog with git status:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Destroy Shard                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Destroy 'feature-auth'?                                        │
+│                                                                 │
+│  ⚠️  Warning: 3 unpushed commits on this branch                 │
+│  ⚠️  Warning: 2 untracked files will be deleted                 │
+│                                                                 │
+│  ☐ Also delete branch 'feature-auth'                            │
+│                                                                 │
+│  This will remove the worktree at:                              │
+│  ~/.shards/worktrees/my-proj/feature-auth                       │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                    [Cancel]  [Destroy]          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Blocked destroy (uncommitted changes):**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Cannot Destroy Shard                                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ❌ Uncommitted changes in 'feature-auth'                       │
+│                                                                 │
+│  Modified files:                                                │
+│    • src/auth.rs                                                │
+│    • src/login.rs                                               │
+│                                                                 │
+│  Commit or stash your changes first, then try again.            │
+│                                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                              [OK]               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### Validation
+
+**CLI validation:**
+```bash
+# Test stop command
+shards create test-stop --agent claude
+# Terminal opens
+shards stop test-stop
+# Terminal closes, shard still in list
+shards list
+# Shows: test-stop (Stopped)
+shards open test-stop
+# Terminal reopens
+
+# Test git safety - uncommitted changes
+shards create test-uncommitted --agent claude
+# Make changes in worktree without committing
+echo "test" > ~/.shards/worktrees/*/test-uncommitted/test.txt
+shards destroy test-uncommitted
+# Should block: "Uncommitted changes detected"
+
+# Test git safety - unpushed commits
+shards create test-unpushed --agent claude
+# Make commit but don't push
+cd ~/.shards/worktrees/*/test-unpushed
+echo "test" > test.txt && git add . && git commit -m "test"
+cd -
+shards destroy test-unpushed
+# Should warn: "3 unpushed commits"
+
+# Test force flag
+shards destroy test-unpushed --force
+# Should succeed without prompts
+
+# Test delete-branch flag
+shards create test-branch --agent claude
+shards destroy test-branch --delete-branch
+# Branch should be deleted (if merged/safe)
+```
+
+**UI validation:**
+```bash
+cargo run -p shards-ui
+
+# Test Stop button
+# Create shard, see [⏹] button
+# Click [⏹], terminal closes
+# Shard shows as Stopped with [▶] button
+
+# Test Open button
+# Click [▶] on stopped shard
+# Terminal opens, status changes to Running
+
+# Test Destroy with clean worktree
+# Click [🗑], see normal confirmation
+# Click Destroy, shard removed
+
+# Test Destroy with uncommitted changes
+# Create shard, make uncommitted changes
+# Click [🗑], see "Cannot Destroy" message
+# Must commit/stash first
+
+# Test Destroy with unpushed commits
+# Create shard, commit but don't push
+# Click [🗑], see warning about unpushed commits
+# Can still destroy (with warning)
+```
+
+---
+
+**What NOT to do**:
+- Don't implement "stop all" yet
+- Don't add undo/recovery for destroyed shards
+- Don't add auto-commit or auto-stash features
+- Don't delete branches that have open PRs
+- Don't change the shard storage format
+
+---
+
+### Phase 7: Status Dashboard
 
 **Goal**: Live status indicators and auto-refresh.
 
@@ -445,7 +847,7 @@ cargo run --features ui -- ui
 
 ---
 
-### Phase 7: Favorites
+### Phase 8: Favorites
 
 **Goal**: Store favorite repositories for quick shard creation.
 
@@ -498,7 +900,7 @@ cargo run --features ui -- ui
 
 ---
 
-### Phase 8: Theme & Components
+### Phase 9: Theme & Components
 
 **Goal**: Apply a polished color palette and extract reusable UI components.
 
@@ -574,7 +976,7 @@ cargo run -p shards-ui
 
 ---
 
-### Phase 9: Keyboard Shortcuts
+### Phase 10: Keyboard Shortcuts
 
 **Goal**: Full keyboard control of the UI - navigate, select, and operate without touching the mouse.
 
@@ -656,7 +1058,7 @@ These come after the core dashboard is working and validated.
 
 ---
 
-### Phase 10+: Embedded Terminals
+### Phase 11+: Embedded Terminals
 
 **Goal**: Replace external terminals with embedded PTY terminals in the UI.
 
@@ -696,20 +1098,20 @@ With embedded terminals, we gain:
 
 | Sub-phase | Focus |
 |-----------|-------|
-| 10a | PTY infrastructure (spawn, read, write) - no UI |
-| 10b | Basic terminal view (raw output in window) |
-| 10c | Full terminal rendering (colors, cursor, input) |
-| 10d | Replace external launch with embedded option |
-| 10e | User preference: embedded vs external |
+| 11a | PTY infrastructure (spawn, read, write) - no UI |
+| 11b | Basic terminal view (raw output in window) |
+| 11c | Full terminal rendering (colors, cursor, input) |
+| 11d | Replace external launch with embedded option |
+| 11e | User preference: embedded vs external |
 
-**Open questions for Phase 10**:
+**Open questions for Phase 11**:
 - Should embedded be the default, or opt-in?
 - Should we support both embedded AND external (user choice)?
 - What's the minimum viable terminal rendering? (Do we need full xterm compatibility?)
 
 ---
 
-### Phase 11+: Cross-Shard Orchestration (Future Vision)
+### Phase 12+: Cross-Shard Orchestration (Future Vision)
 
 **Goal**: Enable a main session to coordinate child shards.
 
@@ -720,7 +1122,7 @@ With embedded terminals, we gain:
 - Collect their results
 
 **Prerequisites**:
-- Embedded terminals (Phase 10) - required to read/write to shards
+- Embedded terminals (Phase 11) - required to read/write to shards
 - Output buffering - store terminal history for querying
 - Command protocol - how main session addresses child shards
 
@@ -753,7 +1155,7 @@ ui = ["dep:gpui"]
 gpui = { version = "0.2", optional = true }
 ```
 
-Note: We don't need `alacritty_terminal` or PTY crates for MVP. Those come with embedded terminals (Phase 10+).
+Note: We don't need `alacritty_terminal` or PTY crates for MVP. Those come with embedded terminals (Phase 11+).
 
 ### Platform Requirements
 
@@ -767,9 +1169,9 @@ Note: We don't need `alacritty_terminal` or PTY crates for MVP. Those come with 
 
 ## Scope Boundary
 
-**This PRD covers Phases 1-9** (the MVP dashboard with external terminals, polish, and keyboard control).
+**This PRD covers Phases 1-10** (the MVP dashboard with external terminals, lifecycle management, polish, and keyboard control).
 
-Phases 10+ (embedded terminals, orchestration) are documented above for vision context, but are **separate PRDs** to be written after MVP validation. Don't let future vision creep into MVP implementation.
+Phases 11+ (embedded terminals, orchestration) are documented above for vision context, but are **separate PRDs** to be written after MVP validation. Don't let future vision creep into MVP implementation.
 
 ---
 
