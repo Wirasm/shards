@@ -103,6 +103,7 @@ Logging is initialized via `shards_core::init_logging()` in the CLI main.rs. Out
 tracing_subscriber::registry()
     .with(tracing_subscriber::fmt::layer()
         .json()
+        .with_writer(std::io::stderr)  // Logs to stderr, stdout for user output
         .with_current_span(false)
         .with_span_list(false))
     .with(EnvFilter::from_default_env()
