@@ -204,18 +204,20 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
     let branch = matches.get_one::<String>("branch").unwrap();
     let agent_override = matches.get_one::<String>("agent").cloned();
 
-    // Deprecation warning
+    // Deprecation warning - restart kills old process, open is additive
     eprintln!(
-        "⚠️  'restart' is deprecated. Use 'shards open {}' instead.",
-        branch
+        "⚠️  'restart' is deprecated. Use 'shards stop {}' then 'shards open {}' for similar behavior.",
+        branch, branch
     );
-    eprintln!("   Note: 'open' is additive - it does NOT close existing terminals.");
+    eprintln!(
+        "   Note: 'restart' kills the existing process. 'open' is additive (keeps existing terminals)."
+    );
     warn!(event = "cli.restart_deprecated", branch = branch);
 
     info!(event = "cli.restart_started", branch = branch, agent_override = ?agent_override);
 
-    // Internally use open_session (same behavior, new name)
-    match session_handler::open_session(branch, agent_override) {
+    // Use restart_session which kills old process (maintains original restart semantics)
+    match session_handler::restart_session(branch, agent_override) {
         Ok(session) => {
             println!("✅ Shard '{}' restarted successfully!", branch);
             println!("   Agent: {}", session.agent);
