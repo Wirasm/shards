@@ -186,8 +186,12 @@ pub fn get_session(name: &str) -> Result<Session, SessionError> {
     Ok(session)
 }
 
-pub fn destroy_session(name: &str) -> Result<(), SessionError> {
-    info!(event = "core.session.destroy_started", name = name);
+pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
+    info!(
+        event = "core.session.destroy_started",
+        name = name,
+        force = force
+    );
 
     let config = Config::new();
 
@@ -235,25 +239,42 @@ pub fn destroy_session(name: &str) -> Result<(), SessionError> {
                 info!(event = "core.session.destroy_kill_already_dead", pid = pid);
             }
             Err(e) => {
-                error!(
-                    event = "core.session.destroy_kill_failed",
-                    pid = pid,
-                    error = %e
-                );
-                return Err(SessionError::ProcessKillFailed {
-                    pid,
-                    message: format!(
-                        "Process still running. Kill it manually or use --force flag (not yet implemented): {}",
-                        e
-                    ),
-                });
+                if force {
+                    warn!(
+                        event = "core.session.destroy_kill_failed_force_continue",
+                        pid = pid,
+                        error = %e
+                    );
+                } else {
+                    error!(
+                        event = "core.session.destroy_kill_failed",
+                        pid = pid,
+                        error = %e
+                    );
+                    return Err(SessionError::ProcessKillFailed {
+                        pid,
+                        message: format!(
+                            "Process still running. Kill it manually or use --force flag: {}",
+                            e
+                        ),
+                    });
+                }
             }
         }
     }
 
     // 4. Remove git worktree
-    git::handler::remove_worktree_by_path(&session.worktree_path)
-        .map_err(|e| SessionError::GitError { source: e })?;
+    if force {
+        info!(
+            event = "core.session.destroy_worktree_force",
+            worktree = %session.worktree_path.display()
+        );
+        git::handler::remove_worktree_force(&session.worktree_path)
+            .map_err(|e| SessionError::GitError { source: e })?;
+    } else {
+        git::handler::remove_worktree_by_path(&session.worktree_path)
+            .map_err(|e| SessionError::GitError { source: e })?;
+    }
 
     info!(
         event = "core.session.destroy_worktree_removed",
@@ -460,6 +481,196 @@ pub fn restart_session(
     Ok(session)
 }
 
+/// Opens a new agent terminal in an existing shard (additive - doesn't close existing terminals).
+///
+/// This is the preferred way to add agents to a shard. Unlike restart, this does NOT
+/// close existing terminals - multiple agents can run in the same shard.
+pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Session, SessionError> {
+    info!(
+        event = "core.session.open_started",
+        name = name,
+        agent_override = ?agent_override
+    );
+
+    let config = Config::new();
+    let shards_config = ShardsConfig::load_hierarchy().unwrap_or_else(|e| {
+        warn!(
+            event = "core.config.load_failed",
+            error = %e,
+            "Config load failed during open, using defaults"
+        );
+        ShardsConfig::default()
+    });
+
+    // 1. Find session by name (branch name)
+    let mut session =
+        operations::find_session_by_name(&config.sessions_dir(), name)?.ok_or_else(|| {
+            SessionError::NotFound {
+                name: name.to_string(),
+            }
+        })?;
+
+    info!(
+        event = "core.session.open_found",
+        session_id = &session.id,
+        branch = &session.branch
+    );
+
+    // 2. Verify worktree still exists
+    if !session.worktree_path.exists() {
+        return Err(SessionError::WorktreeNotFound {
+            path: session.worktree_path.clone(),
+        });
+    }
+
+    // 3. Determine agent
+    let agent = agent_override.unwrap_or_else(|| session.agent.clone());
+    info!(event = "core.session.open_agent_selected", agent = &agent);
+
+    // Warn if agent CLI is not available in PATH
+    if let Some(false) = agents::is_agent_available(&agent) {
+        warn!(
+            event = "core.session.agent_not_available",
+            agent = %agent,
+            session_id = %session.id,
+            "Agent CLI '{}' not found in PATH - session may fail to start",
+            agent
+        );
+    }
+
+    // 4. Build command
+    let agent_command =
+        shards_config
+            .get_agent_command(&agent)
+            .map_err(|e| SessionError::ConfigError {
+                message: e.to_string(),
+            })?;
+
+    // 5. Spawn NEW terminal (additive - don't touch existing)
+    info!(
+        event = "core.session.open_spawn_started",
+        worktree = %session.worktree_path.display()
+    );
+    let spawn_result = terminal::handler::spawn_terminal(
+        &session.worktree_path,
+        &agent_command,
+        &shards_config,
+        Some(&session.id),
+        Some(&config.shards_dir),
+    )
+    .map_err(|e| SessionError::TerminalError { source: e })?;
+
+    // Capture process metadata immediately for PID reuse protection
+    let (process_name, process_start_time) = spawn_result
+        .process_id
+        .and_then(|pid| crate::process::get_process_info(pid).ok())
+        .map(|info| (Some(info.name), Some(info.start_time)))
+        .unwrap_or((
+            spawn_result.process_name.clone(),
+            spawn_result.process_start_time,
+        ));
+
+    // 6. Update session with new process info
+    session.process_id = spawn_result.process_id;
+    session.process_name = process_name;
+    session.process_start_time = process_start_time;
+    session.terminal_type = Some(spawn_result.terminal_type.clone());
+    session.terminal_window_id = spawn_result.terminal_window_id.clone();
+    session.command = spawn_result.command_executed.clone();
+    session.agent = agent.clone();
+    session.status = SessionStatus::Active;
+    session.last_activity = Some(chrono::Utc::now().to_rfc3339());
+
+    // 7. Save updated session
+    operations::save_session_to_file(&session, &config.sessions_dir())?;
+
+    info!(
+        event = "core.session.open_completed",
+        session_id = &session.id,
+        process_id = ?session.process_id
+    );
+
+    Ok(session)
+}
+
+/// Stops the agent process in a shard without destroying the shard.
+///
+/// The worktree and session file are preserved. The shard can be reopened with `open_session()`.
+pub fn stop_session(name: &str) -> Result<(), SessionError> {
+    info!(event = "core.session.stop_started", name = name);
+
+    let config = Config::new();
+
+    // 1. Find session by name (branch name)
+    let mut session =
+        operations::find_session_by_name(&config.sessions_dir(), name)?.ok_or_else(|| {
+            SessionError::NotFound {
+                name: name.to_string(),
+            }
+        })?;
+
+    info!(
+        event = "core.session.stop_found",
+        session_id = &session.id,
+        branch = &session.branch
+    );
+
+    // 2. Close terminal (fire-and-forget, best-effort)
+    if let Some(ref terminal_type) = session.terminal_type {
+        info!(
+            event = "core.session.stop_close_terminal",
+            terminal_type = ?terminal_type
+        );
+        terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
+    }
+
+    // 3. Kill process (blocking, handle errors)
+    if let Some(pid) = session.process_id {
+        info!(event = "core.session.stop_kill_started", pid = pid);
+
+        match crate::process::kill_process(
+            pid,
+            session.process_name.as_deref(),
+            session.process_start_time,
+        ) {
+            Ok(()) => {
+                info!(event = "core.session.stop_kill_completed", pid = pid);
+            }
+            Err(crate::process::ProcessError::NotFound { .. }) => {
+                info!(event = "core.session.stop_kill_already_dead", pid = pid);
+            }
+            Err(e) => {
+                error!(
+                    event = "core.session.stop_kill_failed",
+                    pid = pid,
+                    error = %e
+                );
+                return Err(SessionError::ProcessKillFailed {
+                    pid,
+                    message: e.to_string(),
+                });
+            }
+        }
+    }
+
+    // 4. Clear process info and set status to Stopped
+    session.process_id = None;
+    session.process_name = None;
+    session.process_start_time = None;
+    session.status = SessionStatus::Stopped;
+    session.last_activity = Some(chrono::Utc::now().to_rfc3339());
+
+    // 5. Save updated session (keep worktree, keep session file)
+    operations::save_session_to_file(&session, &config.sessions_dir())?;
+
+    info!(
+        event = "core.session.stop_completed",
+        session_id = &session.id
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_destroy_session_not_found() {
-        let result = destroy_session("non-existent");
+        let result = destroy_session("non-existent", false);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }

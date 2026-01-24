@@ -106,6 +106,12 @@ pub struct AppState {
 
     // Relaunch error state (shown inline per-row)
     pub relaunch_error: Option<(String, String)>, // (branch, error_message)
+
+    // Open error state (shown inline per-row)
+    pub open_error: Option<(String, String)>, // (branch, error_message)
+
+    // Stop error state (shown inline per-row)
+    pub stop_error: Option<(String, String)>, // (branch, error_message)
 }
 
 impl AppState {
@@ -123,6 +129,8 @@ impl AppState {
             confirm_target_branch: None,
             confirm_error: None,
             relaunch_error: None,
+            open_error: None,
+            stop_error: None,
         }
     }
 
@@ -150,6 +158,16 @@ impl AppState {
     pub fn clear_relaunch_error(&mut self) {
         self.relaunch_error = None;
     }
+
+    /// Clear any open error.
+    pub fn clear_open_error(&mut self) {
+        self.open_error = None;
+    }
+
+    /// Clear any stop error.
+    pub fn clear_stop_error(&mut self) {
+        self.stop_error = None;
+    }
 }
 
 impl Default for AppState {
@@ -175,6 +193,8 @@ mod tests {
             confirm_target_branch: Some("feature-branch".to_string()),
             confirm_error: Some("Some error".to_string()),
             relaunch_error: None,
+            open_error: None,
+            stop_error: None,
         };
 
         state.reset_confirm_dialog();
@@ -196,11 +216,55 @@ mod tests {
             confirm_target_branch: None,
             confirm_error: None,
             relaunch_error: Some(("branch".to_string(), "error".to_string())),
+            open_error: None,
+            stop_error: None,
         };
 
         state.clear_relaunch_error();
 
         assert!(state.relaunch_error.is_none());
+    }
+
+    #[test]
+    fn test_clear_open_error() {
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            relaunch_error: None,
+            open_error: Some(("branch".to_string(), "error".to_string())),
+            stop_error: None,
+        };
+
+        state.clear_open_error();
+
+        assert!(state.open_error.is_none());
+    }
+
+    #[test]
+    fn test_clear_stop_error() {
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            relaunch_error: None,
+            open_error: None,
+            stop_error: Some(("branch".to_string(), "error".to_string())),
+        };
+
+        state.clear_stop_error();
+
+        assert!(state.stop_error.is_none());
     }
 
     #[test]

@@ -444,6 +444,88 @@ pub fn remove_worktree_by_path(worktree_path: &Path) -> Result<(), GitError> {
     Ok(())
 }
 
+/// Force removes a git worktree, bypassing uncommitted changes check.
+///
+/// Use with caution - uncommitted work will be lost.
+/// This first tries to prune from git, then force-deletes the directory.
+pub fn remove_worktree_force(worktree_path: &Path) -> Result<(), GitError> {
+    info!(
+        event = "core.git.worktree.remove_force_started",
+        path = %worktree_path.display()
+    );
+
+    // Try to open the worktree directly first to get the main repo
+    let repo = if let Ok(repo) = Repository::open(worktree_path) {
+        // If we can open it as a repo, get the main repository
+        if let Some(main_repo_path) = repo
+            .path()
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+        {
+            Repository::open(main_repo_path).ok()
+        } else {
+            Some(repo)
+        }
+    } else {
+        // Fallback: try to find the main repository by looking for .git in parent directories
+        let mut current_path = worktree_path;
+        let mut repo_path = None;
+
+        while let Some(parent) = current_path.parent() {
+            if parent.join(".git").exists() && parent.join(".git").is_dir() {
+                repo_path = Some(parent);
+                break;
+            }
+            current_path = parent;
+        }
+
+        repo_path.and_then(|p| Repository::open(p).ok())
+    };
+
+    // Try to prune from git if we found the repo
+    if let Some(repo) = repo {
+        let worktrees = repo.worktrees().ok();
+        if let Some(worktrees) = worktrees {
+            for worktree_name in worktrees.iter().flatten() {
+                if let Ok(worktree) = repo.find_worktree(worktree_name)
+                    && worktree.path() == worktree_path
+                {
+                    // Try to prune with force options
+                    let mut prune_options = git2::WorktreePruneOptions::new();
+                    prune_options.valid(true);
+                    prune_options.working_tree(true);
+
+                    // Ignore prune errors - we'll force delete anyway
+                    if let Err(e) = worktree.prune(Some(&mut prune_options)) {
+                        warn!(
+                            event = "core.git.worktree.prune_failed_force_continue",
+                            path = %worktree_path.display(),
+                            error = %e
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Force delete the directory regardless of git status
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(worktree_path).map_err(|e| GitError::WorktreeRemovalFailed {
+            path: worktree_path.display().to_string(),
+            message: e.to_string(),
+        })?;
+    }
+
+    info!(
+        event = "core.git.worktree.remove_force_completed",
+        path = %worktree_path.display()
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

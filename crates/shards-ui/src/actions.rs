@@ -88,7 +88,7 @@ pub fn refresh_sessions() -> (Vec<ShardDisplay>, Option<String>) {
 pub fn destroy_shard(branch: &str) -> Result<(), String> {
     tracing::info!(event = "ui.destroy_shard.started", branch = branch);
 
-    match session_ops::destroy_session(branch) {
+    match session_ops::destroy_session(branch, false) {
         Ok(()) => {
             tracing::info!(event = "ui.destroy_shard.completed", branch = branch);
             Ok(())
@@ -103,6 +103,8 @@ pub fn destroy_shard(branch: &str) -> Result<(), String> {
 /// Relaunch agent terminal in existing worktree.
 ///
 /// Kills the old process (if any) and spawns a new terminal.
+/// DEPRECATED: Use open_shard instead for additive behavior.
+#[allow(dead_code)]
 pub fn relaunch_shard(branch: &str) -> Result<Session, String> {
     tracing::info!(event = "ui.relaunch_shard.started", branch = branch);
 
@@ -117,6 +119,46 @@ pub fn relaunch_shard(branch: &str) -> Result<Session, String> {
         }
         Err(e) => {
             tracing::error!(event = "ui.relaunch_shard.failed", branch = branch, error = %e);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Open a new agent terminal in an existing shard (additive - doesn't close existing terminals).
+///
+/// Unlike relaunch, this does NOT close existing terminals - multiple agents can run in the same shard.
+pub fn open_shard(branch: &str, agent: Option<String>) -> Result<Session, String> {
+    tracing::info!(event = "ui.open_shard.started", branch = branch, agent = ?agent);
+
+    match session_ops::open_session(branch, agent) {
+        Ok(session) => {
+            tracing::info!(
+                event = "ui.open_shard.completed",
+                branch = branch,
+                process_id = session.process_id
+            );
+            Ok(session)
+        }
+        Err(e) => {
+            tracing::error!(event = "ui.open_shard.failed", branch = branch, error = %e);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Stop the agent process in a shard without destroying the shard.
+///
+/// The worktree and session file are preserved. The shard can be reopened with open_shard().
+pub fn stop_shard(branch: &str) -> Result<(), String> {
+    tracing::info!(event = "ui.stop_shard.started", branch = branch);
+
+    match session_ops::stop_session(branch) {
+        Ok(()) => {
+            tracing::info!(event = "ui.stop_shard.completed", branch = branch);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(event = "ui.stop_shard.failed", branch = branch, error = %e);
             Err(e.to_string())
         }
     }
