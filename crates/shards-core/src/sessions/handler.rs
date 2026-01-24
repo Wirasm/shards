@@ -186,6 +186,20 @@ pub fn get_session(name: &str) -> Result<Session, SessionError> {
     Ok(session)
 }
 
+/// Destroys a shard by removing its worktree, killing the process, and deleting the session file.
+///
+/// # Arguments
+/// * `name` - Branch name or shard identifier
+/// * `force` - If true, bypass git safety checks and force removal
+///
+/// # Force Mode Behavior
+/// When `force` is false:
+/// - Process kill failures block destruction
+/// - Git refuses to remove worktree with uncommitted changes
+///
+/// When `force` is true:
+/// - Process kill failures are logged but don't block destruction
+/// - Worktree is force-deleted even with uncommitted changes (work will be lost)
 pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     info!(
         event = "core.session.destroy_started",
@@ -447,14 +461,28 @@ pub fn restart_session(
     );
 
     // Capture process metadata immediately for PID reuse protection
-    let (process_name, process_start_time) = spawn_result
-        .process_id
-        .and_then(|pid| crate::process::get_process_info(pid).ok())
-        .map(|info| (Some(info.name), Some(info.start_time)))
-        .unwrap_or((
+    let (process_name, process_start_time) = if let Some(pid) = spawn_result.process_id {
+        match crate::process::get_process_info(pid) {
+            Ok(info) => (Some(info.name), Some(info.start_time)),
+            Err(e) => {
+                warn!(
+                    event = "core.session.open_process_info_failed",
+                    pid = pid,
+                    error = %e,
+                    "Failed to get process metadata after spawn - using spawn result metadata"
+                );
+                (
+                    spawn_result.process_name.clone(),
+                    spawn_result.process_start_time,
+                )
+            }
+        }
+    } else {
+        (
             spawn_result.process_name.clone(),
             spawn_result.process_start_time,
-        ));
+        )
+    };
 
     // 6. Update session with new process info
     session.agent = agent;
@@ -561,14 +589,28 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     .map_err(|e| SessionError::TerminalError { source: e })?;
 
     // Capture process metadata immediately for PID reuse protection
-    let (process_name, process_start_time) = spawn_result
-        .process_id
-        .and_then(|pid| crate::process::get_process_info(pid).ok())
-        .map(|info| (Some(info.name), Some(info.start_time)))
-        .unwrap_or((
+    let (process_name, process_start_time) = if let Some(pid) = spawn_result.process_id {
+        match crate::process::get_process_info(pid) {
+            Ok(info) => (Some(info.name), Some(info.start_time)),
+            Err(e) => {
+                warn!(
+                    event = "core.session.open_process_info_failed",
+                    pid = pid,
+                    error = %e,
+                    "Failed to get process metadata after spawn - using spawn result metadata"
+                );
+                (
+                    spawn_result.process_name.clone(),
+                    spawn_result.process_start_time,
+                )
+            }
+        }
+    } else {
+        (
             spawn_result.process_name.clone(),
             spawn_result.process_start_time,
-        ));
+        )
+    };
 
     // 6. Update session with new process info
     session.process_id = spawn_result.process_id;
@@ -576,7 +618,11 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     session.process_start_time = process_start_time;
     session.terminal_type = Some(spawn_result.terminal_type.clone());
     session.terminal_window_id = spawn_result.terminal_window_id.clone();
-    session.command = spawn_result.command_executed.clone();
+    session.command = if spawn_result.command_executed.trim().is_empty() {
+        format!("{} (command not captured)", agent)
+    } else {
+        spawn_result.command_executed.clone()
+    };
     session.agent = agent.clone();
     session.status = SessionStatus::Active;
     session.last_activity = Some(chrono::Utc::now().to_rfc3339());
@@ -1076,5 +1122,26 @@ mod tests {
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_stop_session_not_found() {
+        let result = stop_session("non-existent");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
+    }
+
+    #[test]
+    fn test_open_session_not_found() {
+        let result = open_session("non-existent", None);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
+    }
+
+    #[test]
+    fn test_destroy_session_force_not_found() {
+        let result = destroy_session("non-existent", true);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }
 }

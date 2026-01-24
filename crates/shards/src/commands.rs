@@ -209,6 +209,7 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
         "⚠️  'restart' is deprecated. Use 'shards open {}' instead.",
         branch
     );
+    eprintln!("   Note: 'open' is additive - it does NOT close existing terminals.");
     warn!(event = "cli.restart_deprecated", branch = branch);
 
     info!(event = "cli.restart_started", branch = branch, agent_override = ?agent_override);

@@ -463,7 +463,17 @@ pub fn remove_worktree_force(worktree_path: &Path) -> Result<(), GitError> {
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
         {
-            Repository::open(main_repo_path).ok()
+            match Repository::open(&main_repo_path) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    warn!(
+                        event = "core.git.worktree.remove_force_main_repo_open_failed",
+                        path = %main_repo_path.display(),
+                        error = %e,
+                    );
+                    None
+                }
+            }
         } else {
             Some(repo)
         }
@@ -480,12 +490,32 @@ pub fn remove_worktree_force(worktree_path: &Path) -> Result<(), GitError> {
             current_path = parent;
         }
 
-        repo_path.and_then(|p| Repository::open(p).ok())
+        repo_path.and_then(|p| match Repository::open(p) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warn!(
+                    event = "core.git.worktree.remove_force_fallback_repo_open_failed",
+                    path = %p.display(),
+                    error = %e,
+                );
+                None
+            }
+        })
     };
 
     // Try to prune from git if we found the repo
     if let Some(repo) = repo {
-        let worktrees = repo.worktrees().ok();
+        let worktrees = match repo.worktrees() {
+            Ok(wt) => Some(wt),
+            Err(e) => {
+                warn!(
+                    event = "core.git.worktree.remove_force_list_worktrees_failed",
+                    path = %worktree_path.display(),
+                    error = %e,
+                );
+                None
+            }
+        };
         if let Some(worktrees) = worktrees {
             for worktree_name in worktrees.iter().flatten() {
                 if let Ok(worktree) = repo.find_worktree(worktree_name)
@@ -546,6 +576,17 @@ mod tests {
             // Restore original directory
             let _ = std::env::set_current_dir(original_dir);
         }
+    }
+
+    #[test]
+    fn test_remove_worktree_force_nonexistent_is_ok() {
+        // Force removal should not error if directory doesn't exist (idempotent)
+        let nonexistent = std::path::Path::new("/tmp/shards-test-nonexistent-worktree-12345");
+        // Make sure it doesn't exist
+        let _ = std::fs::remove_dir_all(nonexistent);
+
+        let result = remove_worktree_force(nonexistent);
+        assert!(result.is_ok());
     }
 
     // Note: Other tests would require setting up actual git repositories

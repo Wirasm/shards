@@ -16,6 +16,13 @@ pub enum ProcessStatus {
     Unknown,
 }
 
+/// Error from a shard operation, with the branch name for context.
+#[derive(Clone, Debug)]
+pub struct OperationError {
+    pub branch: String,
+    pub message: String,
+}
+
 /// Display data for a shard, combining Session with computed process status.
 #[derive(Clone)]
 pub struct ShardDisplay {
@@ -104,14 +111,11 @@ pub struct AppState {
     pub confirm_target_branch: Option<String>,
     pub confirm_error: Option<String>,
 
-    // Relaunch error state (shown inline per-row)
-    pub relaunch_error: Option<(String, String)>, // (branch, error_message)
-
     // Open error state (shown inline per-row)
-    pub open_error: Option<(String, String)>, // (branch, error_message)
+    pub open_error: Option<OperationError>,
 
     // Stop error state (shown inline per-row)
-    pub stop_error: Option<(String, String)>, // (branch, error_message)
+    pub stop_error: Option<OperationError>,
 }
 
 impl AppState {
@@ -128,7 +132,6 @@ impl AppState {
             show_confirm_dialog: false,
             confirm_target_branch: None,
             confirm_error: None,
-            relaunch_error: None,
             open_error: None,
             stop_error: None,
         }
@@ -152,11 +155,6 @@ impl AppState {
         self.show_confirm_dialog = false;
         self.confirm_target_branch = None;
         self.confirm_error = None;
-    }
-
-    /// Clear any relaunch error.
-    pub fn clear_relaunch_error(&mut self) {
-        self.relaunch_error = None;
     }
 
     /// Clear any open error.
@@ -192,7 +190,6 @@ mod tests {
             show_confirm_dialog: true,
             confirm_target_branch: Some("feature-branch".to_string()),
             confirm_error: Some("Some error".to_string()),
-            relaunch_error: None,
             open_error: None,
             stop_error: None,
         };
@@ -202,27 +199,6 @@ mod tests {
         assert!(!state.show_confirm_dialog);
         assert!(state.confirm_target_branch.is_none());
         assert!(state.confirm_error.is_none());
-    }
-
-    #[test]
-    fn test_clear_relaunch_error() {
-        let mut state = AppState {
-            displays: Vec::new(),
-            load_error: None,
-            show_create_dialog: false,
-            create_form: CreateFormState::default(),
-            create_error: None,
-            show_confirm_dialog: false,
-            confirm_target_branch: None,
-            confirm_error: None,
-            relaunch_error: Some(("branch".to_string(), "error".to_string())),
-            open_error: None,
-            stop_error: None,
-        };
-
-        state.clear_relaunch_error();
-
-        assert!(state.relaunch_error.is_none());
     }
 
     #[test]
@@ -236,8 +212,10 @@ mod tests {
             show_confirm_dialog: false,
             confirm_target_branch: None,
             confirm_error: None,
-            relaunch_error: None,
-            open_error: Some(("branch".to_string(), "error".to_string())),
+            open_error: Some(OperationError {
+                branch: "branch".to_string(),
+                message: "error".to_string(),
+            }),
             stop_error: None,
         };
 
@@ -257,9 +235,11 @@ mod tests {
             show_confirm_dialog: false,
             confirm_target_branch: None,
             confirm_error: None,
-            relaunch_error: None,
             open_error: None,
-            stop_error: Some(("branch".to_string(), "error".to_string())),
+            stop_error: Some(OperationError {
+                branch: "branch".to_string(),
+                message: "error".to_string(),
+            }),
         };
 
         state.clear_stop_error();
