@@ -2,27 +2,28 @@
 
 use std::process::Command;
 
-/// Verify that stdout contains only user-facing output (no JSON logs)
-/// and that any stderr output is structured JSON logs.
-#[test]
-fn test_list_stdout_is_clean() {
+/// Execute 'shards list' and verify it succeeds
+fn run_shards_list() -> std::process::Output {
     let output = Command::new(env!("CARGO_BIN_EXE_shards"))
         .arg("list")
         .output()
-        .unwrap_or_else(|e| {
-            panic!(
-                "test_list_stdout_is_clean: Failed to execute 'shards list': {}",
-                e
-            )
-        });
+        .expect("Failed to execute 'shards list'");
 
-    // Verify command succeeded before examining output
     assert!(
         output.status.success(),
         "shards list failed with exit code {:?}. stderr: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    output
+}
+
+/// Verify that stdout contains only user-facing output (no JSON logs)
+/// and that any stderr output is structured JSON logs.
+#[test]
+fn test_list_stdout_is_clean() {
+    let output = run_shards_list();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -48,23 +49,7 @@ fn test_list_stdout_is_clean() {
 /// Verify stdout has no JSON lines and is suitable for piping
 #[test]
 fn test_output_is_pipeable() {
-    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
-        .arg("list")
-        .output()
-        .unwrap_or_else(|e| {
-            panic!(
-                "test_output_is_pipeable: Failed to execute 'shards list': {}",
-                e
-            )
-        });
-
-    // Verify command succeeded before examining output
-    assert!(
-        output.status.success(),
-        "shards list failed with exit code {:?}. stderr: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = run_shards_list();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
