@@ -59,6 +59,12 @@ pub fn build_cli() -> Command {
         .subcommand(
             Command::new("list")
                 .about("List all shards for current project")
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .help("Output in JSON format")
+                        .action(ArgAction::SetTrue)
+                )
         )
         .subcommand(
             Command::new("destroy")
@@ -129,6 +135,12 @@ pub fn build_cli() -> Command {
                         .help("Branch name of the shard to check")
                         .required(true)
                         .index(1)
+                )
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .help("Output in JSON format")
+                        .action(ArgAction::SetTrue)
                 )
         )
         .subcommand(
@@ -237,6 +249,32 @@ mod tests {
 
         let matches = matches.unwrap();
         assert!(matches.subcommand_matches("list").is_some());
+    }
+
+    #[test]
+    fn test_cli_list_json_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "list", "--json"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let list_matches = matches.subcommand_matches("list").unwrap();
+        assert!(list_matches.get_flag("json"));
+    }
+
+    #[test]
+    fn test_cli_status_json_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "status", "test-branch", "--json"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let status_matches = matches.subcommand_matches("status").unwrap();
+        assert_eq!(
+            status_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+        assert!(status_matches.get_flag("json"));
     }
 
     #[test]

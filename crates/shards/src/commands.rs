@@ -54,7 +54,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
 
     match matches.subcommand() {
         Some(("create", sub_matches)) => handle_create_command(sub_matches),
-        Some(("list", _)) => handle_list_command(),
+        Some(("list", sub_matches)) => handle_list_command(sub_matches),
         Some(("destroy", sub_matches)) => handle_destroy_command(sub_matches),
         Some(("restart", sub_matches)) => handle_restart_command(sub_matches),
         Some(("open", sub_matches)) => handle_open_command(sub_matches),
@@ -136,12 +136,16 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 }
 
-fn handle_list_command() -> Result<(), Box<dyn std::error::Error>> {
-    info!(event = "cli.list_started");
+fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let json_output = matches.get_flag("json");
+
+    info!(event = "cli.list_started", json_output = json_output);
 
     match session_handler::list_sessions() {
         Ok(sessions) => {
-            if sessions.is_empty() {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&sessions)?);
+            } else if sessions.is_empty() {
                 println!("No active shards found.");
             } else {
                 println!("Active shards:");
@@ -299,11 +303,27 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     let branch = matches
         .get_one::<String>("branch")
         .ok_or("Branch argument is required")?;
+    let json_output = matches.get_flag("json");
 
-    info!(event = "cli.status_started", branch = branch);
+    info!(
+        event = "cli.status_started",
+        branch = branch,
+        json_output = json_output
+    );
 
     match session_handler::get_session(branch) {
         Ok(session) => {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&session)?);
+                info!(
+                    event = "cli.status_completed",
+                    branch = branch,
+                    process_id = session.process_id
+                );
+                return Ok(());
+            }
+
+            // Human-readable table output
             println!("📊 Shard Status: {}", branch);
             println!("┌─────────────────────────────────────────────────────────────┐");
             println!("│ Branch:      {:<47} │", session.branch);
