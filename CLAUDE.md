@@ -63,6 +63,8 @@ cargo clippy --all -- -D warnings  # Lint with warnings as errors
 cargo run -- create my-branch --agent claude
 cargo run -- create my-branch --agent claude --note "Working on auth feature"
 cargo run -- list
+cargo run -- list --json                 # JSON output for scripting
+cargo run -- status my-branch --json     # JSON output for single shard
 cargo run -- -q list                     # Quiet mode (suppress JSON logs)
 cargo run -- open my-branch              # Open new agent in existing shard (additive)
 cargo run -- stop my-branch              # Stop agent, preserve shard

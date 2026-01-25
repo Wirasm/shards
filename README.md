@@ -68,6 +68,9 @@ shards create feature-auth --agent claude --note "Implementing JWT authenticatio
 ### List active shards
 ```bash
 shards list
+
+# Machine-readable JSON output
+shards list --json
 ```
 
 ### Open a new agent in an existing shard
@@ -88,6 +91,9 @@ shards stop <branch>
 ### Get shard information
 ```bash
 shards status <branch>
+
+# Machine-readable JSON output
+shards status <branch> --json
 ```
 
 ### Destroy a shard
