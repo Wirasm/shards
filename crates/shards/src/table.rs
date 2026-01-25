@@ -8,6 +8,7 @@ pub struct TableFormatter {
     port_width: usize,
     process_width: usize,
     command_width: usize,
+    note_width: usize,
 }
 
 impl TableFormatter {
@@ -27,6 +28,7 @@ impl TableFormatter {
             port_width: 11,
             process_width: 11,
             command_width: 20,
+            note_width: 30,
         }
     }
 
@@ -65,9 +67,10 @@ impl TableFormatter {
                 }
             }
         });
+        let note_display = session.note.as_deref().unwrap_or("");
 
         println!(
-            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │",
+            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             truncate(&session.branch, self.branch_width),
             truncate(&session.agent, self.agent_width),
             format!("{:?}", session.status).to_lowercase(),
@@ -75,6 +78,7 @@ impl TableFormatter {
             truncate(&port_range, self.port_width),
             truncate(&process_status, self.process_width),
             truncate(&session.command, self.command_width),
+            truncate(note_display, self.note_width),
             width_branch = self.branch_width,
             width_agent = self.agent_width,
             width_status = self.status_width,
@@ -82,12 +86,13 @@ impl TableFormatter {
             width_port = self.port_width,
             width_process = self.process_width,
             width_command = self.command_width,
+            width_note = self.note_width,
         );
     }
 
     fn top_border(&self) -> String {
         format!(
-            "┌{}┬{}┬{}┬{}┬{}┬{}┬{}┐",
+            "┌{}┬{}┬{}┬{}┬{}┬{}┬{}┬{}┐",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
@@ -95,12 +100,13 @@ impl TableFormatter {
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),
             "─".repeat(self.command_width + 2),
+            "─".repeat(self.note_width + 2),
         )
     }
 
     fn header_row(&self) -> String {
         format!(
-            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │",
+            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             "Branch",
             "Agent",
             "Status",
@@ -108,6 +114,7 @@ impl TableFormatter {
             "Port Range",
             "Process",
             "Command",
+            "Note",
             width_branch = self.branch_width,
             width_agent = self.agent_width,
             width_status = self.status_width,
@@ -115,12 +122,13 @@ impl TableFormatter {
             width_port = self.port_width,
             width_process = self.process_width,
             width_command = self.command_width,
+            width_note = self.note_width,
         )
     }
 
     fn separator(&self) -> String {
         format!(
-            "├{}┼{}┼{}┼{}┼{}┼{}┼{}┤",
+            "├{}┼{}┼{}┼{}┼{}┼{}┼{}┼{}┤",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
@@ -128,12 +136,13 @@ impl TableFormatter {
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),
             "─".repeat(self.command_width + 2),
+            "─".repeat(self.note_width + 2),
         )
     }
 
     fn bottom_border(&self) -> String {
         format!(
-            "└{}┴{}┴{}┴{}┴{}┴{}┴{}┘",
+            "└{}┴{}┴{}┴{}┴{}┴{}┴{}┴{}┘",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
@@ -141,14 +150,22 @@ impl TableFormatter {
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),
             "─".repeat(self.command_width + 2),
+            "─".repeat(self.note_width + 2),
         )
     }
 }
 
+/// Truncate a string to a maximum display width, adding "..." if truncated.
+///
+/// Uses character count (not byte count) to safely handle UTF-8 strings
+/// including emoji and multi-byte characters.
 pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let char_count = s.chars().count();
+    if char_count <= max_len {
         format!("{:<width$}", s, width = max_len)
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        // Safely truncate at character boundaries, not byte boundaries
+        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{:<width$}", format!("{}...", truncated), width = max_len)
     }
 }

@@ -271,6 +271,7 @@ mod tests {
             terminal_window_id: None,
             command: String::new(),
             last_activity: None,
+            note: None,
         };
 
         let display = ShardDisplay::from_session(session);

@@ -219,6 +219,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Save session
@@ -267,6 +268,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Save session
@@ -317,6 +319,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         let session_file = temp_dir.join("test_atomic-behavior.json");
@@ -370,6 +373,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Create a directory where the final file should be to force rename failure
@@ -428,6 +432,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         let session2 = Session {
@@ -448,6 +453,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Save sessions
@@ -510,6 +516,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Save session
@@ -558,6 +565,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Save session
@@ -607,6 +615,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
         save_session_to_file(&valid_session, &temp_dir).unwrap();
 

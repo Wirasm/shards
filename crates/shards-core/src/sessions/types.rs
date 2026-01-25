@@ -11,12 +11,6 @@ fn default_port_end() -> u16 {
 fn default_port_count() -> u16 {
     0
 }
-fn default_command() -> String {
-    String::default()
-}
-fn default_last_activity() -> Option<String> {
-    None
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
@@ -72,7 +66,7 @@ pub struct Session {
     /// "kiro-cli chat --trust-all-tools" or "claude-code"
     ///
     /// Empty string for sessions created before this field was added.
-    #[serde(default = "default_command")]
+    #[serde(default)]
     pub command: String,
 
     /// Timestamp of last detected activity for health monitoring.
@@ -82,8 +76,15 @@ pub struct Session {
     /// Initially set to session creation time, updated by activity monitoring.
     ///
     /// Format: RFC3339 timestamp string (e.g., "2024-01-01T12:00:00Z")
-    #[serde(default = "default_last_activity")]
+    #[serde(default)]
     pub last_activity: Option<String>,
+
+    /// Optional description of what this shard is for.
+    ///
+    /// Set via `--note` flag during `shards create`. Shown truncated to 30 chars
+    /// in list output, and truncated to 47 chars in status output.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,11 +105,16 @@ pub struct ValidatedRequest {
 pub struct CreateSessionRequest {
     pub branch: String,
     pub agent: Option<String>,
+    pub note: Option<String>,
 }
 
 impl CreateSessionRequest {
-    pub fn new(branch: String, agent: Option<String>) -> Self {
-        Self { branch, agent }
+    pub fn new(branch: String, agent: Option<String>, note: Option<String>) -> Self {
+        Self {
+            branch,
+            agent,
+            note,
+        }
     }
 
     pub fn agent(&self) -> String {
@@ -144,6 +150,7 @@ mod tests {
             terminal_window_id: None,
             command: "claude-code".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         assert_eq!(session.branch, "branch");
@@ -177,13 +184,90 @@ mod tests {
     }
 
     #[test]
+    fn test_session_backward_compatibility_note() {
+        // Test that sessions without note field can be deserialized
+        let json_without_note = r#"{
+            "id": "test/branch",
+            "project_id": "test",
+            "branch": "branch",
+            "worktree_path": "/tmp/test",
+            "agent": "claude",
+            "status": "Active",
+            "created_at": "2024-01-01T00:00:00Z",
+            "port_range_start": 3000,
+            "port_range_end": 3009,
+            "port_count": 10,
+            "process_id": null,
+            "process_name": null,
+            "process_start_time": null,
+            "command": "claude-code"
+        }"#;
+
+        let session: Session = serde_json::from_str(json_without_note).unwrap();
+        assert_eq!(session.note, None);
+        assert_eq!(session.branch, "branch");
+    }
+
+    #[test]
+    fn test_session_with_note_serialization_roundtrip() {
+        // Test that sessions WITH notes serialize and deserialize correctly
+        let json_with_note = r#"{
+            "id": "test/branch",
+            "project_id": "test",
+            "branch": "branch",
+            "worktree_path": "/tmp/test",
+            "agent": "claude",
+            "status": "Active",
+            "created_at": "2024-01-01T00:00:00Z",
+            "port_range_start": 3000,
+            "port_range_end": 3009,
+            "port_count": 10,
+            "process_id": null,
+            "process_name": null,
+            "process_start_time": null,
+            "command": "claude-code",
+            "note": "Implementing auth feature with OAuth2 support"
+        }"#;
+
+        let session: Session = serde_json::from_str(json_with_note).unwrap();
+        assert_eq!(
+            session.note,
+            Some("Implementing auth feature with OAuth2 support".to_string())
+        );
+
+        // Verify round-trip preserves note
+        let serialized = serde_json::to_string(&session).unwrap();
+        let deserialized: Session = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.note, session.note);
+    }
+
+    #[test]
+    fn test_create_session_request_with_note() {
+        // Test CreateSessionRequest properly includes note
+        let request_with_note = CreateSessionRequest::new(
+            "feature-auth".to_string(),
+            Some("claude".to_string()),
+            Some("OAuth2 implementation".to_string()),
+        );
+        assert_eq!(
+            request_with_note.note,
+            Some("OAuth2 implementation".to_string())
+        );
+
+        // Test request without note
+        let request_without_note =
+            CreateSessionRequest::new("feature-auth".to_string(), Some("claude".to_string()), None);
+        assert_eq!(request_without_note.note, None);
+    }
+
+    #[test]
     fn test_create_session_request() {
-        let request = CreateSessionRequest::new("test-branch".to_string(), None);
+        let request = CreateSessionRequest::new("test-branch".to_string(), None, None);
         assert_eq!(request.branch, "test-branch");
         assert_eq!(request.agent(), "claude");
 
         let request_with_agent =
-            CreateSessionRequest::new("test-branch".to_string(), Some("kiro".to_string()));
+            CreateSessionRequest::new("test-branch".to_string(), Some("kiro".to_string()), None);
         assert_eq!(request_with_agent.agent(), "kiro");
     }
 
@@ -219,6 +303,7 @@ mod tests {
             terminal_window_id: Some("1596".to_string()),
             command: "claude-code".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
 
         // Test serialization round-trip

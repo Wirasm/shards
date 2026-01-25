@@ -165,6 +165,7 @@ pub fn create_session(
         } else {
             spawn_result.command_executed.clone()
         },
+        note: request.note.clone(),
     };
 
     // 7. Save session to file
@@ -800,6 +801,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            note: None,
         };
 
         // Create worktree directory so validation passes
@@ -900,6 +902,7 @@ mod tests {
                 terminal_window_id: Some("1596".to_string()),
                 command: "test-command".to_string(),
                 last_activity: Some(chrono::Utc::now().to_rfc3339()),
+                note: None,
             };
 
             operations::save_session_to_file(&session, &sessions_dir)
@@ -973,6 +976,7 @@ mod tests {
             terminal_window_id: Some("1596".to_string()),
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            note: None,
         };
 
         operations::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1042,6 +1046,7 @@ mod tests {
             terminal_window_id: None, // Key: terminal_window_id is NOT set (old session)
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            note: None,
         };
 
         operations::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1114,6 +1119,7 @@ mod tests {
             terminal_window_id: Some("1596".to_string()),
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            note: None,
         };
 
         operations::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1208,6 +1214,7 @@ mod tests {
             terminal_window_id: Some("test-window".to_string()),
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
+            note: None,
         };
 
         operations::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");

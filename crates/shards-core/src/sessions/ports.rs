@@ -124,6 +124,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: None,
+            note: None,
         }
     }
 

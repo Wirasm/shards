@@ -36,7 +36,7 @@ pub fn create_shard(branch: &str, agent: &str) -> Result<Session, String> {
         }
     };
 
-    let request = CreateSessionRequest::new(branch.to_string(), Some(agent.to_string()));
+    let request = CreateSessionRequest::new(branch.to_string(), Some(agent.to_string()), None);
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {

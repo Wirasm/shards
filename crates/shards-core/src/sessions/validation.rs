@@ -151,6 +151,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
         assert!(validate_session_structure(&valid_session).is_ok());
 
@@ -173,6 +174,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
         let result = validate_session_structure(&invalid_session);
         assert!(result.is_err());
@@ -200,6 +202,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
         let result2 = validate_session_structure(&invalid_session2);
         assert!(result2.is_err());
@@ -228,6 +231,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
         };
         let result3 = validate_session_structure(&invalid_session3);
         assert!(result3.is_err());
@@ -267,6 +271,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: None,
+            note: None,
         };
         let result = validate_session_structure(&session_empty_project);
         assert!(matches!(
@@ -293,6 +298,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: None,
+            note: None,
         };
         let result = validate_session_structure(&session_empty_branch);
         assert!(matches!(
@@ -319,6 +325,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: None,
+            note: None,
         };
         let result = validate_session_structure(&session_empty_agent);
         assert!(matches!(
@@ -345,6 +352,7 @@ mod tests {
             terminal_window_id: None,
             command: "test-command".to_string(),
             last_activity: None,
+            note: None,
         };
         let result = validate_session_structure(&session_empty_created_at);
         assert!(matches!(

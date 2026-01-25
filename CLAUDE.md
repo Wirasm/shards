@@ -61,6 +61,7 @@ cargo clippy --all -- -D warnings  # Lint with warnings as errors
 
 # Run
 cargo run -- create my-branch --agent claude
+cargo run -- create my-branch --agent claude --note "Working on auth feature"
 cargo run -- list
 cargo run -- open my-branch              # Open new agent in existing shard (additive)
 cargo run -- stop my-branch              # Stop agent, preserve shard

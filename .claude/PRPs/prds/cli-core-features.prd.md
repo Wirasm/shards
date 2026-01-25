@@ -10,6 +10,7 @@
 
 | Date       | Change                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-01-25 | Phase 1.1 Session Notes (`--note`): COMPLETE                                                   |
 | 2026-01-24 | `--force` on destroy: DONE (Phase 6 lifecycle)                                                 |
 | 2026-01-24 | Renamed `shards open` (editor) → `shards code` to avoid conflict with lifecycle `open` command |
 | 2026-01-24 | `shards restart` deprecated in favor of `shards open` (lifecycle)                              |
@@ -146,7 +147,9 @@ Each feature is a small, focused PR.
 
 ---
 
-#### 1.1 Session Notes (`--note`)
+#### 1.1 Session Notes (`--note`) - COMPLETE
+
+**Status**: COMPLETE (2026-01-25)
 
 **What**: Add optional description when creating a shard.
 
