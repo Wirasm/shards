@@ -315,52 +315,56 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
         Ok(session) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&session)?);
-            } else {
-                println!("📊 Shard Status: {}", branch);
-                println!("┌─────────────────────────────────────────────────────────────┐");
-                println!("│ Branch:      {:<47} │", session.branch);
-                println!("│ Agent:       {:<47} │", session.agent);
-                println!(
-                    "│ Status:      {:<47} │",
-                    format!("{:?}", session.status).to_lowercase()
+                info!(
+                    event = "cli.status_completed",
+                    branch = branch,
+                    process_id = session.process_id
                 );
-                println!("│ Created:     {:<47} │", session.created_at);
-                if let Some(ref note) = session.note {
-                    println!("│ Note:        {} │", truncate(note, 47));
-                }
-                println!("│ Worktree:    {:<47} │", session.worktree_path.display());
+                return Ok(());
+            }
 
-                // Check process status if PID is available
-                if let Some(pid) = session.process_id {
-                    match process::is_process_running(pid) {
-                        Ok(true) => {
-                            println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+            // Human-readable table output
+            println!("📊 Shard Status: {}", branch);
+            println!("┌─────────────────────────────────────────────────────────────┐");
+            println!("│ Branch:      {:<47} │", session.branch);
+            println!("│ Agent:       {:<47} │", session.agent);
+            println!(
+                "│ Status:      {:<47} │",
+                format!("{:?}", session.status).to_lowercase()
+            );
+            println!("│ Created:     {:<47} │", session.created_at);
+            if let Some(ref note) = session.note {
+                println!("│ Note:        {} │", truncate(note, 47));
+            }
+            println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
-                            // Try to get process info
-                            if let Ok(info) = process::get_process_info(pid) {
-                                println!("│ Process Name: {:<46} │", info.name);
-                                println!(
-                                    "│ Process Status: {:<44} │",
-                                    format!("{:?}", info.status)
-                                );
-                            }
-                        }
-                        Ok(false) => {
-                            println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
-                        }
-                        Err(e) => {
-                            println!(
-                                "│ Process:     {:<47} │",
-                                format!("Error checking PID {}: {}", pid, e)
-                            );
+            // Check process status if PID is available
+            if let Some(pid) = session.process_id {
+                match process::is_process_running(pid) {
+                    Ok(true) => {
+                        println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+
+                        // Try to get process info
+                        if let Ok(info) = process::get_process_info(pid) {
+                            println!("│ Process Name: {:<46} │", info.name);
+                            println!("│ Process Status: {:<44} │", format!("{:?}", info.status));
                         }
                     }
-                } else {
-                    println!("│ Process:     {:<47} │", "No PID tracked");
+                    Ok(false) => {
+                        println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
+                    }
+                    Err(e) => {
+                        println!(
+                            "│ Process:     {:<47} │",
+                            format!("Error checking PID {}: {}", pid, e)
+                        );
+                    }
                 }
-
-                println!("└─────────────────────────────────────────────────────────────┘");
+            } else {
+                println!("│ Process:     {:<47} │", "No PID tracked");
             }
+
+            println!("└─────────────────────────────────────────────────────────────┘");
 
             info!(
                 event = "cli.status_completed",
