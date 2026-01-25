@@ -73,6 +73,7 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     let branch = matches
         .get_one::<String>("branch")
         .ok_or("Branch argument is required")?;
+    let note = matches.get_one::<String>("note").cloned();
 
     let mut config = load_config_with_warning();
 
@@ -94,10 +95,11 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     info!(
         event = "cli.create_started",
         branch = branch,
-        agent = config.agent.default
+        agent = config.agent.default,
+        note = ?note
     );
 
-    let request = CreateSessionRequest::new(branch.clone(), agent_override);
+    let request = CreateSessionRequest::new(branch.clone(), agent_override, note);
 
     match session_handler::create_session(request, &config) {
         Ok(session) => {
@@ -311,6 +313,9 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
                 format!("{:?}", session.status).to_lowercase()
             );
             println!("│ Created:     {:<47} │", session.created_at);
+            if let Some(ref note) = session.note {
+                println!("│ Note:        {:<47} │", note);
+            }
             println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
             // Check process status if PID is available

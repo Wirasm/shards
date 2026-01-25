@@ -41,6 +41,12 @@ pub fn build_cli() -> Command {
                         .allow_hyphen_values(true) // Allow flag values starting with hyphens (e.g., --trust-all-tools)
                         .help("Additional flags for agent (use --flags 'value' or --flags='value')")
                 )
+                .arg(
+                    Arg::new("note")
+                        .long("note")
+                        .short('n')
+                        .help("Description of what this shard is for")
+                )
         )
         .subcommand(
             Command::new("list")
