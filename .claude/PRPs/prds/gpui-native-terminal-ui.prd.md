@@ -145,34 +145,44 @@ Build a native GPUI application as a **visual dashboard** for shard management. 
 
 ### Phase Overview
 
-| # | Phase | Focus | Deliverable |
-|---|-------|-------|-------------|
-| 1 | Project Scaffolding | GPUI deps, feature gate | `cargo check --features ui` passes |
-| 2 | Empty Window | GPUI opens a window | Window appears |
-| 3 | Shard List View | Display existing shards | See shards from ~/.shards/sessions/ |
-| 4 | Create Shard | Create button + dialog | Creates shard, launches external terminal |
-| 5 | Destroy & Restart | Management buttons | Can destroy and restart shards (basic) |
-| 6 | Shard Lifecycle | Open/Stop/Destroy commands | Clean lifecycle for humans and agents |
-| 7 | Status Dashboard | Health indicators, refresh | Live status updates, auto-refresh |
-| 8 | Favorites | Quick-spawn repos | Favorites work |
-| 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted TextInput/Button/Modal |
-| 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse |
+| # | Phase | Focus | Deliverable | Status |
+|---|-------|-------|-------------|--------|
+| 1 | Project Scaffolding | GPUI deps, feature gate | `cargo check --features ui` passes | ✅ DONE |
+| 2 | Empty Window | GPUI opens a window | Window appears | ✅ DONE |
+| 3 | Shard List View | Display existing shards | See shards from ~/.shards/sessions/ | ✅ DONE |
+| 4 | Create Shard | Create button + dialog | Creates shard, launches external terminal | ✅ DONE |
+| 5 | Destroy & Restart | Management buttons | Can destroy and restart shards (basic) | ✅ DONE |
+| 6 | Shard Lifecycle | Open/Stop/Destroy commands | Clean lifecycle for humans and agents | ✅ DONE |
+| 7 | Status Dashboard | Health indicators, refresh | Live status updates, auto-refresh | TODO |
+| 7.5 | Notes & Git Status | Session notes, git dirty indicator | Notes in list/create, uncommitted indicator | TODO |
+| 7.6 | Bulk Operations | Open All / Stop All buttons | Bulk lifecycle operations | TODO |
+| 7.7 | Quick Actions | Per-row action buttons | Copy Path, Open Editor, Focus Terminal | TODO |
+| 8 | Favorites | Quick-spawn repos | Favorites work | TODO |
+| 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted TextInput/Button/Modal | TODO |
+| 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse | TODO |
 
 ### Dependency Graph
 
 ```
-Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8 → Phase 9 → Phase 10
-   │         │         │          │          │          │          │         │         │         │
-   │         │         │          │          │          │          │         │         │         └─ Power user (keyboard)
-   │         │         │          │          │          │          │         │         └─ Polish (theme)
-   │         │         │          │          │          │          │         └─ Convenience (favorites)
-   │         │         │          │          │          │          └─ Polish (live updates)
-   │         │         │          │          │          └─ Clean lifecycle (open/stop/destroy for humans + agents)
-   │         │         │          │          └─ Basic management (destroy, restart)
-   │         │         │          └─ Core action (create shard)
-   │         │         └─ Core view (see shards)
-   │         └─ GPUI works
-   └─ Build system works
+GUI Phases:
+Phase 1 → 2 → 3 → 4 → 5 → 6 → 7 → 7.5 → 7.6 → 7.7 → 8 → 9 → 10
+  ✅     ✅   ✅   ✅   ✅   ✅   │     │      │      │    │    │    │
+                                │     │      │      │    │    │    └─ Keyboard control
+                                │     │      │      │    │    └─ Theme polish
+                                │     │      │      │    └─ Favorites
+                                │     │      │      └─ Quick actions (copy, edit, focus)
+                                │     │      └─ Bulk ops (open/stop all)
+                                │     └─ Notes & git status
+                                └─ Auto-refresh, status indicators
+
+Cross-PRD Dependencies (CLI → GUI):
+┌─────────────────────────────────────────────────────────────┐
+│  CLI Phase 1.1 (--note)      ──────────►  GUI Phase 7.5     │
+│  CLI Phase 1.2 (cd)          ──────────►  GUI Phase 7.7     │
+│  CLI Phase 1.3 (code)        ──────────►  GUI Phase 7.7     │
+│  CLI Phase 2.1 (focus)       ──────────►  GUI Phase 7.7     │
+│  CLI Phase 2.5 (open/stop --all) ──────►  GUI Phase 7.6     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -725,6 +735,210 @@ cargo run --features ui -- ui
 - Don't add complex real-time streaming
 - Don't add notifications
 - Keep polling simple (5 second interval is fine)
+
+---
+
+### Phase 7.5: Notes & Git Status
+
+**Goal**: Show session notes in list view, add note field to create dialog, show git dirty indicator.
+
+**Why this phase exists**: Notes help users remember what each shard is for. Git status indicator shows at a glance which shards have uncommitted work.
+
+**Dependencies**: Requires CLI `--note` feature (CLI Phase 1.1) to be implemented first.
+
+**Files to Modify**:
+| File | Change |
+|------|--------|
+| `crates/shards-ui/src/views/shard_list.rs` | Show note column, git dirty indicator |
+| `crates/shards-ui/src/views/create_dialog.rs` | Add note text field |
+| `crates/shards-ui/src/actions.rs` | Pass note to create_session |
+
+**What to display per shard**:
+- Existing: Branch, Agent, Status
+- New: Note (truncated, full on hover)
+- New: Git indicator (● if uncommitted changes)
+
+**Create dialog additions**:
+```
+Branch: [____________]
+Agent:  [claude ▼    ]
+Note:   [____________]  ← NEW
+        [  Create  ]
+```
+
+**Git status check**:
+```rust
+// In shard_list.rs, check for uncommitted changes
+fn has_uncommitted_changes(worktree_path: &Path) -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(worktree_path)
+        .output()
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+```
+
+**Validation**:
+```bash
+# Create shard with note via CLI
+shards create test-note --note "Working on auth feature"
+
+# Open UI
+cargo run -p shards-ui
+# See: "Working on auth..." in list
+
+# Create shard via UI with note
+# Click Create, enter note, verify it appears in list
+
+# Make changes in worktree
+echo "test" >> ~/.shards/worktrees/*/test-note/test.txt
+# See: ● indicator appears next to shard
+```
+
+**What NOT to do**:
+- Don't show full git diff in list (that's Phase 7.7 quick actions)
+- Don't block on git status check (async/cached)
+
+---
+
+### Phase 7.6: Bulk Operations
+
+**Goal**: Add "Open All Stopped" and "Stop All Running" buttons to header.
+
+**Why this phase exists**: Power users managing multiple shards need bulk operations. Enables quick "end of day" cleanup and "start of day" launch.
+
+**Dependencies**: Requires CLI `open --all` and `stop --all` (CLI Phase 2.5) to be implemented first.
+
+**Files to Modify**:
+| File | Change |
+|------|--------|
+| `crates/shards-ui/src/views/main_view.rs` | Add bulk action buttons to header |
+| `crates/shards-ui/src/actions.rs` | Add open_all_stopped(), stop_all_running() |
+| `crates/shards-ui/src/state.rs` | Track bulk operation progress/errors |
+
+**UI Layout**:
+```
+┌─────────────────────────────────────────────────────────┐
+│  Shards                    [▶ Open All] [⏹ Stop All] [+]│
+├─────────────────────────────────────────────────────────┤
+│  ● feature-auth    claude    Running     Auth work...   │
+│  ○ feature-api     kiro      Stopped     API refactor   │
+│  ● bugfix-login    claude    Running                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Button states**:
+| Button | Enabled When | Action |
+|--------|--------------|--------|
+| [▶ Open All] | Any shard is Stopped | Launch agents in all stopped shards |
+| [⏹ Stop All] | Any shard is Running | Stop all running agents |
+
+**Behavior**:
+- Buttons disabled (grayed) when no applicable shards
+- Shows count: "▶ Open All (2)" if 2 stopped
+- Progress feedback during bulk operation
+- Error summary if any fail
+
+**Validation**:
+```bash
+cargo run -p shards-ui
+
+# Create 3 shards, stop 2
+# See: [▶ Open All (2)] enabled, [⏹ Stop All (1)] enabled
+
+# Click "Open All"
+# See: 2 terminals launch, button updates to (0), disabled
+
+# Click "Stop All"
+# See: All 3 stop, button updates to (0), disabled
+```
+
+**What NOT to do**:
+- Don't add confirmation dialogs (power users)
+- Don't add "Destroy All" (too dangerous for a button)
+
+---
+
+### Phase 7.7: Quick Actions
+
+**Goal**: Per-shard action buttons for Copy Path, Open in Editor, Focus Terminal.
+
+**Why this phase exists**: Quick access to common operations without leaving the UI or using CLI.
+
+**Dependencies**:
+- `shards cd` (CLI Phase 1.2) - for copy path logic
+- `shards code` (CLI Phase 1.3) - for open in editor
+- `shards focus` (CLI Phase 2.1) - for focus terminal
+
+**Files to Modify**:
+| File | Change |
+|------|--------|
+| `crates/shards-ui/src/views/shard_list.rs` | Add action buttons per row |
+| `crates/shards-ui/src/actions.rs` | Add copy_path(), open_in_editor(), focus_terminal() |
+
+**UI Layout** (row actions on hover or always visible):
+```
+│  ● feature-auth    claude    Running    [📋] [📝] [🎯] [⏹] [🗑] │
+                                           │    │    │    │    │
+                                           │    │    │    │    └─ Destroy
+                                           │    │    │    └─ Stop
+                                           │    │    └─ Focus Terminal
+                                           │    └─ Open in Editor
+                                           └─ Copy Path
+```
+
+**Actions**:
+| Icon | Action | Behavior |
+|------|--------|----------|
+| 📋 | Copy Path | Copy worktree path to clipboard |
+| 📝 | Open in Editor | Launch $EDITOR or VS Code with worktree |
+| 🎯 | Focus Terminal | Bring shard's terminal window to front |
+
+**Implementation**:
+```rust
+fn copy_path(session: &Session, cx: &mut Context) {
+    cx.write_to_clipboard(session.worktree_path.display().to_string());
+    // Show brief "Copied!" tooltip
+}
+
+fn open_in_editor(session: &Session) {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "code".into());
+    Command::new(&editor)
+        .arg(&session.worktree_path)
+        .spawn()
+        .ok();
+}
+
+fn focus_terminal(session: &Session) {
+    if let Some(ref terminal_type) = session.terminal_type {
+        if let Some(ref window_id) = session.terminal_window_id {
+            terminal::focus_window(terminal_type, window_id);
+        }
+    }
+}
+```
+
+**Validation**:
+```bash
+cargo run -p shards-ui
+
+# Hover over a shard row
+# See: Action buttons appear
+
+# Click 📋 (Copy Path)
+# Paste somewhere - verify correct path
+
+# Click 📝 (Open in Editor)
+# VS Code opens with worktree
+
+# Click 🎯 (Focus Terminal)
+# Terminal window comes to front
+```
+
+**What NOT to do**:
+- Don't show git diff panel (future feature)
+- Don't add too many buttons (keep it clean)
 
 ---
 

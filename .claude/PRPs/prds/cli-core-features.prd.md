@@ -2,6 +2,17 @@
 
 **Status**: READY FOR IMPLEMENTATION
 **Priority**: High - Foundation for CLI and UI usability
+**Last Updated**: 2026-01-24
+
+---
+
+## Recent Changes
+
+| Date | Change |
+|------|--------|
+| 2026-01-24 | `--force` on destroy: DONE (Phase 6 lifecycle) |
+| 2026-01-24 | Renamed `shards open` (editor) → `shards code` to avoid conflict with lifecycle `open` command |
+| 2026-01-24 | `shards restart` deprecated in favor of `shards open` (lifecycle) |
 
 ---
 
@@ -9,7 +20,7 @@
 
 **This document is for building the CLI features that make Shards genuinely useful.**
 
-The current CLI has solid infrastructure (create, list, destroy, restart, status, health, cleanup) but lacks the "human workflow" features that turn it from a tool into a productivity multiplier.
+The current CLI has solid infrastructure (create, list, destroy, open, stop, status, health, cleanup) but lacks the "human workflow" features that turn it from a tool into a productivity multiplier.
 
 ### First Principles
 
@@ -20,7 +31,9 @@ The current CLI has solid infrastructure (create, list, destroy, restart, status
 
 ### What's Already Built (Don't Duplicate)
 
-- 7 commands: create, list, destroy, restart, status, cleanup, health
+- 9 commands: create, list, destroy, open, stop, restart (deprecated), status, cleanup, health
+- Shard lifecycle: open (launch agent), stop (close agent), destroy (remove shard)
+- `destroy --force` flag for bypassing git safety checks
 - Health monitoring with status classification (Working/Idle/Stuck/Crashed)
 - Watch mode (`health --watch --interval N`)
 - Process lifecycle tracking with PID validation
@@ -31,12 +44,13 @@ The current CLI has solid infrastructure (create, list, destroy, restart, status
 
 The missing pieces that make the CLI feel complete:
 - Session metadata (notes)
-- Quick navigation (cd, open, focus)
+- Quick navigation (cd, code, focus)
 - Git visibility (diff, commits)
 - Output control (--json, --quiet)
-- Safety features (--force, confirmation)
 - Bulk operations (--all)
 - Quality of life (fuzzy matching)
+
+**Note**: `--force` on destroy was implemented in GUI Phase 6 lifecycle work.
 
 ---
 
@@ -55,10 +69,10 @@ Users managing multiple shards lack visibility and navigation tools:
 
 - ideas.md Quick Wins section identifies these as "Low Effort, High Impact"
 - Session struct has no note/description field despite being in the vision
-- No `shards cd`, `shards open`, `shards focus` commands exist
+- No `shards cd`, `shards code`, `shards focus` commands exist
 - `--json` only exists for health command, not list/status
 - No `--quiet` mode to suppress logs
-- No `--force` flag for destroy
+- ~~No `--force` flag for destroy~~ ✅ Done in Phase 6
 
 ---
 
@@ -68,14 +82,16 @@ Users managing multiple shards lack visibility and navigation tools:
 
 Essential features that significantly improve daily usability.
 
-| Feature | Command/Flag | Value |
-|---------|--------------|-------|
-| Session notes | `--note` on create, shown in list | Know what each shard is doing |
-| Print worktree path | `shards cd <branch>` | Fast navigation |
-| Open in editor | `shards open <branch>` | One command to start working |
-| JSON output | `--json` on list, status | Scriptability |
-| Quiet mode | `-q` / `--quiet` globally | Clean output |
-| Force destroy | `--force` on destroy | Skip confirmation for scripts |
+| Feature | Command/Flag | Value | Status |
+|---------|--------------|-------|--------|
+| Session notes | `--note` on create, shown in list | Know what each shard is doing | TODO |
+| Print worktree path | `shards cd <branch>` | Fast navigation | TODO |
+| Open in editor | `shards code <branch>` | One command to start working | TODO |
+| JSON output | `--json` on list, status | Scriptability | TODO |
+| Quiet mode | `-q` / `--quiet` globally | Clean output | TODO |
+| Force destroy | `--force` on destroy | Skip confirmation for scripts | ✅ DONE |
+
+**Note**: `shards code` (not `open`) because `shards open` is the lifecycle command for launching agents.
 
 ### Should Have (Phase 2)
 
@@ -87,8 +103,11 @@ Important features that improve workflow significantly.
 | Git diff | `shards diff <branch>` | See changes without entering worktree |
 | Git commits | `shards commits <branch>` | See work done |
 | Bulk destroy | `shards destroy --all` | Clean slate |
-| Bulk restart | `shards restart --all` | Refresh all agents |
+| Bulk open | `shards open --all` | Launch agents in all stopped shards |
+| Bulk stop | `shards stop --all` | Stop all running agents |
 | Fuzzy matching | Partial branch names | Less typing |
+
+**Note**: `restart` is deprecated. Use `stop` then `open` for similar behavior, or `open --all` for bulk agent launch.
 
 ### Could Have (Phase 3)
 
@@ -228,19 +247,21 @@ cd "$(shards cd feature-auth)"
 
 ---
 
-#### 1.3 Open in Editor (`shards open`)
+#### 1.3 Open in Editor (`shards code`)
 
 **What**: Open shard's worktree in the user's editor.
 
+**Why `code` not `open`**: `shards open` is the lifecycle command for launching agent terminals (Phase 6). `shards code` is memorable (VS Code is the default) and unambiguous.
+
 **Usage**:
 ```bash
-shards open feature-auth           # Uses $EDITOR or defaults to 'code'
-shards open feature-auth --editor vim
+shards code feature-auth           # Uses $EDITOR or defaults to 'code'
+shards code feature-auth --editor vim
 ```
 
 **Changes Required**:
 
-1. **New command** (`src/cli/commands/open.rs`):
+1. **New command** (`src/cli/commands/code.rs`):
 ```rust
 pub fn execute(branch: &str, editor: Option<&str>) -> Result<()> {
     let session = sessions::get_by_branch(branch)?;
@@ -260,7 +281,7 @@ pub fn execute(branch: &str, editor: Option<&str>) -> Result<()> {
 2. **CLI registration**:
 ```rust
 /// Open shard's worktree in editor
-Open {
+Code {
     /// Branch name
     branch: String,
 
@@ -272,17 +293,17 @@ Open {
 
 **Validation**:
 ```bash
-shards open feature-auth
+shards code feature-auth
 # VS Code opens with worktree
 
-EDITOR=vim shards open feature-auth
+EDITOR=vim shards code feature-auth
 # Vim opens with worktree
 ```
 
 **Files to modify**:
 - `src/cli/app.rs` - Add command
 - `src/cli/commands/mod.rs` - Add module
-- `src/cli/commands/open.rs` - New file
+- `src/cli/commands/code.rs` - New file
 
 ---
 
@@ -393,58 +414,24 @@ shards -q create feature-auth 2>&1 | wc -l
 
 ---
 
-#### 1.6 Force Destroy (`--force`)
+#### 1.6 Force Destroy (`--force`) ✅ DONE
 
-**What**: Skip confirmation prompt for destroy command.
+**Status**: Implemented in GUI Phase 6 (Shard Lifecycle PR #82)
+
+**What**: Bypass git safety checks for destroy command.
 
 **Usage**:
 ```bash
 shards destroy feature-auth
-# Prompt: "Destroy shard 'feature-auth'? This removes the worktree. [y/N]"
+# Git blocks if uncommitted changes
 
 shards destroy --force feature-auth
-# No prompt, immediate destruction
-
-# For scripts:
-shards destroy --force feature-auth || echo "Failed"
+# Force destroy, bypass git checks
 ```
 
-**Changes Required**:
+**Implementation**: The `--force` flag was implemented as part of the lifecycle work. It bypasses git2's uncommitted changes check and continues even if process kill fails.
 
-1. **Destroy command** (`src/cli/commands/destroy.rs`):
-```rust
-#[arg(long, short = 'f', help = "Skip confirmation prompt")]
-force: bool,
-
-// In execute:
-if !args.force {
-    print!("Destroy shard '{}'? This removes the worktree. [y/N] ", branch);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    if !input.trim().eq_ignore_ascii_case("y") {
-        println!("Cancelled.");
-        return Ok(());
-    }
-}
-
-// Proceed with destruction
-```
-
-**Validation**:
-```bash
-echo "n" | shards destroy feature-auth
-# Cancelled.
-
-shards destroy --force feature-auth
-# Destroyed immediately
-```
-
-**Files to modify**:
-- `src/cli/app.rs` - Add flag to Destroy
-- `src/cli/commands/destroy.rs` - Add confirmation logic
+**Note**: The original PRD suggested `--force` for "skip confirmation prompt", but the implementation uses it for "bypass git safety checks" which is more valuable for scripts and agents.
 
 ---
 
@@ -657,21 +644,153 @@ shards list
 
 ---
 
-#### 2.5 Bulk Restart (`--all`)
+#### 2.5 Bulk Open/Stop (`--all`)
 
-**What**: Restart all shards.
+**What**: Open or stop all shards at once.
+
+**Why this is valuable**: Orchestrating agents often requires launching multiple shards or cleaning up after a work session. Without `--all`, users must run individual commands for each shard.
 
 **Usage**:
 ```bash
-shards restart --all
-# Restarts all active shards
+# Open agents in all stopped shards
+shards open --all
+# Launches agent terminal for each shard with status=Stopped
+
+# Open with specific agent for all
+shards open --all --agent claude
+# All shards get claude agent
+
+# Stop all running agents
+shards stop --all
+# Stops all agents, preserves worktrees
+# Status changes from Active → Stopped
 ```
 
-**Changes Required**: Similar to bulk destroy.
+**Behavior**:
+
+| Command | Targets | Action |
+|---------|---------|--------|
+| `shards open --all` | Shards with status=Stopped | Launch agent terminal |
+| `shards open --all --agent X` | Shards with status=Stopped | Launch agent X in each |
+| `shards stop --all` | Shards with status=Active | Kill process, set status=Stopped |
+
+**Output**:
+```bash
+shards open --all
+# ✅ Opened 3 shards:
+#    feature-auth (claude)
+#    feature-api (claude)
+#    bugfix-login (kiro)
+
+shards stop --all
+# ✅ Stopped 3 shards:
+#    feature-auth
+#    feature-api
+#    bugfix-login
+```
+
+**Edge cases**:
+- `open --all` with no stopped shards: "No stopped shards to open."
+- `stop --all` with no running shards: "No running shards to stop."
+- Partial failures: Continue with remaining shards, report errors at end
+
+**Changes Required**:
+
+1. **CLI arguments** (`crates/shards/src/app.rs`):
+```rust
+// For open command
+.arg(
+    Arg::new("all")
+        .long("all")
+        .help("Open agents in all stopped shards")
+        .action(ArgAction::SetTrue)
+        .conflicts_with("branch")
+)
+
+// For stop command
+.arg(
+    Arg::new("all")
+        .long("all")
+        .help("Stop all running shards")
+        .action(ArgAction::SetTrue)
+        .conflicts_with("branch")
+)
+```
+
+2. **Command handlers** (`crates/shards/src/commands.rs`):
+```rust
+fn handle_open_command(matches: &ArgMatches) -> Result<()> {
+    if matches.get_flag("all") {
+        return handle_open_all(matches.get_one::<String>("agent").cloned());
+    }
+    // ... existing single-branch logic
+}
+
+fn handle_open_all(agent_override: Option<String>) -> Result<()> {
+    let sessions = session_handler::list_sessions()?;
+    let stopped: Vec<_> = sessions.iter()
+        .filter(|s| s.status == SessionStatus::Stopped)
+        .collect();
+
+    if stopped.is_empty() {
+        println!("No stopped shards to open.");
+        return Ok(());
+    }
+
+    let mut opened = Vec::new();
+    let mut errors = Vec::new();
+
+    for session in stopped {
+        match session_handler::open_session(&session.branch, agent_override.clone()) {
+            Ok(s) => opened.push((s.branch.clone(), s.agent.clone())),
+            Err(e) => errors.push((session.branch.clone(), e.to_string())),
+        }
+    }
+
+    println!("✅ Opened {} shards:", opened.len());
+    for (branch, agent) in &opened {
+        println!("   {} ({})", branch, agent);
+    }
+
+    if !errors.is_empty() {
+        eprintln!("❌ Failed to open {} shards:", errors.len());
+        for (branch, err) in &errors {
+            eprintln!("   {}: {}", branch, err);
+        }
+    }
+
+    Ok(())
+}
+```
+
+**Validation**:
+```bash
+# Setup
+shards create test1
+shards create test2
+shards create test3
+shards stop test1
+shards stop test2
+# test1, test2 = Stopped; test3 = Active
+
+# Test open --all
+shards open --all
+# Opens test1 and test2, not test3
+
+# Test stop --all
+shards stop --all
+# Stops all 3
+
+# Test edge case
+shards stop --all
+# "No running shards to stop."
+```
+
+**Note**: `restart` is deprecated. Use `stop --all` then `open --all` for similar behavior.
 
 **Files to modify**:
-- `src/cli/app.rs` - Add --all flag to Restart
-- `src/cli/commands/restart.rs` - Handle --all
+- `crates/shards/src/app.rs` - Add --all flag to Open and Stop
+- `crates/shards/src/commands.rs` - Add handle_open_all, handle_stop_all
 
 ---
 
@@ -773,8 +892,8 @@ shards status test | grep "Testing notes feature"
 path=$(shards cd test)
 [ -d "$path" ] && echo "CD works"
 
-# 1.3 Open
-shards open test  # VS Code opens
+# 1.3 Code (editor)
+shards code test  # VS Code opens
 
 # 1.4 JSON
 shards list --json | jq '.[0].branch'
@@ -784,7 +903,7 @@ shards status test --json | jq '.note'
 lines=$(shards -q create test2 2>&1 | wc -l)
 [ "$lines" -lt 5 ] && echo "Quiet works"
 
-# 1.6 Force
+# 1.6 Force - ALREADY DONE
 shards destroy --force test
 shards destroy --force test2
 ```
@@ -806,9 +925,10 @@ shards diff test1 | grep "change"
 # 2.3 Commits
 shards commits test1
 
-# 2.4/2.5 Bulk
-shards restart --all
-shards destroy --all --force
+# 2.4/2.5 Bulk operations
+shards stop --all      # Stop all agents
+shards open --all      # Relaunch all agents
+shards destroy --all --force  # Clean slate
 
 # 2.6 Fuzzy
 shards create feature-auth
@@ -821,28 +941,27 @@ shards status auth  # Should work
 
 ### Phase 1 Files
 
-| File | Change |
-|------|--------|
-| `src/sessions/types.rs` | Add `note: Option<String>` |
-| `src/cli/app.rs` | Add commands and flags |
-| `src/cli/commands/cd.rs` | New file |
-| `src/cli/commands/open.rs` | New file |
-| `src/cli/commands/create.rs` | Pass note |
-| `src/cli/commands/destroy.rs` | Add --force, confirmation |
-| `src/cli/commands/list.rs` | Add --json |
-| `src/cli/commands/status.rs` | Add --json |
-| `src/cli/table.rs` | Add Note column |
-| `src/main.rs` | Handle --quiet |
+| File | Change | Status |
+|------|--------|--------|
+| `crates/shards-core/src/sessions/types.rs` | Add `note: Option<String>` | TODO |
+| `crates/shards/src/app.rs` | Add commands and flags | TODO |
+| `crates/shards/src/commands.rs` | Add cd, code commands | TODO |
+| `crates/shards/src/commands.rs` | Add --json to list/status | TODO |
+| `crates/shards/src/main.rs` | Handle --quiet | TODO |
+| `crates/shards/src/commands.rs` | --force on destroy | ✅ DONE |
+
+**Note**: File paths updated to reflect workspace structure (`crates/shards/`, `crates/shards-core/`).
 
 ### Phase 2 Files
 
 | File | Change |
 |------|--------|
-| `src/cli/commands/focus.rs` | New file |
-| `src/cli/commands/diff.rs` | New file |
-| `src/cli/commands/commits.rs` | New file |
-| `src/terminal/operations.rs` | Add focus_window |
-| `src/sessions/mod.rs` | Add fuzzy lookup |
+| `crates/shards/src/commands.rs` | Add focus, diff, commits commands |
+| `crates/shards-core/src/terminal/operations.rs` | Add focus_window |
+| `crates/shards-core/src/sessions/operations.rs` | Add fuzzy lookup |
+| `crates/shards/src/commands.rs` | Add --all to open, stop, destroy |
+
+**Note**: File paths updated to reflect workspace structure.
 
 ---
 
@@ -864,9 +983,12 @@ No new crates needed. Uses existing:
 | Fuzzy matching | Contains match | Simple, predictable |
 | No tags (yet) | Notes are enough | YAGNI |
 | No templates (yet) | Tier 3, needs design | Keep scope focused |
+| `shards code` not `open` | `open` is lifecycle command | Avoid conflict with Phase 6 |
+| Bulk `open/stop` not `restart` | `restart` deprecated | Cleaner lifecycle semantics |
 
 ---
 
 *Status: READY FOR IMPLEMENTATION*
 *Priority: Phase 1 first, each feature is a small PR*
 *Created: 2026-01-22*
+*Updated: 2026-01-24 - Resolved conflicts with GUI Phase 6 lifecycle*
