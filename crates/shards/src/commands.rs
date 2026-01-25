@@ -60,6 +60,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("restart", sub_matches)) => handle_restart_command(sub_matches),
         Some(("open", sub_matches)) => handle_open_command(sub_matches),
         Some(("stop", sub_matches)) => handle_stop_command(sub_matches),
+        Some(("code", sub_matches)) => handle_code_command(sub_matches),
         Some(("status", sub_matches)) => handle_status_command(sub_matches),
         Some(("cleanup", sub_matches)) => handle_cleanup_command(sub_matches),
         Some(("health", sub_matches)) => handle_health_command(sub_matches),
@@ -338,6 +339,73 @@ fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             eprintln!("❌ Failed to stop shard '{}': {}", branch, e);
             error!(event = "cli.stop_failed", branch = branch, error = %e);
             events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
+fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or("Branch argument is required")?;
+    let editor_override = matches.get_one::<String>("editor").cloned();
+
+    info!(
+        event = "cli.code_started",
+        branch = branch,
+        editor_override = ?editor_override
+    );
+
+    // 1. Look up the session to get worktree path
+    let session = match session_handler::get_session(branch) {
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("Failed to find shard '{}': {}", branch, e);
+            error!(event = "cli.code_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
+            return Err(e.into());
+        }
+    };
+
+    // 2. Determine editor: CLI flag > $EDITOR > "zed"
+    let editor = editor_override
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "zed".to_string());
+
+    info!(
+        event = "cli.code_editor_selected",
+        branch = branch,
+        editor = editor
+    );
+
+    // 3. Spawn editor with worktree path
+    match std::process::Command::new(&editor)
+        .arg(&session.worktree_path)
+        .spawn()
+    {
+        Ok(_) => {
+            println!("Opening '{}' in {}", branch, editor);
+            println!("   Path: {}", session.worktree_path.display());
+            info!(
+                event = "cli.code_completed",
+                branch = branch,
+                editor = editor,
+                worktree_path = %session.worktree_path.display()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to open editor '{}': {}", editor, e);
+            eprintln!(
+                "   Hint: Make sure '{}' is installed and in your PATH",
+                editor
+            );
+            error!(
+                event = "cli.code_failed",
+                branch = branch,
+                editor = editor,
+                error = %e
+            );
             Err(e.into())
         }
     }

@@ -86,9 +86,9 @@ Essential features that significantly improve daily usability.
 
 | Feature             | Command/Flag                      | Value                         | Status  |
 | ------------------- | --------------------------------- | ----------------------------- | ------- |
-| Session notes       | `--note` on create, shown in list | Know what each shard is doing | TODO    |
+| Session notes       | `--note` on create, shown in list | Know what each shard is doing | ✅ DONE |
 | Print worktree path | `shards cd <branch>`              | Fast navigation               | ✅ DONE |
-| Open in editor      | `shards code <branch>`            | One command to start working  | TODO    |
+| Open in editor      | `shards code <branch>`            | One command to start working  | ✅ DONE |
 | JSON output         | `--json` on list, status          | Scriptability                 | ✅ DONE |
 | Quiet mode          | `-q` / `--quiet` globally         | Clean output                  | ✅ DONE |
 | Force destroy       | `--force` on destroy              | Skip confirmation for scripts | ✅ DONE |

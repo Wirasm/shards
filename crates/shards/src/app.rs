@@ -121,6 +121,22 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("code")
+                .about("Open shard's worktree in your code editor")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of the shard to open")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("editor")
+                        .long("editor")
+                        .short('e')
+                        .help("Editor to use (defaults to $EDITOR or 'zed')")
+                )
+        )
+        .subcommand(
             Command::new("restart")
                 .about("Restart agent in existing shard without destroying worktree")
                 .arg(
@@ -552,5 +568,35 @@ mod tests {
         let app = build_cli();
         let matches = app.try_get_matches_from(vec!["shards", "cd"]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_code_command() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "code", "test-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let code_matches = matches.subcommand_matches("code").unwrap();
+        assert_eq!(
+            code_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_code_command_with_editor() {
+        let app = build_cli();
+        let matches =
+            app.try_get_matches_from(vec!["shards", "code", "test-branch", "--editor", "vim"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let code_matches = matches.subcommand_matches("code").unwrap();
+        assert_eq!(
+            code_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+        assert_eq!(code_matches.get_one::<String>("editor").unwrap(), "vim");
     }
 }
