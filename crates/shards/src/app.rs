@@ -5,6 +5,14 @@ pub fn build_cli() -> Command {
         .version(env!("CARGO_PKG_VERSION"))
         .about("Manage parallel AI development agents in isolated Git worktrees")
         .long_about("Shards creates isolated git worktrees and launches AI coding agents in dedicated terminal windows. Each 'shard' is a disposable work context where an AI agent can operate autonomously without disrupting your main working directory.")
+        .arg(
+            Arg::new("quiet")
+                .short('q')
+                .long("quiet")
+                .help("Suppress log output, show only essential information")
+                .action(ArgAction::SetTrue)
+                .global(true),
+        )
         .subcommand_required(true)
         .arg_required_else_help(true)
         .subcommand(
@@ -371,5 +379,109 @@ mod tests {
         let create_matches = matches.subcommand_matches("create").unwrap();
         // Note should be None when not specified
         assert!(create_matches.get_one::<String>("note").is_none());
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_short() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "-q", "list"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_long() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "--quiet", "list"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_with_subcommand_args() {
+        let app = build_cli();
+        // Quiet flag should work regardless of position (before subcommand)
+        let matches = app.try_get_matches_from(vec!["shards", "-q", "create", "test-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_default_false() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "list"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(!matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand() {
+        let app = build_cli();
+        // Global flag should work after subcommand too
+        let matches = app.try_get_matches_from(vec!["shards", "list", "-q"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand_long() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "list", "--quiet"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand_args() {
+        let app = build_cli();
+        // Test: shards create test-branch --quiet
+        let matches = app.try_get_matches_from(vec!["shards", "create", "test-branch", "--quiet"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_with_destroy_force() {
+        let app = build_cli();
+        // Test quiet flag combined with other flags
+        let matches =
+            app.try_get_matches_from(vec!["shards", "-q", "destroy", "test-branch", "--force"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+
+        let destroy_matches = matches.subcommand_matches("destroy").unwrap();
+        assert!(destroy_matches.get_flag("force"));
+        assert_eq!(
+            destroy_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
     }
 }

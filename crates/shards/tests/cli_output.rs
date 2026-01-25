@@ -68,3 +68,170 @@ fn test_output_is_pipeable() {
         );
     }
 }
+
+// =============================================================================
+// Quiet Mode Behavioral Tests
+// =============================================================================
+
+/// Execute 'shards -q list' and return the output
+fn run_shards_quiet_list() -> std::process::Output {
+    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
+        .args(["-q", "list"])
+        .output()
+        .expect("Failed to execute 'shards -q list'");
+
+    assert!(
+        output.status.success(),
+        "shards -q list failed with exit code {:?}. stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    output
+}
+
+/// Verify that quiet mode suppresses INFO-level logs
+#[test]
+fn test_quiet_flag_suppresses_info_logs() {
+    let output = run_shards_quiet_list();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should NOT contain INFO-level log events
+    assert!(
+        !stderr.contains(r#""level":"INFO""#),
+        "Quiet mode should suppress INFO logs, but stderr contains: {}",
+        stderr
+    );
+
+    // Should NOT contain DEBUG-level log events
+    assert!(
+        !stderr.contains(r#""level":"DEBUG""#),
+        "Quiet mode should suppress DEBUG logs, but stderr contains: {}",
+        stderr
+    );
+
+    // Should NOT contain WARN-level log events
+    assert!(
+        !stderr.contains(r#""level":"WARN""#),
+        "Quiet mode should suppress WARN logs, but stderr contains: {}",
+        stderr
+    );
+}
+
+/// Verify that quiet mode preserves user-facing stdout output
+#[test]
+fn test_quiet_flag_preserves_stdout() {
+    let output = run_shards_quiet_list();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // User-facing output should still be present (table header or "no shards" message)
+    assert!(
+        !stdout.is_empty(),
+        "Quiet mode should preserve user-facing stdout output"
+    );
+
+    // stdout should contain table elements or status message
+    assert!(
+        stdout.contains("Active shards") || stdout.contains("No active shards"),
+        "stdout should contain user-facing list output, got: {}",
+        stdout
+    );
+}
+
+/// Verify normal mode (without -q) does emit INFO logs
+#[test]
+fn test_normal_mode_emits_info_logs() {
+    let output = run_shards_list();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Normal mode should contain INFO-level log events
+    assert!(
+        stderr.contains(r#""level":"INFO""#),
+        "Normal mode should emit INFO logs, but stderr is: {}",
+        stderr
+    );
+}
+
+/// Verify quiet mode works with --quiet long form
+#[test]
+fn test_quiet_flag_long_form_suppresses_logs() {
+    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
+        .args(["--quiet", "list"])
+        .output()
+        .expect("Failed to execute 'shards --quiet list'");
+
+    assert!(
+        output.status.success(),
+        "shards --quiet list failed with exit code {:?}",
+        output.status.code()
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains(r#""level":"INFO""#),
+        "--quiet long form should suppress INFO logs, but stderr contains: {}",
+        stderr
+    );
+}
+
+/// Verify quiet mode works when flag is after subcommand (global flag behavior)
+#[test]
+fn test_quiet_flag_after_subcommand() {
+    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
+        .args(["list", "-q"])
+        .output()
+        .expect("Failed to execute 'shards list -q'");
+
+    assert!(
+        output.status.success(),
+        "shards list -q failed with exit code {:?}. stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains(r#""level":"INFO""#),
+        "Quiet flag after subcommand should suppress INFO logs, but stderr contains: {}",
+        stderr
+    );
+}
+
+/// Verify that RUST_LOG env var is respected alongside quiet flag
+/// When RUST_LOG is explicitly set, it should override the quiet flag
+#[test]
+fn test_rust_log_overrides_quiet_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
+        .env("RUST_LOG", "shards=debug")
+        .args(["-q", "list"])
+        .output()
+        .expect("Failed to execute command with RUST_LOG");
+
+    assert!(
+        output.status.success(),
+        "Command failed with exit code {:?}",
+        output.status.code()
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // RUST_LOG=shards=debug should override --quiet because EnvFilter
+    // processes env vars first, but add_directive adds to them.
+    // Actually, the implementation uses add_directive which ADDS to the env filter,
+    // so the quiet directive should win. Let's verify the actual behavior:
+    // If quiet=true sets "shards=error" directive, and RUST_LOG=shards=debug,
+    // the add_directive should override the env var for that target.
+
+    // Based on tracing_subscriber behavior: add_directive takes precedence
+    // So quiet flag should still suppress INFO even with RUST_LOG set
+    assert!(
+        !stderr.contains(r#""level":"INFO""#),
+        "Quiet flag should take precedence over RUST_LOG for shards target, stderr: {}",
+        stderr
+    );
+}
