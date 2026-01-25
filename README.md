@@ -52,6 +52,9 @@ shards create <branch> --agent <agent>
 shards create kiro-session --agent kiro
 shards create claude-work --agent claude
 shards create gemini-task --agent gemini
+
+# Add a description with --note
+shards create feature-auth --agent claude --note "Implementing JWT authentication"
 ```
 
 ### List active shards
