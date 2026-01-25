@@ -90,7 +90,7 @@ Essential features that significantly improve daily usability.
 | Print worktree path | `shards cd <branch>`              | Fast navigation               | TODO    |
 | Open in editor      | `shards code <branch>`            | One command to start working  | TODO    |
 | JSON output         | `--json` on list, status          | Scriptability                 | TODO    |
-| Quiet mode          | `-q` / `--quiet` globally         | Clean output                  | TODO    |
+| Quiet mode          | `-q` / `--quiet` globally         | Clean output                  | ✅ DONE |
 | Force destroy       | `--force` on destroy              | Skip confirmation for scripts | ✅ DONE |
 
 **Note**: `shards code` (not `open`) because `shards open` is the lifecycle command for launching agents.

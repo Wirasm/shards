@@ -1,6 +1,12 @@
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-pub fn init_logging() {
+/// Initialize logging with optional quiet mode.
+///
+/// When `quiet` is true, only error-level events are emitted.
+/// When `quiet` is false, info-level and above events are emitted (default).
+pub fn init_logging(quiet: bool) {
+    let directive = if quiet { "shards=error" } else { "shards=info" };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -11,19 +17,17 @@ pub fn init_logging() {
         )
         .with(
             EnvFilter::from_default_env()
-                .add_directive("shards=info".parse().expect("Invalid log directive")),
+                .add_directive(directive.parse().expect("Invalid log directive")),
         )
         .init();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_init_logging() {
         // Test that init_logging doesn't panic
-        // Note: Can only call once per test process
-        // init_logging();
+        // Note: Can only call once per test process, so we can't actually test it here.
+        // The function is tested via the CLI integration tests.
     }
 }
