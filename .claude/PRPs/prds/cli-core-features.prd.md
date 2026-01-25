@@ -89,7 +89,7 @@ Essential features that significantly improve daily usability.
 | Session notes       | `--note` on create, shown in list | Know what each shard is doing | TODO    |
 | Print worktree path | `shards cd <branch>`              | Fast navigation               | TODO    |
 | Open in editor      | `shards code <branch>`            | One command to start working  | TODO    |
-| JSON output         | `--json` on list, status          | Scriptability                 | TODO    |
+| JSON output         | `--json` on list, status          | Scriptability                 | ✅ DONE |
 | Quiet mode          | `-q` / `--quiet` globally         | Clean output                  | ✅ DONE |
 | Force destroy       | `--force` on destroy              | Skip confirmation for scripts | ✅ DONE |
 
@@ -1003,7 +1003,7 @@ shards status auth  # Should work
 | `crates/shards-core/src/sessions/types.rs` | Add `note: Option<String>` | TODO    |
 | `crates/shards/src/app.rs`                 | Add commands and flags     | TODO    |
 | `crates/shards/src/commands.rs`            | Add cd, code commands      | TODO    |
-| `crates/shards/src/commands.rs`            | Add --json to list/status  | TODO    |
+| `crates/shards/src/commands.rs`            | Add --json to list/status  | DONE    |
 | `crates/shards/src/main.rs`                | Handle --quiet             | TODO    |
 | `crates/shards/src/commands.rs`            | --force on destroy         | ✅ DONE |
 

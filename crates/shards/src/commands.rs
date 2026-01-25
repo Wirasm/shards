@@ -54,7 +54,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
 
     match matches.subcommand() {
         Some(("create", sub_matches)) => handle_create_command(sub_matches),
-        Some(("list", _)) => handle_list_command(),
+        Some(("list", sub_matches)) => handle_list_command(sub_matches),
         Some(("destroy", sub_matches)) => handle_destroy_command(sub_matches),
         Some(("restart", sub_matches)) => handle_restart_command(sub_matches),
         Some(("open", sub_matches)) => handle_open_command(sub_matches),
@@ -136,12 +136,16 @@ fn handle_create_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 }
 
-fn handle_list_command() -> Result<(), Box<dyn std::error::Error>> {
-    info!(event = "cli.list_started");
+fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let json_output = matches.get_flag("json");
+
+    info!(event = "cli.list_started", json_output = json_output);
 
     match session_handler::list_sessions() {
         Ok(sessions) => {
-            if sessions.is_empty() {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&sessions)?);
+            } else if sessions.is_empty() {
                 println!("No active shards found.");
             } else {
                 println!("Active shards:");
@@ -299,52 +303,64 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     let branch = matches
         .get_one::<String>("branch")
         .ok_or("Branch argument is required")?;
+    let json_output = matches.get_flag("json");
 
-    info!(event = "cli.status_started", branch = branch);
+    info!(
+        event = "cli.status_started",
+        branch = branch,
+        json_output = json_output
+    );
 
     match session_handler::get_session(branch) {
         Ok(session) => {
-            println!("📊 Shard Status: {}", branch);
-            println!("┌─────────────────────────────────────────────────────────────┐");
-            println!("│ Branch:      {:<47} │", session.branch);
-            println!("│ Agent:       {:<47} │", session.agent);
-            println!(
-                "│ Status:      {:<47} │",
-                format!("{:?}", session.status).to_lowercase()
-            );
-            println!("│ Created:     {:<47} │", session.created_at);
-            if let Some(ref note) = session.note {
-                println!("│ Note:        {} │", truncate(note, 47));
-            }
-            println!("│ Worktree:    {:<47} │", session.worktree_path.display());
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&session)?);
+            } else {
+                println!("📊 Shard Status: {}", branch);
+                println!("┌─────────────────────────────────────────────────────────────┐");
+                println!("│ Branch:      {:<47} │", session.branch);
+                println!("│ Agent:       {:<47} │", session.agent);
+                println!(
+                    "│ Status:      {:<47} │",
+                    format!("{:?}", session.status).to_lowercase()
+                );
+                println!("│ Created:     {:<47} │", session.created_at);
+                if let Some(ref note) = session.note {
+                    println!("│ Note:        {} │", truncate(note, 47));
+                }
+                println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
-            // Check process status if PID is available
-            if let Some(pid) = session.process_id {
-                match process::is_process_running(pid) {
-                    Ok(true) => {
-                        println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+                // Check process status if PID is available
+                if let Some(pid) = session.process_id {
+                    match process::is_process_running(pid) {
+                        Ok(true) => {
+                            println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
 
-                        // Try to get process info
-                        if let Ok(info) = process::get_process_info(pid) {
-                            println!("│ Process Name: {:<46} │", info.name);
-                            println!("│ Process Status: {:<44} │", format!("{:?}", info.status));
+                            // Try to get process info
+                            if let Ok(info) = process::get_process_info(pid) {
+                                println!("│ Process Name: {:<46} │", info.name);
+                                println!(
+                                    "│ Process Status: {:<44} │",
+                                    format!("{:?}", info.status)
+                                );
+                            }
+                        }
+                        Ok(false) => {
+                            println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
+                        }
+                        Err(e) => {
+                            println!(
+                                "│ Process:     {:<47} │",
+                                format!("Error checking PID {}: {}", pid, e)
+                            );
                         }
                     }
-                    Ok(false) => {
-                        println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
-                    }
-                    Err(e) => {
-                        println!(
-                            "│ Process:     {:<47} │",
-                            format!("Error checking PID {}: {}", pid, e)
-                        );
-                    }
+                } else {
+                    println!("│ Process:     {:<47} │", "No PID tracked");
                 }
-            } else {
-                println!("│ Process:     {:<47} │", "No PID tracked");
-            }
 
-            println!("└─────────────────────────────────────────────────────────────┘");
+                println!("└─────────────────────────────────────────────────────────────┘");
+            }
 
             info!(
                 event = "cli.status_completed",
