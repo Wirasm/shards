@@ -427,4 +427,61 @@ mod tests {
         let matches = matches.unwrap();
         assert!(!matches.get_flag("quiet"));
     }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand() {
+        let app = build_cli();
+        // Global flag should work after subcommand too
+        let matches = app.try_get_matches_from(vec!["shards", "list", "-q"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand_long() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "list", "--quiet"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_after_subcommand_args() {
+        let app = build_cli();
+        // Test: shards create test-branch --quiet
+        let matches = app.try_get_matches_from(vec!["shards", "create", "test-branch", "--quiet"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+
+        let create_matches = matches.subcommand_matches("create").unwrap();
+        assert_eq!(
+            create_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_quiet_flag_with_destroy_force() {
+        let app = build_cli();
+        // Test quiet flag combined with other flags
+        let matches =
+            app.try_get_matches_from(vec!["shards", "-q", "destroy", "test-branch", "--force"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        assert!(matches.get_flag("quiet"));
+
+        let destroy_matches = matches.subcommand_matches("destroy").unwrap();
+        assert!(destroy_matches.get_flag("force"));
+        assert_eq!(
+            destroy_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
 }
