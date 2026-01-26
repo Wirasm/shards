@@ -7,6 +7,7 @@ use gpui::{
     Context, FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, Render, Task, Window,
     div, prelude::*, rgb,
 };
+use tracing::{debug, warn};
 
 use std::path::PathBuf;
 
@@ -19,8 +20,9 @@ use crate::views::{
 /// Normalize user-entered path for project addition.
 ///
 /// Handles:
-/// - Tilde expansion (~/ -> home directory)
-/// - Missing leading slash (users/... -> /users/...)
+/// - Whitespace trimming (leading/trailing spaces removed)
+/// - Tilde expansion (~/ -> home directory, or ~ alone)
+/// - Missing leading slash (users/... -> /users/... if valid directory)
 fn normalize_project_path(path_str: &str) -> PathBuf {
     let path_str = path_str.trim();
 
@@ -29,12 +31,25 @@ fn normalize_project_path(path_str: &str) -> PathBuf {
         if let Some(home) = dirs::home_dir() {
             return home.join(rest);
         }
-    } else if path_str == "~" && let Some(home) = dirs::home_dir() {
-        return home;
+        warn!(
+            event = "ui.normalize_path.home_dir_unavailable",
+            path = path_str,
+            "dirs::home_dir() returned None - HOME environment variable may be unset"
+        );
+    } else if path_str == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+        warn!(
+            event = "ui.normalize_path.home_dir_unavailable",
+            path = path_str,
+            "dirs::home_dir() returned None for bare tilde"
+        );
     }
 
     // Handle missing leading slash - if path looks like an absolute path without the /
-    // e.g., "users/rasmus/..." should become "/users/rasmus/..."
+    // Only applies if adding "/" produces a valid directory on disk.
+    // e.g., "users/rasmus/project" -> "/users/rasmus/project" (if that directory exists)
     if !path_str.starts_with('/') && !path_str.starts_with('~') {
         // Check if adding / would make it a valid directory
         let with_slash = format!("/{}", path_str);
@@ -44,6 +59,11 @@ fn normalize_project_path(path_str: &str) -> PathBuf {
         }
     }
 
+    debug!(
+        event = "ui.normalize_path.passthrough",
+        path = path_str,
+        "No normalization applied, returning path as-is"
+    );
     PathBuf::from(path_str)
 }
 
@@ -903,14 +923,49 @@ mod tests {
     #[test]
     fn test_normalize_path_tilde_expansion() {
         let result = normalize_project_path("~/projects/test");
-        // Should expand to home directory
-        assert!(result.to_string_lossy().contains("projects/test"));
-        assert!(!result.to_string_lossy().starts_with("~"));
+        let expected_home = dirs::home_dir().expect("test requires home dir");
+        assert_eq!(result, expected_home.join("projects/test"));
+    }
+
+    #[test]
+    fn test_normalize_path_bare_tilde() {
+        let result = normalize_project_path("~");
+        let expected_home = dirs::home_dir().expect("test requires home dir");
+        assert_eq!(result, expected_home);
     }
 
     #[test]
     fn test_normalize_path_trims_whitespace() {
         let result = normalize_project_path("  /Users/test/project  ");
         assert_eq!(result, PathBuf::from("/Users/test/project"));
+    }
+
+    #[test]
+    fn test_normalize_path_without_leading_slash_fallback() {
+        // Non-existent path should remain unchanged
+        let result = normalize_project_path("nonexistent/path/here");
+        assert_eq!(result, PathBuf::from("nonexistent/path/here"));
+    }
+
+    #[test]
+    fn test_normalize_path_empty_string() {
+        // Empty input normalizes to "/" since root is a valid directory
+        // Caller validates for empty before calling this function
+        let result = normalize_project_path("");
+        assert_eq!(result, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn test_normalize_path_whitespace_only() {
+        // Whitespace-only trims to empty, which normalizes to "/"
+        // Caller validates for empty before calling this function
+        let result = normalize_project_path("   ");
+        assert_eq!(result, PathBuf::from("/"));
+    }
+
+    #[test]
+    fn test_normalize_path_tilde_in_middle_not_expanded() {
+        let result = normalize_project_path("/Users/test/~project");
+        assert_eq!(result, PathBuf::from("/Users/test/~project"));
     }
 }
