@@ -23,6 +23,7 @@ use crate::views::{
 /// - Whitespace trimming (leading/trailing spaces removed)
 /// - Tilde expansion (~/ -> home directory, or ~ alone)
 /// - Missing leading slash (users/... -> /users/... if valid directory)
+/// - Path canonicalization (resolves symlinks, normalizes case on macOS)
 ///
 /// # Errors
 ///
@@ -44,10 +45,10 @@ fn normalize_project_path(path_str: &str) -> Result<PathBuf, String> {
         };
 
         if let Some(rest) = path_str.strip_prefix("~/") {
-            return Ok(home.join(rest));
+            return canonicalize_path(home.join(rest));
         }
         if path_str == "~" {
-            return Ok(home);
+            return canonicalize_path(home);
         }
         // Tilde in middle like "~project" - no expansion, fall through
     }
@@ -64,7 +65,7 @@ fn normalize_project_path(path_str: &str) -> Result<PathBuf, String> {
                     original = path_str,
                     normalized = %with_slash.display()
                 );
-                return Ok(with_slash);
+                return canonicalize_path(with_slash);
             }
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 warn!(
@@ -80,7 +81,36 @@ fn normalize_project_path(path_str: &str) -> Result<PathBuf, String> {
         }
     }
 
-    Ok(PathBuf::from(path_str))
+    canonicalize_path(PathBuf::from(path_str))
+}
+
+/// Canonicalize a path to ensure consistent hashing across UI and core.
+///
+/// This resolves symlinks and normalizes case on case-insensitive filesystems (macOS).
+/// If canonicalization fails (path doesn't exist), returns the original path
+/// to allow validation to provide a better error message.
+fn canonicalize_path(path: PathBuf) -> Result<PathBuf, String> {
+    match path.canonicalize() {
+        Ok(canonical) => {
+            if canonical != path {
+                debug!(
+                    event = "ui.normalize_path.canonicalized",
+                    original = %path.display(),
+                    canonical = %canonical.display()
+                );
+            }
+            Ok(canonical)
+        }
+        Err(e) => {
+            // Path doesn't exist or can't be accessed - return original for better error
+            debug!(
+                event = "ui.normalize_path.canonicalize_failed",
+                path = %path.display(),
+                error = %e
+            );
+            Ok(path)
+        }
+    }
 }
 
 /// Main application view that composes the shard list, header, and create dialog.
@@ -966,27 +996,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_path_with_leading_slash() {
+    fn test_normalize_path_with_leading_slash_nonexistent() {
+        // Non-existent paths are returned as-is (canonicalize fails, falls back)
         let result = normalize_project_path("/Users/test/project").unwrap();
         assert_eq!(result, PathBuf::from("/Users/test/project"));
     }
 
     #[test]
     fn test_normalize_path_tilde_expansion() {
+        // Tilde expands to home directory, then canonicalized if exists
         let result = normalize_project_path("~/projects/test").unwrap();
         let expected_home = dirs::home_dir().expect("test requires home dir");
+        // Path doesn't exist, so canonicalize fails and we get the expanded path
         assert_eq!(result, expected_home.join("projects/test"));
     }
 
     #[test]
     fn test_normalize_path_bare_tilde() {
+        // Bare tilde expands to home directory and gets canonicalized (home exists)
         let result = normalize_project_path("~").unwrap();
-        let expected_home = dirs::home_dir().expect("test requires home dir");
+        let expected_home = dirs::home_dir()
+            .expect("test requires home dir")
+            .canonicalize()
+            .expect("home should be canonicalizable");
         assert_eq!(result, expected_home);
     }
 
     #[test]
     fn test_normalize_path_trims_whitespace() {
+        // Non-existent path with whitespace: trimmed but not canonicalized
         let result = normalize_project_path("  /Users/test/project  ").unwrap();
         assert_eq!(result, PathBuf::from("/Users/test/project"));
     }
@@ -1016,7 +1054,62 @@ mod tests {
 
     #[test]
     fn test_normalize_path_tilde_in_middle_not_expanded() {
+        // Non-existent path with tilde in middle: not expanded, not canonicalized
         let result = normalize_project_path("/Users/test/~project").unwrap();
         assert_eq!(result, PathBuf::from("/Users/test/~project"));
+    }
+
+    #[test]
+    fn test_normalize_path_canonicalizes_existing_path() {
+        // An existing path should be canonicalized
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path();
+
+        let result = normalize_project_path(path.to_str().unwrap()).unwrap();
+
+        // Should be canonicalized (resolves symlinks, normalizes case)
+        let expected = path.canonicalize().unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_normalize_path_lowercase_canonicalized() {
+        // On macOS, lowercase paths are accessible but canonicalize to correct case
+        // This test verifies the canonicalization behavior
+        if let Some(home) = dirs::home_dir() {
+            // Use the home directory as a test - it definitely exists
+            let lowercase_path = home.to_str().unwrap().to_lowercase();
+            let result = normalize_project_path(&lowercase_path).unwrap();
+
+            // The result should be canonicalized to the correct case
+            // (On macOS, this means proper capitalization)
+            assert!(result.exists(), "Canonicalized path should exist");
+
+            // The canonical path should match home's canonical form
+            let expected = home.canonicalize().unwrap();
+            assert_eq!(result, expected);
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_path_existing() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_path_buf();
+
+        let result = canonicalize_path(path.clone()).unwrap();
+        let expected = path.canonicalize().unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_canonicalize_path_nonexistent_returns_original() {
+        let path = PathBuf::from("/nonexistent/path/that/does/not/exist");
+        let result = canonicalize_path(path.clone()).unwrap();
+        // Should return the original path since it doesn't exist
+        assert_eq!(result, path);
     }
 }

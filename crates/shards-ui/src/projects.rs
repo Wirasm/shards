@@ -140,6 +140,52 @@ pub fn save_projects(data: &ProjectsData) -> Result<(), String> {
     Ok(())
 }
 
+/// Migrate projects to use canonical paths.
+///
+/// This fixes the path case mismatch issue on case-insensitive filesystems (macOS).
+/// When a user types a path like `/users/rasmus/project` but the actual filesystem
+/// path is `/Users/rasmus/project`, the hash values differ causing filtering issues.
+///
+/// Called on app startup to ensure existing projects are canonicalized.
+pub fn migrate_projects_to_canonical() -> Result<(), String> {
+    let mut data = load_projects();
+    let mut changed = false;
+
+    for project in &mut data.projects {
+        if let Ok(canonical) = project.path.canonicalize()
+            && canonical != project.path
+        {
+            tracing::info!(
+                event = "ui.projects.path_migrated",
+                original = %project.path.display(),
+                canonical = %canonical.display()
+            );
+            project.path = canonical;
+            changed = true;
+        }
+    }
+
+    // Also canonicalize active project path
+    if let Some(ref active) = data.active
+        && let Ok(canonical) = active.canonicalize()
+        && &canonical != active
+    {
+        tracing::info!(
+            event = "ui.projects.active_path_migrated",
+            original = %active.display(),
+            canonical = %canonical.display()
+        );
+        data.active = Some(canonical);
+        changed = true;
+    }
+
+    if changed {
+        save_projects(&data)?;
+    }
+
+    Ok(())
+}
+
 fn projects_file_path() -> PathBuf {
     match dirs::home_dir() {
         Some(home) => home.join(".shards").join("projects.json"),
@@ -368,5 +414,46 @@ mod tests {
 
         assert_eq!(project1, project2);
         assert_ne!(project1, project3);
+    }
+
+    #[test]
+    fn test_path_canonicalization_consistency() {
+        // Verify that canonicalization produces consistent results
+        // This is the core of the filtering fix
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path();
+
+        // Canonicalize multiple times - should be identical
+        let canonical1 = path.canonicalize().unwrap();
+        let canonical2 = path.canonicalize().unwrap();
+        assert_eq!(canonical1, canonical2);
+
+        // derive_project_id should produce same hash for canonical paths
+        let id1 = derive_project_id(&canonical1);
+        let id2 = derive_project_id(&canonical2);
+        assert_eq!(
+            id1, id2,
+            "Same canonical path should produce same project ID"
+        );
+    }
+
+    #[test]
+    fn test_derive_project_id_different_for_non_canonical() {
+        // This demonstrates the bug we're fixing:
+        // Non-canonical paths produce different hashes
+        let path1 = PathBuf::from("/users/test/project"); // lowercase
+        let path2 = PathBuf::from("/Users/test/project"); // proper case
+
+        let id1 = derive_project_id(&path1);
+        let id2 = derive_project_id(&path2);
+
+        // These SHOULD be different (that's the bug!)
+        // The fix ensures we always canonicalize before storing
+        assert_ne!(
+            id1, id2,
+            "Non-canonical paths produce different hashes (this is why canonicalization is needed)"
+        );
     }
 }

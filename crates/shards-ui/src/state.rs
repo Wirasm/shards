@@ -260,7 +260,15 @@ impl AppState {
     pub fn new() -> Self {
         let (displays, load_error) = crate::actions::refresh_sessions();
 
-        // Load projects from disk
+        // Migrate projects to canonical paths (fixes case mismatch on macOS)
+        if let Err(e) = crate::projects::migrate_projects_to_canonical() {
+            tracing::warn!(
+                event = "ui.projects.migration_failed",
+                error = %e
+            );
+        }
+
+        // Load projects from disk (after migration)
         let projects_data = crate::projects::load_projects();
 
         Self {
