@@ -156,7 +156,7 @@ Build a native GPUI application as a **visual dashboard** for shard management. 
 | 7 | Status Dashboard | Health indicators, refresh | Live status updates, auto-refresh | ✅ DONE |
 | 7.5 | Notes & Git Status | Session notes, git dirty indicator | Notes in list/create, uncommitted indicator | ✅ DONE |
 | 7.6 | Bulk Operations | Open All / Stop All buttons | Bulk lifecycle operations | ✅ DONE |
-| 7.7 | Quick Actions | Per-row action buttons | Copy Path, Open Editor, Focus Terminal | TODO |
+| 7.7 | Quick Actions | Per-row action buttons | Copy Path, Open Editor, Focus Terminal | ✅ DONE |
 | 8 | Favorites | Quick-spawn repos | Favorites work | TODO |
 | 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted TextInput/Button/Modal | TODO |
 | 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse | TODO |

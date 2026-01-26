@@ -250,6 +250,67 @@ impl MainView {
         cx.notify();
     }
 
+    /// Handle click on the Copy Path button in a shard row.
+    pub fn on_copy_path_click(&mut self, worktree_path: &std::path::Path, cx: &mut Context<Self>) {
+        tracing::info!(
+            event = "ui.copy_path_clicked",
+            path = %worktree_path.display()
+        );
+        let path_str = worktree_path.display().to_string();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(path_str));
+        cx.notify();
+    }
+
+    /// Handle click on the Open Editor button in a shard row.
+    pub fn on_open_editor_click(
+        &mut self,
+        worktree_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::info!(
+            event = "ui.open_editor_clicked",
+            path = %worktree_path.display()
+        );
+        actions::open_in_editor(worktree_path);
+        cx.notify();
+    }
+
+    /// Handle click on the Focus Terminal button in a shard row.
+    pub fn on_focus_terminal_click(
+        &mut self,
+        terminal_type: Option<&shards_core::terminal::types::TerminalType>,
+        window_id: Option<&str>,
+        branch: &str,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::info!(
+            event = "ui.focus_terminal_clicked",
+            branch = branch,
+            terminal_type = ?terminal_type,
+            window_id = ?window_id
+        );
+
+        match (terminal_type, window_id) {
+            (Some(tt), Some(wid)) => {
+                if let Err(e) = shards_core::terminal_ops::focus_terminal(tt, wid) {
+                    tracing::warn!(
+                        event = "ui.focus_terminal_failed",
+                        branch = branch,
+                        error = %e
+                    );
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    event = "ui.focus_terminal_no_window_info",
+                    branch = branch,
+                    message = "No terminal type or window ID recorded"
+                );
+            }
+        }
+        cx.notify();
+    }
+
     /// Clear bulk operation errors (called when user dismisses the banner).
     fn on_dismiss_bulk_errors(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.bulk_errors.dismissed");

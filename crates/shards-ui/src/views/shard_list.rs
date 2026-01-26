@@ -114,6 +114,13 @@ pub fn render_shard_list(state: &AppState, cx: &mut Context<MainView>) -> impl I
                             let git_status = display.git_status;
                             let note = display.session.note.clone();
 
+                            // Quick actions button clones
+                            let worktree_path_for_copy = display.session.worktree_path.clone();
+                            let worktree_path_for_edit = display.session.worktree_path.clone();
+                            let terminal_type_for_focus = display.session.terminal_type.clone();
+                            let window_id_for_focus = display.session.terminal_window_id.clone();
+                            let branch_for_focus = branch.clone();
+
                             div()
                                 .id(ix)
                                 .w_full()
@@ -182,6 +189,90 @@ pub fn render_shard_list(state: &AppState, cx: &mut Context<MainView>) -> impl I
                                                     .text_color(rgb(0x888888))
                                                     .text_sm()
                                                     .child(truncated),
+                                            )
+                                        })
+                                        // Copy Path button [Copy]
+                                        .child(
+                                            div()
+                                                .id(("copy-btn", ix))
+                                                .px_2()
+                                                .py_1()
+                                                .bg(rgb(0x444444))
+                                                .hover(|style| style.bg(rgb(0x555555)))
+                                                .rounded_md()
+                                                .cursor_pointer()
+                                                .on_mouse_up(
+                                                    gpui::MouseButton::Left,
+                                                    cx.listener(move |view, _, _, cx| {
+                                                        view.on_copy_path_click(
+                                                            &worktree_path_for_copy,
+                                                            cx,
+                                                        );
+                                                    }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_color(rgb(0xaaaaaa))
+                                                        .text_sm()
+                                                        .child("Copy"),
+                                                ),
+                                        )
+                                        // Open in Editor button [Edit]
+                                        .child(
+                                            div()
+                                                .id(("edit-btn", ix))
+                                                .px_2()
+                                                .py_1()
+                                                .bg(rgb(0x444444))
+                                                .hover(|style| style.bg(rgb(0x555555)))
+                                                .rounded_md()
+                                                .cursor_pointer()
+                                                .on_mouse_up(
+                                                    gpui::MouseButton::Left,
+                                                    cx.listener(move |view, _, _, cx| {
+                                                        view.on_open_editor_click(
+                                                            &worktree_path_for_edit,
+                                                            cx,
+                                                        );
+                                                    }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_color(rgb(0xaaaaaa))
+                                                        .text_sm()
+                                                        .child("Edit"),
+                                                ),
+                                        )
+                                        // Focus Terminal button [Focus] - only show when running
+                                        .when(is_running, |row| {
+                                            let tt = terminal_type_for_focus.clone();
+                                            let wid = window_id_for_focus.clone();
+                                            let br = branch_for_focus.clone();
+                                            row.child(
+                                                div()
+                                                    .id(("focus-btn", ix))
+                                                    .px_2()
+                                                    .py_1()
+                                                    .bg(rgb(0x444488))
+                                                    .hover(|style| style.bg(rgb(0x555599)))
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .on_mouse_up(
+                                                        gpui::MouseButton::Left,
+                                                        cx.listener(move |view, _, _, cx| {
+                                                            view.on_focus_terminal_click(
+                                                                tt.as_ref(),
+                                                                wid.as_deref(),
+                                                                &br,
+                                                                cx,
+                                                            );
+                                                        }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_color(rgb(0xffffff))
+                                                            .child("Focus"),
+                                                    ),
                                             )
                                         })
                                         // Open button [▶] - shown when NOT running

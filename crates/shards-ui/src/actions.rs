@@ -453,3 +453,40 @@ mod tests {
         );
     }
 }
+
+/// Open a worktree path in the user's preferred editor.
+///
+/// Editor selection priority:
+/// 1. $EDITOR environment variable
+/// 2. Default: "zed"
+///
+/// This is a fire-and-forget operation - we spawn the editor and don't wait.
+pub fn open_in_editor(worktree_path: &std::path::Path) {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "zed".to_string());
+
+    tracing::info!(
+        event = "ui.open_in_editor.started",
+        path = %worktree_path.display(),
+        editor = %editor
+    );
+
+    match std::process::Command::new(&editor)
+        .arg(worktree_path)
+        .spawn()
+    {
+        Ok(_) => {
+            tracing::info!(
+                event = "ui.open_in_editor.completed",
+                path = %worktree_path.display(),
+                editor = %editor
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                event = "ui.open_in_editor.failed",
+                path = %worktree_path.display(),
+                editor = %editor,
+                error = %e
+            );
+        }
+    }
