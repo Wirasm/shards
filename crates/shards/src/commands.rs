@@ -70,6 +70,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("code", sub_matches)) => handle_code_command(sub_matches),
         Some(("focus", sub_matches)) => handle_focus_command(sub_matches),
         Some(("diff", sub_matches)) => handle_diff_command(sub_matches),
+        Some(("commits", sub_matches)) => handle_commits_command(sub_matches),
         Some(("status", sub_matches)) => handle_status_command(sub_matches),
         Some(("cleanup", sub_matches)) => handle_cleanup_command(sub_matches),
         Some(("health", sub_matches)) => handle_health_command(sub_matches),
@@ -720,6 +721,68 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     );
 
     Ok(())
+}
+
+fn handle_commits_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or("Branch argument is required")?;
+    let count = *matches.get_one::<usize>("count").unwrap_or(&10);
+
+    // Validate branch name
+    if !is_valid_branch_name(branch) {
+        eprintln!("Invalid branch name: {}", branch);
+        error!(event = "cli.commits_invalid_branch", branch = branch);
+        return Err("Invalid branch name".into());
+    }
+
+    info!(
+        event = "cli.commits_started",
+        branch = branch,
+        count = count
+    );
+
+    match session_handler::get_session(branch) {
+        Ok(session) => {
+            // Run git log in worktree directory
+            let output = std::process::Command::new("git")
+                .current_dir(&session.worktree_path)
+                .args(["log", "--oneline", "-n", &count.to_string()])
+                .output()?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("Git error: {}", stderr);
+                error!(
+                    event = "cli.commits_git_failed",
+                    branch = branch,
+                    error = %stderr
+                );
+                return Err(format!("git log failed: {}", stderr).into());
+            }
+
+            // Output commits to stdout
+            std::io::Write::write_all(&mut std::io::stdout(), &output.stdout)?;
+
+            info!(
+                event = "cli.commits_completed",
+                branch = branch,
+                count = count
+            );
+
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to find shard '{}': {}", branch, e);
+            error!(
+                event = "cli.commits_failed",
+                branch = branch,
+                error = %e
+            );
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
 }
 
 fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
