@@ -99,8 +99,8 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("branch")
                         .help("Branch name or shard identifier")
-                        .required(true)
                         .index(1)
+                        .required_unless_present("all")
                 )
                 .arg(
                     Arg::new("agent")
@@ -109,6 +109,13 @@ pub fn build_cli() -> Command {
                         .help("Agent to launch (default: shard's original agent)")
                         .value_parser(["claude", "kiro", "gemini", "codex", "aether"])
                 )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Open agents in all stopped shards")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("branch")
+                )
         )
         .subcommand(
             Command::new("stop")
@@ -116,8 +123,15 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("branch")
                         .help("Branch name or shard identifier")
-                        .required(true)
                         .index(1)
+                        .required_unless_present("all")
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Stop all running shards")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("branch")
                 )
         )
         .subcommand(
@@ -629,5 +643,102 @@ mod tests {
         let app = build_cli();
         let matches = app.try_get_matches_from(vec!["shards", "focus"]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_open_all_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "open", "--all"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let open_matches = matches.subcommand_matches("open").unwrap();
+        assert!(open_matches.get_flag("all"));
+        assert!(open_matches.get_one::<String>("branch").is_none());
+    }
+
+    #[test]
+    fn test_cli_open_all_conflicts_with_branch() {
+        let app = build_cli();
+        // --all and branch should conflict
+        let matches = app.try_get_matches_from(vec!["shards", "open", "--all", "some-branch"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_open_all_with_agent() {
+        let app = build_cli();
+        let matches =
+            app.try_get_matches_from(vec!["shards", "open", "--all", "--agent", "claude"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let open_matches = matches.subcommand_matches("open").unwrap();
+        assert!(open_matches.get_flag("all"));
+        assert_eq!(open_matches.get_one::<String>("agent").unwrap(), "claude");
+    }
+
+    #[test]
+    fn test_cli_stop_all_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "stop", "--all"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let stop_matches = matches.subcommand_matches("stop").unwrap();
+        assert!(stop_matches.get_flag("all"));
+    }
+
+    #[test]
+    fn test_cli_stop_all_conflicts_with_branch() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "stop", "--all", "some-branch"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_open_requires_branch_or_all() {
+        let app = build_cli();
+        // `shards open` with no args should fail at CLI level
+        let matches = app.try_get_matches_from(vec!["shards", "open"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_stop_requires_branch_or_all() {
+        let app = build_cli();
+        // `shards stop` with no args should fail at CLI level
+        let matches = app.try_get_matches_from(vec!["shards", "stop"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_open_with_branch_no_all() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "open", "my-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let open_matches = matches.subcommand_matches("open").unwrap();
+        assert!(!open_matches.get_flag("all"));
+        assert_eq!(
+            open_matches.get_one::<String>("branch").unwrap(),
+            "my-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_stop_with_branch_no_all() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "stop", "my-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let stop_matches = matches.subcommand_matches("stop").unwrap();
+        assert!(!stop_matches.get_flag("all"));
+        assert_eq!(
+            stop_matches.get_one::<String>("branch").unwrap(),
+            "my-branch"
+        );
     }
 }
