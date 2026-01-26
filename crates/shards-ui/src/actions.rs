@@ -15,8 +15,8 @@ use crate::state::{OperationError, ProcessStatus, ShardDisplay};
 
 /// Create a new shard with the given branch name, agent, optional note, and optional project path.
 ///
-/// When `project_path` is provided (UI context), creates the shard in that project.
-/// When `None` (shouldn't happen in UI), falls back to current directory detection.
+/// When `project_path` is provided (UI context), detects project from that path.
+/// When `None` (shouldn't happen in UI), falls back to current working directory detection.
 ///
 /// Returns the created session on success, or an error message on failure.
 pub fn create_shard(

@@ -108,6 +108,8 @@ pub struct CreateSessionRequest {
     pub note: Option<String>,
     /// Optional project path for UI context. When provided, this path is used
     /// instead of current working directory for project detection.
+    ///
+    /// See [`crate::sessions::handler::create_session`] for the branching logic.
     pub project_path: Option<PathBuf>,
 }
 

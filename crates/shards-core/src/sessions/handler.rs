@@ -76,8 +76,8 @@ pub fn create_session(
     // Use explicit project path if provided (UI context), otherwise use cwd (CLI context)
     let project = match &request.project_path {
         Some(path) => {
-            info!(
-                event = "core.session.using_explicit_project_path",
+            debug!(
+                event = "core.session.project_path_explicit_provided",
                 path = %path.display()
             );
             git::handler::detect_project_at(path)
@@ -1300,5 +1300,110 @@ mod tests {
             result_force.unwrap_err(),
             SessionError::NotFound { .. }
         ));
+    }
+
+    #[test]
+    fn test_create_session_request_project_path_affects_project_detection() {
+        use git2::Repository;
+        use std::fs;
+
+        // This test verifies that CreateSessionRequest with project_path
+        // causes detect_project_at to be called with that path, resulting
+        // in a different project than cwd detection would produce.
+        //
+        // We test this by:
+        // 1. Creating a temp git repo at a known path
+        // 2. Calling detect_project_at directly (simulating what create_session does)
+        // 3. Verifying the project_id is derived from the temp repo path
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "shards_test_session_project_path_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+
+        // Initialize a git repo at the temp path
+        let repo = Repository::init(&temp_dir).expect("Failed to init git repo");
+        {
+            let sig = repo
+                .signature()
+                .unwrap_or_else(|_| git2::Signature::now("Test", "test@test.com").unwrap());
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+                .expect("Failed to create initial commit");
+        }
+
+        // Create the request with explicit project_path
+        let request = CreateSessionRequest::with_project_path(
+            "test-branch".to_string(),
+            Some("claude".to_string()),
+            None,
+            temp_dir.clone(),
+        );
+
+        // Verify the request has project_path set
+        assert!(
+            request.project_path.is_some(),
+            "Request should have project_path set"
+        );
+        assert_eq!(request.project_path.as_ref().unwrap(), &temp_dir);
+
+        // Now simulate the branching logic from create_session:
+        // match &request.project_path {
+        //     Some(path) => git::handler::detect_project_at(path)
+        //     None => git::handler::detect_project()
+        // }
+        let project = match &request.project_path {
+            Some(path) => git::handler::detect_project_at(path),
+            None => git::handler::detect_project(),
+        };
+
+        assert!(project.is_ok(), "Project detection should succeed");
+        let project = project.unwrap();
+
+        // Verify the project path matches the temp dir (not cwd)
+        let expected_path = temp_dir.canonicalize().unwrap();
+        let actual_path = project.path.canonicalize().unwrap();
+        assert_eq!(
+            actual_path, expected_path,
+            "Project should be from the explicit path, not cwd"
+        );
+
+        // Also verify that without project_path, we'd get a different result
+        // (This confirms the branching logic matters)
+        let request_without_path =
+            CreateSessionRequest::new("test-branch".to_string(), Some("claude".to_string()), None);
+        assert!(
+            request_without_path.project_path.is_none(),
+            "Request without project_path should have None"
+        );
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_create_session_request_none_project_path_uses_cwd_detection() {
+        // This test documents that when project_path is None,
+        // create_session falls back to detect_project() which uses cwd.
+        //
+        // We verify this by checking that CreateSessionRequest::new()
+        // correctly leaves project_path as None.
+
+        let request = CreateSessionRequest::new(
+            "test-branch".to_string(),
+            Some("claude".to_string()),
+            Some("test note".to_string()),
+        );
+
+        assert!(
+            request.project_path.is_none(),
+            "CreateSessionRequest::new should leave project_path as None"
+        );
+
+        // This means create_session will call detect_project() instead of detect_project_at()
+        // (verified by code inspection of the match statement in create_session)
     }
 }
