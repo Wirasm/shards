@@ -762,7 +762,7 @@ fn handle_commits_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
             }
 
             // Output commits to stdout
-            std::io::Write::write_all(&mut std::io::stdout(), &output.stdout)?;
+            print!("{}", String::from_utf8_lossy(&output.stdout));
 
             info!(
                 event = "cli.commits_completed",
