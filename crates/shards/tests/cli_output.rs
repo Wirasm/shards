@@ -202,6 +202,41 @@ fn test_quiet_flag_after_subcommand() {
     );
 }
 
+// =============================================================================
+// Error Handling Tests
+// =============================================================================
+
+/// Verify that 'shards diff' with non-existent branch returns proper error
+#[test]
+fn test_diff_nonexistent_branch_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_shards"))
+        .args(["diff", "nonexistent-branch-that-does-not-exist"])
+        .output()
+        .expect("Failed to execute 'shards diff'");
+
+    // Command should fail
+    assert!(
+        !output.status.success(),
+        "shards diff with non-existent branch should fail"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain error indicator emoji and helpful message
+    assert!(
+        stderr.contains("❌") || stderr.contains("Failed to find shard"),
+        "Error output should contain failure indicator, got stderr: {}",
+        stderr
+    );
+
+    // Should contain the branch name in the error
+    assert!(
+        stderr.contains("nonexistent-branch-that-does-not-exist"),
+        "Error output should mention the branch name, got stderr: {}",
+        stderr
+    );
+}
+
 /// Verify that RUST_LOG env var is respected alongside quiet flag
 /// When RUST_LOG is explicitly set, it should override the quiet flag
 #[test]

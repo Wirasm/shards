@@ -655,14 +655,14 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     let session = match session_handler::get_session(branch) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Failed to find shard '{}': {}", branch, e);
+            eprintln!("❌ Failed to find shard '{}': {}", branch, e);
             error!(event = "cli.diff_failed", branch = branch, error = %e);
             events::log_app_error(&e);
             return Err(e.into());
         }
     };
 
-    // 2. Build git diff command
+    // 2. Build git diff command (with optional --staged flag)
     let mut cmd = std::process::Command::new("git");
     cmd.current_dir(&session.worktree_path);
     cmd.arg("diff");
@@ -671,8 +671,46 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         cmd.arg("--staged");
     }
 
-    // 3. Execute and stream output to stdout
-    let status = cmd.status()?;
+    // 3. Execute git diff and wait for completion
+    // Note: Output automatically appears in terminal via stdout inheritance
+    let status = match cmd.status() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Failed to execute git diff: {}", e);
+            eprintln!("   Hint: Make sure 'git' is installed and in your PATH");
+            error!(
+                event = "cli.diff_execution_failed",
+                branch = branch,
+                staged = staged,
+                error = %e
+            );
+            events::log_app_error(&e);
+            return Err(e.into());
+        }
+    };
+
+    // git diff exit codes:
+    // 0 = no differences
+    // 1 = differences found (NOT an error!)
+    // 128+ = git error
+    if let Some(code) = status.code()
+        && code >= 128
+    {
+        let error_msg = format!("git diff failed with exit code {}", code);
+        eprintln!("❌ {}", error_msg);
+        eprintln!(
+            "   Hint: Check that the worktree at {} is a valid git repository",
+            session.worktree_path.display()
+        );
+        error!(
+            event = "cli.diff_git_error",
+            branch = branch,
+            staged = staged,
+            exit_code = code,
+            worktree_path = %session.worktree_path.display()
+        );
+        return Err(error_msg.into());
+    }
 
     info!(
         event = "cli.diff_completed",
@@ -680,10 +718,6 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         staged = staged,
         exit_code = status.code()
     );
-
-    if !status.success() {
-        return Err(format!("git diff exited with status: {:?}", status.code()).into());
-    }
 
     Ok(())
 }
