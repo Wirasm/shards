@@ -157,6 +157,12 @@ shards destroy <branch>
 
 # Force destroy (bypass git uncommitted changes check)
 shards destroy <branch> --force
+
+# Destroy all shards (with confirmation prompt)
+shards destroy --all
+
+# Force destroy all (skip confirmation and git checks)
+shards destroy --all --force
 ```
 
 ### Note on deprecated commands

@@ -81,6 +81,8 @@ cargo run -- stop my-branch              # Stop agent, preserve shard
 cargo run -- stop --all                  # Stop all running shards
 cargo run -- destroy my-branch           # Destroy shard
 cargo run -- destroy my-branch --force   # Force destroy (bypass git checks)
+cargo run -- destroy --all               # Destroy all shards (with confirmation)
+cargo run -- destroy --all --force       # Force destroy all (skip confirmation)
 ```
 
 ## Architecture
