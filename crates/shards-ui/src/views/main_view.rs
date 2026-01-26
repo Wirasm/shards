@@ -4,8 +4,8 @@
 //! Handles keyboard input and dialog state management.
 
 use gpui::{
-    Context, FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, Render, Window, div,
-    prelude::*, rgb,
+    Context, FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, Render, Task, Window,
+    div, prelude::*, rgb,
 };
 
 use crate::actions;
@@ -18,13 +18,39 @@ use crate::views::{confirm_dialog, create_dialog, shard_list};
 pub struct MainView {
     state: AppState,
     focus_handle: FocusHandle,
+    /// Handle to the background refresh task. Must be stored to prevent cancellation.
+    _refresh_task: Task<()>,
 }
 
 impl MainView {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let refresh_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            tracing::debug!(event = "ui.auto_refresh.started");
+
+            loop {
+                cx.background_executor()
+                    .timer(crate::refresh::REFRESH_INTERVAL)
+                    .await;
+
+                if let Err(e) = this.update(cx, |view, cx| {
+                    tracing::debug!(event = "ui.auto_refresh.tick");
+                    view.state.update_statuses_only();
+                    cx.notify();
+                }) {
+                    tracing::debug!(
+                        event = "ui.auto_refresh.stopped",
+                        reason = "view_dropped",
+                        error = ?e
+                    );
+                    break;
+                }
+            }
+        });
+
         Self {
             state: AppState::new(),
             focus_handle: cx.focus_handle(),
+            _refresh_task: refresh_task,
         }
     }
 

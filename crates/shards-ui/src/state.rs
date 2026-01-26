@@ -32,24 +32,28 @@ pub struct ShardDisplay {
 
 impl ShardDisplay {
     pub fn from_session(session: Session) -> Self {
-        let status = match session.process_id {
-            None => ProcessStatus::Stopped,
-            Some(pid) => match shards_core::process::is_process_running(pid) {
-                Ok(true) => ProcessStatus::Running,
-                Ok(false) => ProcessStatus::Stopped,
-                Err(e) => {
-                    tracing::warn!(
-                        event = "ui.shard_list.process_check_failed",
-                        pid = pid,
-                        branch = session.branch,
-                        error = %e
-                    );
-                    ProcessStatus::Unknown
-                }
-            },
+        let status = Self::check_process_status(session.process_id, &session.branch);
+        Self { session, status }
+    }
+
+    fn check_process_status(process_id: Option<u32>, branch: &str) -> ProcessStatus {
+        let Some(pid) = process_id else {
+            return ProcessStatus::Stopped;
         };
 
-        Self { session, status }
+        match shards_core::process::is_process_running(pid) {
+            Ok(true) => ProcessStatus::Running,
+            Ok(false) => ProcessStatus::Stopped,
+            Err(e) => {
+                tracing::warn!(
+                    event = "ui.shard_list.process_check_failed",
+                    pid = pid,
+                    branch = branch,
+                    error = %e
+                );
+                ProcessStatus::Unknown
+            }
+        }
     }
 }
 
@@ -117,6 +121,9 @@ pub struct AppState {
 
     // Stop error state (shown inline per-row)
     pub stop_error: Option<OperationError>,
+
+    /// Timestamp of last successful status refresh
+    pub last_refresh: std::time::Instant,
 }
 
 impl AppState {
@@ -135,6 +142,7 @@ impl AppState {
             confirm_error: None,
             open_error: None,
             stop_error: None,
+            last_refresh: std::time::Instant::now(),
         }
     }
 
@@ -143,6 +151,23 @@ impl AppState {
         let (displays, load_error) = crate::actions::refresh_sessions();
         self.displays = displays;
         self.load_error = load_error;
+        self.last_refresh = std::time::Instant::now();
+    }
+
+    /// Update only the process status of existing shards without reloading from disk.
+    ///
+    /// This is faster than refresh_sessions() for status polling because it:
+    /// - Doesn't reload session files from disk
+    /// - Only checks if tracked processes are still running
+    /// - Preserves the existing shard list structure
+    pub fn update_statuses_only(&mut self) {
+        for shard_display in &mut self.displays {
+            shard_display.status = ShardDisplay::check_process_status(
+                shard_display.session.process_id,
+                &shard_display.session.branch,
+            );
+        }
+        self.last_refresh = std::time::Instant::now();
     }
 
     /// Reset the create form to default state.
@@ -193,6 +218,7 @@ mod tests {
             confirm_error: Some("Some error".to_string()),
             open_error: None,
             stop_error: None,
+            last_refresh: std::time::Instant::now(),
         };
 
         state.reset_confirm_dialog();
@@ -218,6 +244,7 @@ mod tests {
                 message: "error".to_string(),
             }),
             stop_error: None,
+            last_refresh: std::time::Instant::now(),
         };
 
         state.clear_open_error();
@@ -241,6 +268,7 @@ mod tests {
                 branch: "branch".to_string(),
                 message: "error".to_string(),
             }),
+            last_refresh: std::time::Instant::now(),
         };
 
         state.clear_stop_error();
@@ -276,5 +304,153 @@ mod tests {
 
         let display = ShardDisplay::from_session(session);
         assert_eq!(display.status, ProcessStatus::Stopped);
+    }
+
+    #[test]
+    fn test_update_statuses_only_updates_last_refresh() {
+        let initial_time = std::time::Instant::now();
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            open_error: None,
+            stop_error: None,
+            last_refresh: initial_time,
+        };
+
+        // Small delay to ensure time difference
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        state.update_statuses_only();
+
+        // last_refresh should be updated to a later time
+        assert!(state.last_refresh > initial_time);
+    }
+
+    #[test]
+    fn test_update_statuses_only_updates_process_status() {
+        use shards_core::sessions::types::SessionStatus;
+        use std::path::PathBuf;
+
+        // Create a session with a PID that doesn't exist (should become Stopped)
+        let session_with_dead_pid = Session {
+            id: "test-dead".to_string(),
+            branch: "dead-branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: Some(999999), // Non-existent PID
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        // Create a session with our own PID (should be Running)
+        let session_with_live_pid = Session {
+            id: "test-live".to_string(),
+            branch: "live-branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: Some(std::process::id()), // Current process PID
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        // Create a session with no PID (should remain Stopped)
+        let session_no_pid = Session {
+            id: "test-no-pid".to_string(),
+            branch: "no-pid-branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState {
+            displays: vec![
+                ShardDisplay {
+                    session: session_with_dead_pid,
+                    status: ProcessStatus::Running, // Start as Running (incorrect)
+                },
+                ShardDisplay {
+                    session: session_with_live_pid,
+                    status: ProcessStatus::Stopped, // Start as Stopped (incorrect)
+                },
+                ShardDisplay {
+                    session: session_no_pid,
+                    status: ProcessStatus::Stopped, // Start as Stopped (correct)
+                },
+            ],
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            open_error: None,
+            stop_error: None,
+            last_refresh: std::time::Instant::now(),
+        };
+
+        state.update_statuses_only();
+
+        // Non-existent PID should be marked Stopped
+        assert_eq!(
+            state.displays[0].status,
+            ProcessStatus::Stopped,
+            "Non-existent PID should be marked Stopped"
+        );
+
+        // Current process PID should be marked Running
+        assert_eq!(
+            state.displays[1].status,
+            ProcessStatus::Running,
+            "Current process PID should be marked Running"
+        );
+
+        // No PID should remain Stopped (not checked, so unchanged)
+        assert_eq!(
+            state.displays[2].status,
+            ProcessStatus::Stopped,
+            "Session with no PID should remain Stopped"
+        );
     }
 }
