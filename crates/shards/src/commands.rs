@@ -12,11 +12,11 @@ use shards_core::session_ops as session_handler;
 
 use crate::table::truncate;
 
-/// Result of a successful open operation: (branch_name, agent_name)
+/// Branch name and agent name for a successfully opened shard
 type OpenedShard = (String, String);
 
-/// Result of a failed bulk operation: (branch_name, error_message)
-type OperationError = (String, String);
+/// Branch name and error message for a failed operation
+type FailedOperation = (String, String);
 
 /// Load configuration with warning on errors.
 ///
@@ -339,7 +339,7 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
 
     let sessions = session_handler::list_sessions()?;
     let stopped: Vec<_> = sessions
-        .iter()
+        .into_iter()
         .filter(|s| s.status == SessionStatus::Stopped)
         .collect();
 
@@ -349,9 +349,8 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
         return Ok(());
     }
 
-    let total_count = stopped.len();
     let mut opened: Vec<OpenedShard> = Vec::new();
-    let mut errors: Vec<OperationError> = Vec::new();
+    let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in stopped {
         match session_handler::open_session(&session.branch, agent_override.clone()) {
@@ -361,7 +360,7 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
                     branch = s.branch,
                     session_id = s.id
                 );
-                opened.push((s.branch.clone(), s.agent.clone()));
+                opened.push((s.branch, s.agent));
             }
             Err(e) => {
                 error!(
@@ -370,7 +369,7 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
                     error = %e
                 );
                 events::log_app_error(&e);
-                errors.push((session.branch.clone(), e.to_string()));
+                errors.push((session.branch, e.to_string()));
             }
         }
     }
@@ -399,6 +398,7 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
 
     // Return error if any failures (for exit code)
     if !errors.is_empty() {
+        let total_count = opened.len() + errors.len();
         return Err(format!(
             "Partial failure: {} of {} shard(s) failed to open",
             errors.len(),
@@ -448,7 +448,7 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 
     let sessions = session_handler::list_sessions()?;
     let active: Vec<_> = sessions
-        .iter()
+        .into_iter()
         .filter(|s| s.status == SessionStatus::Active)
         .collect();
 
@@ -458,15 +458,14 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let total_count = active.len();
     let mut stopped: Vec<String> = Vec::new();
-    let mut errors: Vec<OperationError> = Vec::new();
+    let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in active {
         match session_handler::stop_session(&session.branch) {
             Ok(()) => {
                 info!(event = "cli.stop_completed", branch = session.branch);
-                stopped.push(session.branch.clone());
+                stopped.push(session.branch);
             }
             Err(e) => {
                 error!(
@@ -475,7 +474,7 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
                     error = %e
                 );
                 events::log_app_error(&e);
-                errors.push((session.branch.clone(), e.to_string()));
+                errors.push((session.branch, e.to_string()));
             }
         }
     }
@@ -504,6 +503,7 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 
     // Return error if any failures (for exit code)
     if !errors.is_empty() {
+        let total_count = stopped.len() + errors.len();
         return Err(format!(
             "Partial failure: {} of {} shard(s) failed to stop",
             errors.len(),
