@@ -10,6 +10,7 @@
 
 | Date       | Change                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-01-26 | Phase 2.2 Git Diff (`shards diff`): COMPLETE                                                   |
 | 2026-01-26 | Phase 2.5 Bulk Open/Stop (`--all`): COMPLETE                                                   |
 | 2026-01-26 | Phase 2.1 Focus Terminal (`shards focus`): COMPLETE                                            |
 | 2026-01-25 | Phase 1.1 Session Notes (`--note`): COMPLETE                                                   |
@@ -104,7 +105,7 @@ Important features that improve workflow significantly.
 | Feature        | Command/Flag              | Value                                 | Status  |
 | -------------- | ------------------------- | ------------------------------------- | ------- |
 | Focus terminal | `shards focus <branch>`   | Quick window switching                | ✅ DONE |
-| Git diff       | `shards diff <branch>`    | See changes without entering worktree |         |
+| Git diff       | `shards diff <branch>`    | See changes without entering worktree | ✅ DONE |
 | Git commits    | `shards commits <branch>` | See work done                         |         |
 | Bulk destroy   | `shards destroy --all`    | Clean slate                           |         |
 | Bulk open      | `shards open --all`       | Launch agents in all stopped shards   | ✅ DONE |
@@ -533,7 +534,9 @@ shards focus feature-auth
 
 ---
 
-#### 2.2 Git Diff (`shards diff`)
+#### 2.2 Git Diff (`shards diff`) - COMPLETE
+
+**Status**: COMPLETE (2026-01-26)
 
 **What**: Show git diff for a shard without entering the worktree.
 

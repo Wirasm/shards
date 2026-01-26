@@ -161,6 +161,22 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("diff")
+                .about("Show git diff for a shard's worktree")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of the shard")
+                        .required(true)
+                        .index(1)
+                )
+                .arg(
+                    Arg::new("staged")
+                        .long("staged")
+                        .help("Show only staged changes (git diff --staged)")
+                        .action(ArgAction::SetTrue)
+                )
+        )
+        .subcommand(
             Command::new("restart")
                 .about("Restart agent in existing shard without destroying worktree")
                 .arg(
@@ -643,6 +659,43 @@ mod tests {
         let app = build_cli();
         let matches = app.try_get_matches_from(vec!["shards", "focus"]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_diff_command() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "diff", "test-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let diff_matches = matches.subcommand_matches("diff").unwrap();
+        assert_eq!(
+            diff_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+        assert!(!diff_matches.get_flag("staged"));
+    }
+
+    #[test]
+    fn test_cli_diff_requires_branch() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "diff"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_diff_with_staged_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "diff", "test-branch", "--staged"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let diff_matches = matches.subcommand_matches("diff").unwrap();
+        assert_eq!(
+            diff_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+        assert!(diff_matches.get_flag("staged"));
     }
 
     #[test]

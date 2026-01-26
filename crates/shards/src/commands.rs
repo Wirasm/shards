@@ -69,6 +69,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("stop", sub_matches)) => handle_stop_command(sub_matches),
         Some(("code", sub_matches)) => handle_code_command(sub_matches),
         Some(("focus", sub_matches)) => handle_focus_command(sub_matches),
+        Some(("diff", sub_matches)) => handle_diff_command(sub_matches),
         Some(("status", sub_matches)) => handle_status_command(sub_matches),
         Some(("cleanup", sub_matches)) => handle_cleanup_command(sub_matches),
         Some(("health", sub_matches)) => handle_health_command(sub_matches),
@@ -640,6 +641,51 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
             Err(e.into())
         }
     }
+}
+
+fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or("Branch argument is required")?;
+    let staged = matches.get_flag("staged");
+
+    info!(event = "cli.diff_started", branch = branch, staged = staged);
+
+    // 1. Look up the session
+    let session = match session_handler::get_session(branch) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to find shard '{}': {}", branch, e);
+            error!(event = "cli.diff_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
+            return Err(e.into());
+        }
+    };
+
+    // 2. Build git diff command
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(&session.worktree_path);
+    cmd.arg("diff");
+
+    if staged {
+        cmd.arg("--staged");
+    }
+
+    // 3. Execute and stream output to stdout
+    let status = cmd.status()?;
+
+    info!(
+        event = "cli.diff_completed",
+        branch = branch,
+        staged = staged,
+        exit_code = status.code()
+    );
+
+    if !status.success() {
+        return Err(format!("git diff exited with status: {:?}", status.code()).into());
+    }
+
+    Ok(())
 }
 
 fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
