@@ -33,6 +33,7 @@ The GUI currently supports:
 - Opening new agents in existing shards
 - Stopping agents without destroying shards
 - Destroying shards with confirmation dialog
+- Bulk operations: Open All stopped shards, Stop All running shards
 
 See the [PRD](.claude/PRPs/prds/gpui-native-terminal-ui.prd.md) for the development roadmap.
 

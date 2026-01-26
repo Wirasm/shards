@@ -212,6 +212,96 @@ impl MainView {
         cx.notify();
     }
 
+    /// Handle click on the Open All button.
+    fn on_open_all_click(&mut self, cx: &mut Context<Self>) {
+        tracing::info!(event = "ui.open_all_clicked");
+        self.handle_bulk_operation(actions::open_all_stopped, "ui.open_all.partial_failure", cx);
+    }
+
+    /// Handle click on the Stop All button.
+    fn on_stop_all_click(&mut self, cx: &mut Context<Self>) {
+        tracing::info!(event = "ui.stop_all_clicked");
+        self.handle_bulk_operation(actions::stop_all_running, "ui.stop_all.partial_failure", cx);
+    }
+
+    /// Common handler for bulk operations (open all / stop all).
+    fn handle_bulk_operation(
+        &mut self,
+        operation: impl Fn(&[crate::state::ShardDisplay]) -> (usize, Vec<crate::state::OperationError>),
+        error_event: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.clear_bulk_errors();
+
+        let (count, errors) = operation(&self.state.displays);
+
+        for error in &errors {
+            tracing::warn!(
+                event = error_event,
+                branch = error.branch,
+                error = error.message
+            );
+        }
+        self.state.bulk_errors = errors;
+
+        if count > 0 || !self.state.bulk_errors.is_empty() {
+            self.state.refresh_sessions();
+        }
+        cx.notify();
+    }
+
+    /// Clear bulk operation errors (called when user dismisses the banner).
+    fn on_dismiss_bulk_errors(&mut self, cx: &mut Context<Self>) {
+        tracing::info!(event = "ui.bulk_errors.dismissed");
+        self.state.clear_bulk_errors();
+        cx.notify();
+    }
+
+    /// Render a bulk operation button with consistent styling.
+    fn render_bulk_button(
+        &self,
+        id: &'static str,
+        label: &str,
+        count: usize,
+        enabled_bg: u32,
+        enabled_hover: u32,
+        on_click: impl Fn(&gpui::MouseUpEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> impl IntoElement {
+        let is_disabled = count == 0;
+        let bg_color = if is_disabled {
+            rgb(0x333333)
+        } else {
+            rgb(enabled_bg)
+        };
+        let hover_color = if is_disabled {
+            rgb(0x333333)
+        } else {
+            rgb(enabled_hover)
+        };
+        let text_color = if is_disabled {
+            rgb(0x666666)
+        } else {
+            rgb(0xffffff)
+        };
+
+        div()
+            .id(id)
+            .px_3()
+            .py_1()
+            .bg(bg_color)
+            .when(!is_disabled, |d| d.hover(|style| style.bg(hover_color)))
+            .rounded_md()
+            .when(!is_disabled, |d| d.cursor_pointer())
+            .when(!is_disabled, |d| {
+                d.on_mouse_up(gpui::MouseButton::Left, on_click)
+            })
+            .child(
+                div()
+                    .text_color(text_color)
+                    .child(format!("{} ({})", label, count)),
+            )
+    }
+
     /// Handle keyboard input for dialogs.
     ///
     /// When create dialog is open: handles branch name input (alphanumeric, -, _, /, space converts to hyphen),
@@ -338,6 +428,24 @@ impl Render for MainView {
                             .flex()
                             .items_center()
                             .gap_2()
+                            // Open All button - green when enabled
+                            .child(self.render_bulk_button(
+                                "open-all-btn",
+                                "Open All",
+                                self.state.stopped_count(),
+                                0x446644,
+                                0x557755,
+                                cx.listener(|view, _, _, cx| view.on_open_all_click(cx)),
+                            ))
+                            // Stop All button - red when enabled
+                            .child(self.render_bulk_button(
+                                "stop-all-btn",
+                                "Stop All",
+                                self.state.running_count(),
+                                0x664444,
+                                0x775555,
+                                cx.listener(|view, _, _, cx| view.on_stop_all_click(cx)),
+                            ))
                             // Refresh button - TEXT label, gray background (secondary action)
                             .child(
                                 div()
@@ -383,6 +491,61 @@ impl Render for MainView {
                             ),
                     ),
             )
+            // Bulk operation errors banner (dismissible)
+            .when(!self.state.bulk_errors.is_empty(), |this| {
+                let error_count = self.state.bulk_errors.len();
+                this.child(
+                    div()
+                        .mx_4()
+                        .mt_2()
+                        .px_4()
+                        .py_2()
+                        .bg(rgb(0x662222))
+                        .rounded_md()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        // Header with dismiss button
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_color(rgb(0xff6b6b))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!(
+                                            "{} operation{} failed:",
+                                            error_count,
+                                            if error_count == 1 { "" } else { "s" }
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .id("dismiss-bulk-errors")
+                                        .px_2()
+                                        .cursor_pointer()
+                                        .text_color(rgb(0xaaaaaa))
+                                        .hover(|style| style.text_color(rgb(0xffffff)))
+                                        .on_mouse_up(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|view, _, _, cx| {
+                                                view.on_dismiss_bulk_errors(cx);
+                                            }),
+                                        )
+                                        .child("×"),
+                                ),
+                        )
+                        // Error list
+                        .children(self.state.bulk_errors.iter().map(|e| {
+                            div()
+                                .text_sm()
+                                .text_color(rgb(0xffaaaa))
+                                .child(format!("• {}: {}", e.branch, e.message))
+                        })),
+                )
+            })
             // Shard list
             .child(shard_list::render_shard_list(&self.state, cx))
             // Create dialog (conditional)

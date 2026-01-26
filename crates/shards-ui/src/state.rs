@@ -207,6 +207,9 @@ pub struct AppState {
     // Stop error state (shown inline per-row)
     pub stop_error: Option<OperationError>,
 
+    // Bulk operation errors (shown as banner)
+    pub bulk_errors: Vec<OperationError>,
+
     /// Timestamp of last successful status refresh
     pub last_refresh: std::time::Instant,
 }
@@ -227,6 +230,7 @@ impl AppState {
             confirm_error: None,
             open_error: None,
             stop_error: None,
+            bulk_errors: Vec::new(),
             last_refresh: std::time::Instant::now(),
         }
     }
@@ -289,6 +293,27 @@ impl AppState {
     pub fn clear_stop_error(&mut self) {
         self.stop_error = None;
     }
+
+    /// Clear any bulk operation errors.
+    pub fn clear_bulk_errors(&mut self) {
+        self.bulk_errors.clear();
+    }
+
+    /// Count shards with Stopped status.
+    pub fn stopped_count(&self) -> usize {
+        self.displays
+            .iter()
+            .filter(|d| d.status == ProcessStatus::Stopped)
+            .count()
+    }
+
+    /// Count shards with Running status.
+    pub fn running_count(&self) -> usize {
+        self.displays
+            .iter()
+            .filter(|d| d.status == ProcessStatus::Running)
+            .count()
+    }
 }
 
 impl Default for AppState {
@@ -315,6 +340,7 @@ mod tests {
             confirm_error: Some("Some error".to_string()),
             open_error: None,
             stop_error: None,
+            bulk_errors: Vec::new(),
             last_refresh: std::time::Instant::now(),
         };
 
@@ -341,6 +367,7 @@ mod tests {
                 message: "error".to_string(),
             }),
             stop_error: None,
+            bulk_errors: Vec::new(),
             last_refresh: std::time::Instant::now(),
         };
 
@@ -365,6 +392,7 @@ mod tests {
                 branch: "branch".to_string(),
                 message: "error".to_string(),
             }),
+            bulk_errors: Vec::new(),
             last_refresh: std::time::Instant::now(),
         };
 
@@ -729,6 +757,7 @@ mod tests {
             confirm_error: None,
             open_error: None,
             stop_error: None,
+            bulk_errors: Vec::new(),
             last_refresh: initial_time,
         };
 
@@ -839,6 +868,7 @@ mod tests {
             confirm_error: None,
             open_error: None,
             stop_error: None,
+            bulk_errors: Vec::new(),
             last_refresh: std::time::Instant::now(),
         };
 
@@ -864,5 +894,97 @@ mod tests {
             ProcessStatus::Stopped,
             "Session with no PID should remain Stopped"
         );
+    }
+
+    #[test]
+    fn test_stopped_count_empty() {
+        let state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            open_error: None,
+            stop_error: None,
+            bulk_errors: Vec::new(),
+            last_refresh: std::time::Instant::now(),
+        };
+
+        assert_eq!(state.stopped_count(), 0);
+        assert_eq!(state.running_count(), 0);
+    }
+
+    #[test]
+    fn test_stopped_and_running_counts() {
+        use shards_core::sessions::types::SessionStatus;
+        use std::path::PathBuf;
+
+        let make_session = |id: &str, branch: &str| Session {
+            id: id.to_string(),
+            branch: branch.to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let state = AppState {
+            displays: vec![
+                ShardDisplay {
+                    session: make_session("1", "branch-1"),
+                    status: ProcessStatus::Stopped,
+                    git_status: GitStatus::Unknown,
+                },
+                ShardDisplay {
+                    session: make_session("2", "branch-2"),
+                    status: ProcessStatus::Running,
+                    git_status: GitStatus::Unknown,
+                },
+                ShardDisplay {
+                    session: make_session("3", "branch-3"),
+                    status: ProcessStatus::Stopped,
+                    git_status: GitStatus::Unknown,
+                },
+                ShardDisplay {
+                    session: make_session("4", "branch-4"),
+                    status: ProcessStatus::Running,
+                    git_status: GitStatus::Unknown,
+                },
+                ShardDisplay {
+                    session: make_session("5", "branch-5"),
+                    status: ProcessStatus::Unknown,
+                    git_status: GitStatus::Unknown,
+                },
+            ],
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            open_error: None,
+            stop_error: None,
+            bulk_errors: Vec::new(),
+            last_refresh: std::time::Instant::now(),
+        };
+
+        assert_eq!(state.stopped_count(), 2, "Should count 2 stopped shards");
+        assert_eq!(state.running_count(), 2, "Should count 2 running shards");
     }
 }
