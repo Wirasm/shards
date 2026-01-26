@@ -82,15 +82,22 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("branch")
                         .help("Branch name of the shard to destroy")
-                        .required(true)
+                        .required_unless_present("all")
                         .index(1)
                 )
                 .arg(
                     Arg::new("force")
                         .long("force")
                         .short('f')
-                        .help("Force destroy, bypassing git uncommitted changes check")
+                        .help("Force destroy, bypassing git uncommitted changes check and confirmation prompt")
                         .action(ArgAction::SetTrue)
+                )
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .help("Destroy all shards for current project")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("branch")
                 )
         )
         .subcommand(
@@ -865,5 +872,43 @@ mod tests {
             stop_matches.get_one::<String>("branch").unwrap(),
             "my-branch"
         );
+    }
+
+    #[test]
+    fn test_cli_destroy_all_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "destroy", "--all"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let destroy_matches = matches.subcommand_matches("destroy").unwrap();
+        assert!(destroy_matches.get_flag("all"));
+        assert!(destroy_matches.get_one::<String>("branch").is_none());
+    }
+
+    #[test]
+    fn test_cli_destroy_all_conflicts_with_branch() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "destroy", "--all", "some-branch"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_destroy_all_with_force() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "destroy", "--all", "--force"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let destroy_matches = matches.subcommand_matches("destroy").unwrap();
+        assert!(destroy_matches.get_flag("all"));
+        assert!(destroy_matches.get_flag("force"));
+    }
+
+    #[test]
+    fn test_cli_destroy_requires_branch_or_all() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "destroy"]);
+        assert!(matches.is_err());
     }
 }

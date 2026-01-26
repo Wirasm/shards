@@ -227,10 +227,17 @@ fn handle_cd_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Err
 }
 
 fn handle_destroy_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let force = matches.get_flag("force");
+
+    // Check for --all flag first
+    if matches.get_flag("all") {
+        return handle_destroy_all(force);
+    }
+
+    // Single branch operation
     let branch = matches
         .get_one::<String>("branch")
-        .ok_or("Branch argument is required")?;
-    let force = matches.get_flag("force");
+        .ok_or("Branch argument is required (or use --all)")?;
 
     info!(
         event = "cli.destroy_started",
@@ -259,6 +266,100 @@ fn handle_destroy_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
             Err(e.into())
         }
     }
+}
+
+/// Handle `shards destroy --all` - destroy all shards for current project
+fn handle_destroy_all(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    info!(event = "cli.destroy_all_started", force = force);
+
+    let sessions = session_handler::list_sessions()?;
+
+    if sessions.is_empty() {
+        println!("No shards to destroy.");
+        info!(
+            event = "cli.destroy_all_completed",
+            destroyed = 0,
+            failed = 0
+        );
+        return Ok(());
+    }
+
+    // Confirmation prompt unless --force is specified
+    if !force {
+        use std::io::{self, Write};
+
+        print!(
+            "Destroy ALL {} shard(s)? This cannot be undone. [y/N] ",
+            sessions.len()
+        );
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            println!("Aborted.");
+            info!(event = "cli.destroy_all_aborted");
+            return Ok(());
+        }
+    }
+
+    let mut destroyed: Vec<String> = Vec::new();
+    let mut errors: Vec<FailedOperation> = Vec::new();
+
+    for session in sessions {
+        match session_handler::destroy_session(&session.branch, force) {
+            Ok(()) => {
+                info!(event = "cli.destroy_completed", branch = session.branch);
+                destroyed.push(session.branch);
+            }
+            Err(e) => {
+                error!(
+                    event = "cli.destroy_failed",
+                    branch = session.branch,
+                    error = %e
+                );
+                events::log_app_error(&e);
+                errors.push((session.branch, e.to_string()));
+            }
+        }
+    }
+
+    // Report successes
+    if !destroyed.is_empty() {
+        println!("Destroyed {} shard(s):", destroyed.len());
+        for branch in &destroyed {
+            println!("   {}", branch);
+        }
+    }
+
+    // Report failures
+    if !errors.is_empty() {
+        eprintln!("Failed to destroy {} shard(s):", errors.len());
+        for (branch, err) in &errors {
+            eprintln!("   {}: {}", branch, err);
+        }
+    }
+
+    info!(
+        event = "cli.destroy_all_completed",
+        destroyed = destroyed.len(),
+        failed = errors.len()
+    );
+
+    // Return error if any failures (for exit code)
+    if !errors.is_empty() {
+        let total_count = destroyed.len() + errors.len();
+        return Err(format!(
+            "Partial failure: {} of {} shard(s) failed to destroy",
+            errors.len(),
+            total_count
+        )
+        .into());
+    }
+
+    Ok(())
 }
 
 fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {

@@ -10,6 +10,7 @@
 
 | Date       | Change                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-01-26 | Phase 2.4 Bulk Destroy (`--all`): COMPLETE                                                     |
 | 2026-01-26 | Phase 2.3 Git Commits (`shards commits`): COMPLETE                                             |
 | 2026-01-26 | Phase 2.2 Git Diff (`shards diff`): COMPLETE                                                   |
 | 2026-01-26 | Phase 2.5 Bulk Open/Stop (`--all`): COMPLETE                                                   |
@@ -108,7 +109,7 @@ Important features that improve workflow significantly.
 | Focus terminal | `shards focus <branch>`   | Quick window switching                | ✅ DONE |
 | Git diff       | `shards diff <branch>`    | See changes without entering worktree | ✅ DONE |
 | Git commits    | `shards commits <branch>` | See work done                         | ✅ DONE |
-| Bulk destroy   | `shards destroy --all`    | Clean slate                           |         |
+| Bulk destroy   | `shards destroy --all`    | Clean slate                           | ✅ DONE |
 | Bulk open      | `shards open --all`       | Launch agents in all stopped shards   | ✅ DONE |
 | Bulk stop      | `shards stop --all`       | Stop all running agents               | ✅ DONE |
 | Fuzzy matching | Partial branch names      | Less typing                           |         |
@@ -643,7 +644,9 @@ shards commits feature-auth --count 3
 
 ---
 
-#### 2.4 Bulk Destroy (`--all`)
+#### 2.4 Bulk Destroy (`--all`) - COMPLETE
+
+**Status**: COMPLETE (2026-01-26)
 
 **What**: Destroy all shards for current project.
 
