@@ -7,6 +7,7 @@ use gpui::{
     Context, FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, Render, Task, Window,
     div, prelude::*, rgb,
 };
+use tracing::{debug, warn};
 
 use std::path::PathBuf;
 
@@ -15,6 +16,72 @@ use crate::state::{AddProjectDialogField, AppState, CreateDialogField};
 use crate::views::{
     add_project_dialog, confirm_dialog, create_dialog, project_selector, shard_list,
 };
+
+/// Normalize user-entered path for project addition.
+///
+/// Handles:
+/// - Whitespace trimming (leading/trailing spaces removed)
+/// - Tilde expansion (~/ -> home directory, or ~ alone)
+/// - Missing leading slash (users/... -> /users/... if valid directory)
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Path starts with `~` but home directory cannot be determined
+/// - Checking directory existence fails due to permission or I/O error
+fn normalize_project_path(path_str: &str) -> Result<PathBuf, String> {
+    let path_str = path_str.trim();
+
+    // Handle tilde expansion
+    if path_str.starts_with('~') {
+        let Some(home) = dirs::home_dir() else {
+            warn!(
+                event = "ui.normalize_path.home_dir_unavailable",
+                path = path_str,
+                "dirs::home_dir() returned None - HOME environment variable may be unset"
+            );
+            return Err("Could not determine home directory. Is $HOME set?".to_string());
+        };
+
+        if let Some(rest) = path_str.strip_prefix("~/") {
+            return Ok(home.join(rest));
+        }
+        if path_str == "~" {
+            return Ok(home);
+        }
+        // Tilde in middle like "~project" - no expansion, fall through
+    }
+
+    // Handle missing leading slash - only if path looks absolute without the /
+    // e.g., "users/rasmus/project" -> "/users/rasmus/project" (if that directory exists)
+    if !path_str.starts_with('/') && !path_str.starts_with('~') && !path_str.is_empty() {
+        let with_slash = PathBuf::from(format!("/{}", path_str));
+
+        match std::fs::metadata(&with_slash) {
+            Ok(meta) if meta.is_dir() => {
+                debug!(
+                    event = "ui.normalize_path.slash_prefix_applied",
+                    original = path_str,
+                    normalized = %with_slash.display()
+                );
+                return Ok(with_slash);
+            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                warn!(
+                    event = "ui.normalize_path.slash_prefix_check_failed",
+                    path = %with_slash.display(),
+                    error = %e
+                );
+                return Err(format!("Cannot access '{}': {}", with_slash.display(), e));
+            }
+            _ => {
+                // Path doesn't exist or exists but isn't a directory - fall through
+            }
+        }
+    }
+
+    Ok(PathBuf::from(path_str))
+}
 
 /// Main application view that composes the shard list, header, and create dialog.
 ///
@@ -397,7 +464,15 @@ impl MainView {
             return;
         }
 
-        let path = PathBuf::from(&path_str);
+        // Normalize path: expand ~ and ensure absolute path
+        let path = match normalize_project_path(&path_str) {
+            Ok(p) => p,
+            Err(e) => {
+                self.state.add_project_error = Some(e);
+                cx.notify();
+                return;
+            }
+        };
 
         match actions::add_project(path.clone(), name) {
             Ok(project) => {
@@ -855,5 +930,65 @@ impl Render for MainView {
                     cx,
                 ))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_path_with_leading_slash() {
+        let result = normalize_project_path("/Users/test/project").unwrap();
+        assert_eq!(result, PathBuf::from("/Users/test/project"));
+    }
+
+    #[test]
+    fn test_normalize_path_tilde_expansion() {
+        let result = normalize_project_path("~/projects/test").unwrap();
+        let expected_home = dirs::home_dir().expect("test requires home dir");
+        assert_eq!(result, expected_home.join("projects/test"));
+    }
+
+    #[test]
+    fn test_normalize_path_bare_tilde() {
+        let result = normalize_project_path("~").unwrap();
+        let expected_home = dirs::home_dir().expect("test requires home dir");
+        assert_eq!(result, expected_home);
+    }
+
+    #[test]
+    fn test_normalize_path_trims_whitespace() {
+        let result = normalize_project_path("  /Users/test/project  ").unwrap();
+        assert_eq!(result, PathBuf::from("/Users/test/project"));
+    }
+
+    #[test]
+    fn test_normalize_path_without_leading_slash_fallback() {
+        // Non-existent path should remain unchanged (passthrough)
+        let result = normalize_project_path("nonexistent/path/here").unwrap();
+        assert_eq!(result, PathBuf::from("nonexistent/path/here"));
+    }
+
+    #[test]
+    fn test_normalize_path_empty_string() {
+        // Empty input passes through as empty path
+        // Caller validates for empty before calling this function
+        let result = normalize_project_path("").unwrap();
+        assert_eq!(result, PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_normalize_path_whitespace_only() {
+        // Whitespace-only trims to empty, passes through
+        // Caller validates for empty before calling this function
+        let result = normalize_project_path("   ").unwrap();
+        assert_eq!(result, PathBuf::from(""));
+    }
+
+    #[test]
+    fn test_normalize_path_tilde_in_middle_not_expanded() {
+        let result = normalize_project_path("/Users/test/~project").unwrap();
+        assert_eq!(result, PathBuf::from("/Users/test/~project"));
     }
 }
