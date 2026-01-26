@@ -2,6 +2,7 @@ use clap::ArgMatches;
 use tracing::{error, info, warn};
 
 use shards_core::CreateSessionRequest;
+use shards_core::SessionStatus;
 use shards_core::cleanup;
 use shards_core::config::ShardsConfig;
 use shards_core::events;
@@ -289,9 +290,16 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
 }
 
 fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    // Check for --all flag first
+    if matches.get_flag("all") {
+        let agent_override = matches.get_one::<String>("agent").cloned();
+        return handle_open_all(agent_override);
+    }
+
+    // Single branch operation
     let branch = matches
         .get_one::<String>("branch")
-        .ok_or("Branch argument is required")?;
+        .ok_or("Branch argument is required (or use --all)")?;
     let agent_override = matches.get_one::<String>("agent").cloned();
 
     info!(event = "cli.open_started", branch = branch, agent_override = ?agent_override);
@@ -319,10 +327,76 @@ fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     }
 }
 
+/// Handle `shards open --all` - open agents in all stopped shards
+fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    info!(event = "cli.open_all_started", agent_override = ?agent_override);
+
+    let sessions = session_handler::list_sessions()?;
+    let stopped: Vec<_> = sessions
+        .iter()
+        .filter(|s| s.status == SessionStatus::Stopped)
+        .collect();
+
+    if stopped.is_empty() {
+        println!("No stopped shards to open.");
+        info!(event = "cli.open_all_completed", opened = 0, failed = 0);
+        return Ok(());
+    }
+
+    let mut opened: Vec<(String, String)> = Vec::new(); // (branch, agent)
+    let mut errors: Vec<(String, String)> = Vec::new(); // (branch, error_message)
+
+    for session in stopped {
+        match session_handler::open_session(&session.branch, agent_override.clone()) {
+            Ok(s) => {
+                opened.push((s.branch.clone(), s.agent.clone()));
+            }
+            Err(e) => {
+                errors.push((session.branch.clone(), e.to_string()));
+            }
+        }
+    }
+
+    // Report successes
+    if !opened.is_empty() {
+        println!("Opened {} shard(s):", opened.len());
+        for (branch, agent) in &opened {
+            println!("   {} ({})", branch, agent);
+        }
+    }
+
+    // Report failures
+    if !errors.is_empty() {
+        eprintln!("Failed to open {} shard(s):", errors.len());
+        for (branch, err) in &errors {
+            eprintln!("   {}: {}", branch, err);
+        }
+    }
+
+    info!(
+        event = "cli.open_all_completed",
+        opened = opened.len(),
+        failed = errors.len()
+    );
+
+    // Return error if any failures (for exit code)
+    if !errors.is_empty() {
+        return Err(format!("Failed to open {} shard(s)", errors.len()).into());
+    }
+
+    Ok(())
+}
+
 fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    // Check for --all flag first
+    if matches.get_flag("all") {
+        return handle_stop_all();
+    }
+
+    // Single branch operation
     let branch = matches
         .get_one::<String>("branch")
-        .ok_or("Branch argument is required")?;
+        .ok_or("Branch argument is required (or use --all)")?;
 
     info!(event = "cli.stop_started", branch = branch);
 
@@ -343,6 +417,66 @@ fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             Err(e.into())
         }
     }
+}
+
+/// Handle `shards stop --all` - stop all running shards
+fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
+    info!(event = "cli.stop_all_started");
+
+    let sessions = session_handler::list_sessions()?;
+    let active: Vec<_> = sessions
+        .iter()
+        .filter(|s| s.status == SessionStatus::Active)
+        .collect();
+
+    if active.is_empty() {
+        println!("No running shards to stop.");
+        info!(event = "cli.stop_all_completed", stopped = 0, failed = 0);
+        return Ok(());
+    }
+
+    let mut stopped: Vec<String> = Vec::new(); // branch names
+    let mut errors: Vec<(String, String)> = Vec::new(); // (branch, error_message)
+
+    for session in active {
+        match session_handler::stop_session(&session.branch) {
+            Ok(()) => {
+                stopped.push(session.branch.clone());
+            }
+            Err(e) => {
+                errors.push((session.branch.clone(), e.to_string()));
+            }
+        }
+    }
+
+    // Report successes
+    if !stopped.is_empty() {
+        println!("Stopped {} shard(s):", stopped.len());
+        for branch in &stopped {
+            println!("   {}", branch);
+        }
+    }
+
+    // Report failures
+    if !errors.is_empty() {
+        eprintln!("Failed to stop {} shard(s):", errors.len());
+        for (branch, err) in &errors {
+            eprintln!("   {}: {}", branch, err);
+        }
+    }
+
+    info!(
+        event = "cli.stop_all_completed",
+        stopped = stopped.len(),
+        failed = errors.len()
+    );
+
+    // Return error if any failures (for exit code)
+    if !errors.is_empty() {
+        return Err(format!("Failed to stop {} shard(s)", errors.len()).into());
+    }
+
+    Ok(())
 }
 
 /// Determine which editor to use based on precedence:
