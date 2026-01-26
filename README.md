@@ -217,4 +217,6 @@ This enables parallel AI workflows without manual terminal management.
 
 ## License
 
-MIT License - see LICENSE file for details.
+Apache License 2.0 — free to use, modify, and distribute.
+
+The name "KILD", logo, and associated branding are trademarks of Rasmus Widing and are not covered by the Apache 2.0 license. See [LICENSE.md](LICENSE.md) for details.
