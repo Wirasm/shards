@@ -380,15 +380,15 @@ impl AppState {
     /// Uses path-based hashing that matches shards-core's `generate_project_id`.
     /// If no active project is set, returns all displays (unfiltered).
     pub fn filtered_displays(&self) -> Vec<&ShardDisplay> {
-        if let Some(active_id) = self.active_project_id() {
-            self.displays
-                .iter()
-                .filter(|d| d.session.project_id == active_id)
-                .collect()
-        } else {
+        let Some(active_id) = self.active_project_id() else {
             // No active project - show all shards
-            self.displays.iter().collect()
-        }
+            return self.displays.iter().collect();
+        };
+
+        self.displays
+            .iter()
+            .filter(|d| d.session.project_id == active_id)
+            .collect()
     }
 
     /// Count shards with Stopped status.

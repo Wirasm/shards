@@ -316,18 +316,19 @@ pub fn set_active_project(path: Option<PathBuf>) -> Result<(), String> {
     let mut data = load_projects();
 
     // Validate that the project exists if a path is provided
-    if let Some(ref p) = path
-        && !data.projects.iter().any(|proj| &proj.path == p)
-    {
-        return Err("Project not found".to_string());
+    if let Some(p) = &path {
+        let project_exists = data.projects.iter().any(|proj| &proj.path == p);
+        if !project_exists {
+            return Err("Project not found".to_string());
+        }
     }
 
-    data.active = path.clone();
+    data.active = path;
     save_projects(&data)?;
 
     tracing::info!(
         event = "ui.set_active_project.completed",
-        path = ?path
+        path = ?data.active
     );
 
     Ok(())

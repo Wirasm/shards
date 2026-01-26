@@ -45,11 +45,14 @@ pub fn render_project_selector(state: &AppState, cx: &mut Context<MainView>) -> 
             .into_any_element();
     }
 
-    let active_name = active_project
-        .as_ref()
-        .and_then(|path| projects.iter().find(|p| &p.path == path))
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| "Select Project".to_string());
+    let active_name = match active_project {
+        Some(path) => projects
+            .iter()
+            .find(|p| &p.path == path)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Select Project".to_string()),
+        None => "Select Project".to_string(),
+    };
 
     let projects_for_dropdown: Vec<Project> = projects.clone();
     let active_for_dropdown = active_project.clone();
