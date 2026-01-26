@@ -437,6 +437,9 @@ impl MainView {
 
         if let Err(e) = actions::set_active_project(Some(path.clone())) {
             tracing::error!(event = "ui.project_select.failed", error = %e);
+            self.state.add_project_error = Some(format!("Failed to save project selection: {}", e));
+            cx.notify();
+            return;
         }
 
         self.state.active_project = Some(path);
@@ -453,6 +456,8 @@ impl MainView {
 
         if let Err(e) = actions::remove_project(&path) {
             tracing::error!(event = "ui.remove_project.failed", error = %e);
+            self.state.add_project_error = Some(format!("Failed to remove project: {}", e));
+            cx.notify();
             return;
         }
 

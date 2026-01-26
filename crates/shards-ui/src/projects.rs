@@ -3,6 +3,8 @@
 //! Handles storing, loading, and validating projects (git repositories).
 
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 /// A project is a git repository where shards can be created.
@@ -23,30 +25,67 @@ pub struct ProjectsData {
 }
 
 /// Check if a path is a git repository.
+///
+/// Uses two detection methods:
+/// 1. Checks for a `.git` directory (standard repositories)
+/// 2. Falls back to `git rev-parse --git-dir` (handles worktrees and bare repos)
+///
+/// Returns `false` if detection fails (with warning logged).
 pub fn is_git_repo(path: &Path) -> bool {
     // Check for .git directory
     if path.join(".git").exists() {
         return true;
     }
     // Also check via git command (handles worktrees and bare repos)
-    std::process::Command::new("git")
+    match std::process::Command::new("git")
         .args(["rev-parse", "--git-dir"])
         .current_dir(path)
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    {
+        Ok(output) => output.status.success(),
+        Err(e) => {
+            tracing::warn!(
+                event = "ui.projects.git_check_failed",
+                path = %path.display(),
+                error = %e,
+                "Failed to execute git command to check repository status"
+            );
+            false
+        }
+    }
 }
 
-/// Derive project ID from path (matches shards-core's project ID generation).
+/// Generate project ID from path using hash (matches shards-core's `generate_project_id`).
+///
+/// Uses the same algorithm as `shards_core::git::operations::generate_project_id`
+/// to ensure session filtering works correctly.
 pub fn derive_project_id(path: &Path) -> String {
-    // shards-core uses the directory name as project_id
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string()
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
-/// Load projects from ~/.shards/projects.json
+/// Get a human-readable display name from a path.
+///
+/// Returns the final directory component, or "unknown" for edge cases like root "/".
+pub fn derive_display_name(path: &Path) -> String {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => {
+            tracing::warn!(
+                event = "ui.projects.derive_name_fallback",
+                path = %path.display(),
+                "Could not derive display name from path, using 'unknown'"
+            );
+            "unknown".to_string()
+        }
+    }
+}
+
+/// Load projects from ~/.shards/projects.json.
+///
+/// Falls back to `./shards/projects.json` if home directory cannot be determined.
+/// Returns default empty state if file doesn't exist or is corrupted (with warning logged).
 pub fn load_projects() -> ProjectsData {
     let path = projects_file_path();
     if !path.exists() {
@@ -54,7 +93,18 @@ pub fn load_projects() -> ProjectsData {
     }
 
     match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    event = "ui.projects.json_parse_failed",
+                    path = %path.display(),
+                    error = %e,
+                    "Projects file exists but contains invalid JSON - project configuration lost"
+                );
+                ProjectsData::default()
+            }
+        },
         Err(e) => {
             tracing::warn!(
                 event = "ui.projects.load_failed",
@@ -91,10 +141,17 @@ pub fn save_projects(data: &ProjectsData) -> Result<(), String> {
 }
 
 fn projects_file_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".shards")
-        .join("projects.json")
+    match dirs::home_dir() {
+        Some(home) => home.join(".shards").join("projects.json"),
+        None => {
+            tracing::error!(
+                event = "ui.projects.home_dir_not_found",
+                fallback = ".",
+                "Could not determine home directory - using current directory as fallback"
+            );
+            PathBuf::from(".").join(".shards").join("projects.json")
+        }
+    }
 }
 
 /// Validation result for adding a project.
@@ -214,17 +271,102 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_project_id() {
+    fn test_derive_project_id_consistency() {
+        // Same path should generate same ID
         let path = PathBuf::from("/Users/test/Projects/my-project");
-        let id = derive_project_id(&path);
-        assert_eq!(id, "my-project");
+        let id1 = derive_project_id(&path);
+        let id2 = derive_project_id(&path);
+        assert_eq!(id1, id2);
     }
 
     #[test]
-    fn test_derive_project_id_root() {
-        let path = PathBuf::from("/");
+    fn test_derive_project_id_different_paths() {
+        // Different paths should generate different IDs
+        let path1 = PathBuf::from("/Users/test/Projects/project-a");
+        let path2 = PathBuf::from("/Users/test/Projects/project-b");
+        let id1 = derive_project_id(&path1);
+        let id2 = derive_project_id(&path2);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_derive_project_id_is_hex() {
+        let path = PathBuf::from("/Users/test/Projects/my-project");
         let id = derive_project_id(&path);
+        // Should be a valid hex string
+        assert!(!id.is_empty());
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_derive_display_name() {
+        let path = PathBuf::from("/Users/test/Projects/my-project");
+        let name = derive_display_name(&path);
+        assert_eq!(name, "my-project");
+    }
+
+    #[test]
+    fn test_derive_display_name_root() {
+        let path = PathBuf::from("/");
+        let name = derive_display_name(&path);
         // Root has no file_name, so falls back to "unknown"
-        assert_eq!(id, "unknown");
+        assert_eq!(name, "unknown");
+    }
+
+    #[test]
+    fn test_projects_data_serialization_roundtrip() {
+        let data = ProjectsData {
+            projects: vec![
+                Project {
+                    path: PathBuf::from("/path/to/project-a"),
+                    name: "Project A".to_string(),
+                },
+                Project {
+                    path: PathBuf::from("/path/to/project-b"),
+                    name: "Project B".to_string(),
+                },
+            ],
+            active: Some(PathBuf::from("/path/to/project-a")),
+        };
+
+        // Serialize
+        let json = serde_json::to_string(&data).expect("Failed to serialize");
+
+        // Deserialize
+        let loaded: ProjectsData = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        // Verify equality
+        assert_eq!(loaded.projects.len(), 2);
+        assert_eq!(loaded.projects[0].path, PathBuf::from("/path/to/project-a"));
+        assert_eq!(loaded.projects[0].name, "Project A");
+        assert_eq!(loaded.projects[1].path, PathBuf::from("/path/to/project-b"));
+        assert_eq!(loaded.projects[1].name, "Project B");
+        assert_eq!(loaded.active, Some(PathBuf::from("/path/to/project-a")));
+    }
+
+    #[test]
+    fn test_projects_data_default() {
+        let data = ProjectsData::default();
+        assert!(data.projects.is_empty());
+        assert!(data.active.is_none());
+    }
+
+    #[test]
+    fn test_project_equality() {
+        let project1 = Project {
+            path: PathBuf::from("/path/to/project"),
+            name: "Project".to_string(),
+        };
+        let project2 = Project {
+            path: PathBuf::from("/path/to/project"),
+            name: "Project".to_string(),
+        };
+        let project3 = Project {
+            path: PathBuf::from("/different/path"),
+            name: "Project".to_string(),
+        };
+
+        assert_eq!(project1, project2);
+        assert_ne!(project1, project3);
     }
 }

@@ -140,13 +140,21 @@ impl CreateFormState {
     /// Get the currently selected agent name.
     ///
     /// Derives the agent name from the index, falling back to the default
-    /// agent if the index is out of bounds.
+    /// agent if the index is out of bounds (with warning logged).
     pub fn selected_agent(&self) -> String {
         let agents = shards_core::agents::valid_agent_names();
         agents
             .get(self.selected_agent_index)
             .copied()
-            .unwrap_or_else(|| shards_core::agents::default_agent_name())
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    event = "ui.create_form.agent_index_out_of_bounds",
+                    index = self.selected_agent_index,
+                    agent_count = agents.len(),
+                    "Selected agent index out of bounds, using default"
+                );
+                shards_core::agents::default_agent_name()
+            })
             .to_string()
     }
 }
@@ -173,7 +181,7 @@ impl Default for CreateFormState {
             .iter()
             .position(|&a| a == default_agent)
             .unwrap_or_else(|| {
-                tracing::info!(
+                tracing::warn!(
                     event = "ui.create_form.default_agent_not_found",
                     default = default_agent,
                     selected = agents[0],
@@ -368,7 +376,9 @@ impl AppState {
 
     /// Get displays filtered by active project.
     ///
-    /// If no active project is set, returns all displays.
+    /// Filters shards where `session.project_id` matches the derived ID of the active project path.
+    /// Uses path-based hashing that matches shards-core's `generate_project_id`.
+    /// If no active project is set, returns all displays (unfiltered).
     pub fn filtered_displays(&self) -> Vec<&ShardDisplay> {
         if let Some(active_id) = self.active_project_id() {
             self.displays
@@ -1036,9 +1046,14 @@ mod tests {
         // No active project
         assert!(state.active_project_id().is_none());
 
-        // With active project
+        // With active project - should return a hash, not directory name
         state.active_project = Some(PathBuf::from("/Users/test/Projects/my-project"));
-        assert_eq!(state.active_project_id(), Some("my-project".to_string()));
+        let project_id = state.active_project_id();
+        assert!(project_id.is_some());
+        // Should be a hex hash, not the directory name
+        let id = project_id.unwrap();
+        assert!(!id.is_empty());
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -1089,6 +1104,11 @@ mod tests {
     fn test_filtered_displays_with_active_project() {
         use shards_core::sessions::types::SessionStatus;
 
+        // Use the actual hash for the project path
+        let project_path = PathBuf::from("/Users/test/Projects/project-a");
+        let project_id_a = crate::projects::derive_project_id(&project_path);
+        let project_id_b = crate::projects::derive_project_id(&PathBuf::from("/other/project"));
+
         let make_session = |id: &str, project_id: &str| Session {
             id: id.to_string(),
             branch: format!("branch-{}", id),
@@ -1113,26 +1133,71 @@ mod tests {
         let mut state = make_test_state();
         state.displays = vec![
             ShardDisplay {
-                session: make_session("1", "project-a"),
+                session: make_session("1", &project_id_a),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
             },
             ShardDisplay {
-                session: make_session("2", "project-b"),
+                session: make_session("2", &project_id_b),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
             },
             ShardDisplay {
-                session: make_session("3", "project-a"),
+                session: make_session("3", &project_id_a),
                 status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
             },
         ];
 
         // Active project set - should filter
-        state.active_project = Some(PathBuf::from("/Users/test/Projects/project-a"));
+        state.active_project = Some(project_path);
         let filtered = state.filtered_displays();
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().all(|d| d.session.project_id == "project-a"));
+        assert!(
+            filtered
+                .iter()
+                .all(|d| d.session.project_id == project_id_a)
+        );
+    }
+
+    #[test]
+    fn test_filtered_displays_returns_empty_when_no_matching_project() {
+        use shards_core::sessions::types::SessionStatus;
+
+        let make_session = |id: &str, project_id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: project_id.to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = make_test_state();
+        state.displays = vec![ShardDisplay {
+            session: make_session("1", "other-project-hash"),
+            status: ProcessStatus::Stopped,
+            git_status: GitStatus::Unknown,
+        }];
+
+        // Active project set to a different path - should return empty
+        state.active_project = Some(PathBuf::from("/different/project/path"));
+        let filtered = state.filtered_displays();
+        assert!(
+            filtered.is_empty(),
+            "Should return empty when no shards match active project"
+        );
     }
 }
