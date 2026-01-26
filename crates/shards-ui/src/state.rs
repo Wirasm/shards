@@ -264,7 +264,8 @@ impl AppState {
         if let Err(e) = crate::projects::migrate_projects_to_canonical() {
             tracing::warn!(
                 event = "ui.projects.migration_failed",
-                error = %e
+                error = %e,
+                "Project migration failed - some projects may not filter correctly"
             );
         }
 
