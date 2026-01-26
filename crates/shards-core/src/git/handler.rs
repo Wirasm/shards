@@ -594,6 +594,7 @@ pub fn remove_worktree_force(worktree_path: &Path) -> Result<(), GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_detect_project_not_in_repo() {
@@ -624,57 +625,49 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_detect_project_at_not_in_repo() {
-        // Create a temporary directory that is NOT a git repository
-        let temp_dir =
-            std::env::temp_dir().join(format!("shards_test_not_a_repo_{}", std::process::id()));
+    /// Test helper: Create a temporary directory with unique name.
+    /// Returns a PathBuf that will be cleaned up when dropped.
+    fn create_temp_test_dir(prefix: &str) -> PathBuf {
+        let temp_dir = std::env::temp_dir().join(format!("{}_{}", prefix, std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
+        temp_dir
+    }
 
-        // detect_project_at should fail with NotInRepository
+    /// Test helper: Initialize a git repository with an initial commit.
+    fn init_test_repo(path: &Path) {
+        let repo = Repository::init(path).expect("Failed to init git repo");
+        let sig = repo
+            .signature()
+            .unwrap_or_else(|_| git2::Signature::now("Test", "test@test.com").unwrap());
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .expect("Failed to create initial commit");
+    }
+
+    #[test]
+    fn test_detect_project_at_not_in_repo() {
+        let temp_dir = create_temp_test_dir("shards_test_not_a_repo");
+
         let result = detect_project_at(&temp_dir);
+
         assert!(result.is_err());
         assert!(
             matches!(result.unwrap_err(), GitError::NotInRepository),
             "Expected NotInRepository error for non-git directory"
         );
 
-        // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_detect_project_at_uses_provided_path_not_cwd() {
-        // This test verifies that detect_project_at uses the provided path,
-        // not the current working directory.
-        //
-        // We test this by:
-        // 1. Creating a temp git repo at a known path
-        // 2. Calling detect_project_at with that path
-        // 3. Verifying the returned ProjectInfo matches the temp repo, not cwd
+        let temp_dir = create_temp_test_dir("shards_test_project_at");
+        init_test_repo(&temp_dir);
 
-        let temp_dir =
-            std::env::temp_dir().join(format!("shards_test_project_at_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
-
-        // Initialize a git repo at the temp path
-        let repo = Repository::init(&temp_dir).expect("Failed to init git repo");
-
-        // Create an initial commit so HEAD exists
-        {
-            let sig = repo
-                .signature()
-                .unwrap_or_else(|_| git2::Signature::now("Test", "test@test.com").unwrap());
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-                .expect("Failed to create initial commit");
-        }
-
-        // Call detect_project_at with the temp repo path
         let result = detect_project_at(&temp_dir);
+
         assert!(
             result.is_ok(),
             "detect_project_at should succeed for valid git repo"
@@ -682,8 +675,8 @@ mod tests {
 
         let project = result.unwrap();
 
-        // Verify the project path matches the temp dir, not the cwd
-        // Note: We canonicalize both paths to handle symlinks (e.g., /tmp -> /private/tmp on macOS)
+        // Verify the project path matches the temp dir, not the cwd.
+        // Canonicalize both paths to handle symlinks (e.g., /tmp -> /private/tmp on macOS).
         let expected_path = temp_dir.canonicalize().unwrap();
         let actual_path = project.path.canonicalize().unwrap();
         assert_eq!(
@@ -691,40 +684,19 @@ mod tests {
             "ProjectInfo.path should match the provided path, not cwd"
         );
 
-        // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_detect_project_at_discovers_from_subdirectory() {
-        // This test verifies that detect_project_at correctly discovers the repo
-        // when given a subdirectory path (Repository::discover walks up)
+        let temp_dir = create_temp_test_dir("shards_test_subdir");
+        init_test_repo(&temp_dir);
 
-        let temp_dir =
-            std::env::temp_dir().join(format!("shards_test_subdir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
-
-        // Initialize git repo at root
-        let repo = Repository::init(&temp_dir).expect("Failed to init git repo");
-
-        // Create an initial commit
-        {
-            let sig = repo
-                .signature()
-                .unwrap_or_else(|_| git2::Signature::now("Test", "test@test.com").unwrap());
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-                .expect("Failed to create initial commit");
-        }
-
-        // Create a nested subdirectory
         let subdir = temp_dir.join("src").join("nested").join("deep");
         std::fs::create_dir_all(&subdir).expect("Failed to create subdirectory");
 
-        // Call detect_project_at with the subdirectory path
         let result = detect_project_at(&subdir);
+
         assert!(
             result.is_ok(),
             "detect_project_at should discover repo from subdirectory"
@@ -732,7 +704,7 @@ mod tests {
 
         let project = result.unwrap();
 
-        // Verify the project path is the repo root, not the subdirectory
+        // Verify the project path is the repo root, not the subdirectory.
         let expected_path = temp_dir.canonicalize().unwrap();
         let actual_path = project.path.canonicalize().unwrap();
         assert_eq!(
@@ -740,55 +712,30 @@ mod tests {
             "ProjectInfo.path should be repo root, not subdirectory"
         );
 
-        // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_detect_project_at_project_id_consistent() {
-        // This test verifies that detect_project_at generates consistent project IDs
-        // regardless of whether called from root or subdirectory
+        let temp_dir = create_temp_test_dir("shards_test_consistent_id");
+        init_test_repo(&temp_dir);
 
-        let temp_dir =
-            std::env::temp_dir().join(format!("shards_test_consistent_id_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
-
-        // Initialize git repo
-        let repo = Repository::init(&temp_dir).expect("Failed to init git repo");
-        {
-            let sig = repo
-                .signature()
-                .unwrap_or_else(|_| git2::Signature::now("Test", "test@test.com").unwrap());
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
-                .expect("Failed to create initial commit");
-        }
-
-        // Create a subdirectory
         let subdir = temp_dir.join("src");
         std::fs::create_dir_all(&subdir).expect("Failed to create subdirectory");
 
-        // Call from root
         let project_from_root = detect_project_at(&temp_dir).unwrap();
-
-        // Call from subdirectory
         let project_from_subdir = detect_project_at(&subdir).unwrap();
 
-        // Project IDs should be identical
         assert_eq!(
             project_from_root.id, project_from_subdir.id,
             "Project ID should be consistent regardless of path within repo"
         );
 
-        // Project paths should also be identical (both should be repo root)
         assert_eq!(
             project_from_root.path, project_from_subdir.path,
             "Project path should be repo root regardless of input path"
         );
 
-        // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
