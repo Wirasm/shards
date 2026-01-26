@@ -744,74 +744,8 @@ fn handle_commits_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
         count = count
     );
 
-    match session_handler::get_session(branch) {
-        Ok(session) => {
-            // Run git log in worktree directory
-            let output = match std::process::Command::new("git")
-                .current_dir(&session.worktree_path)
-                .args(["log", "--oneline", "-n", &count.to_string()])
-                .output()
-            {
-                Ok(output) => output,
-                Err(e) => {
-                    eprintln!(
-                        "Failed to execute git in '{}': {}",
-                        session.worktree_path.display(),
-                        e
-                    );
-                    eprintln!(
-                        "Hint: Make sure git is installed and the worktree path is accessible."
-                    );
-                    error!(
-                        event = "cli.commits_git_spawn_failed",
-                        branch = branch,
-                        worktree_path = %session.worktree_path.display(),
-                        error = %e
-                    );
-                    return Err(format!("Failed to execute git: {}", e).into());
-                }
-            };
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("Git error: {}", stderr);
-                error!(
-                    event = "cli.commits_git_failed",
-                    branch = branch,
-                    error = %stderr
-                );
-                return Err(format!("git log failed: {}", stderr).into());
-            }
-
-            // Output commits to stdout, handling broken pipe gracefully
-            if let Err(e) = std::io::stdout().write_all(&output.stdout) {
-                // Broken pipe is expected when piped to tools like `head`
-                if e.kind() == std::io::ErrorKind::BrokenPipe {
-                    // Operation succeeded, reader just stopped early
-                    info!(
-                        event = "cli.commits_completed",
-                        branch = branch,
-                        count = count
-                    );
-                    return Ok(());
-                }
-                eprintln!("Failed to write output: {}", e);
-                error!(
-                    event = "cli.commits_write_failed",
-                    branch = branch,
-                    error = %e
-                );
-                return Err(format!("Failed to write commits output: {}", e).into());
-            }
-
-            info!(
-                event = "cli.commits_completed",
-                branch = branch,
-                count = count
-            );
-
-            Ok(())
-        }
+    let session = match session_handler::get_session(branch) {
+        Ok(session) => session,
         Err(e) => {
             eprintln!("Failed to find shard '{}': {}", branch, e);
             error!(
@@ -820,9 +754,63 @@ fn handle_commits_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
                 error = %e
             );
             events::log_app_error(&e);
-            Err(e.into())
+            return Err(e.into());
+        }
+    };
+
+    // Run git log in worktree directory
+    let output = std::process::Command::new("git")
+        .current_dir(&session.worktree_path)
+        .args(["log", "--oneline", "-n", &count.to_string()])
+        .output()
+        .map_err(|e| {
+            eprintln!(
+                "Failed to execute git in '{}': {}",
+                session.worktree_path.display(),
+                e
+            );
+            eprintln!("Hint: Make sure git is installed and the worktree path is accessible.");
+            error!(
+                event = "cli.commits_git_spawn_failed",
+                branch = branch,
+                worktree_path = %session.worktree_path.display(),
+                error = %e
+            );
+            format!("Failed to execute git: {}", e)
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Git error: {}", stderr);
+        error!(
+            event = "cli.commits_git_failed",
+            branch = branch,
+            error = %stderr
+        );
+        return Err(format!("git log failed: {}", stderr).into());
+    }
+
+    // Output commits to stdout, handling broken pipe gracefully
+    if let Err(e) = std::io::stdout().write_all(&output.stdout) {
+        // Broken pipe is expected when piped to tools like `head`
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("Failed to write output: {}", e);
+            error!(
+                event = "cli.commits_write_failed",
+                branch = branch,
+                error = %e
+            );
+            return Err(format!("Failed to write commits output: {}", e).into());
         }
     }
+
+    info!(
+        event = "cli.commits_completed",
+        branch = branch,
+        count = count
+    );
+
+    Ok(())
 }
 
 fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
