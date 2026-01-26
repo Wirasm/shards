@@ -117,6 +117,9 @@ pub struct AppState {
 
     // Stop error state (shown inline per-row)
     pub stop_error: Option<OperationError>,
+
+    /// Timestamp of last successful status refresh
+    pub last_refresh: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -135,6 +138,7 @@ impl AppState {
             confirm_error: None,
             open_error: None,
             stop_error: None,
+            last_refresh: Some(std::time::Instant::now()),
         }
     }
 
@@ -143,6 +147,34 @@ impl AppState {
         let (displays, load_error) = crate::actions::refresh_sessions();
         self.displays = displays;
         self.load_error = load_error;
+        self.last_refresh = Some(std::time::Instant::now());
+    }
+
+    /// Update only the process status of existing shards without reloading from disk.
+    ///
+    /// This is faster than refresh_sessions() for status polling because it:
+    /// - Doesn't reload session files from disk
+    /// - Only checks if tracked processes are still running
+    /// - Preserves the existing shard list structure
+    pub fn update_statuses_only(&mut self) {
+        for shard_display in &mut self.displays {
+            if let Some(pid) = shard_display.session.process_id {
+                shard_display.status = match shards_core::process::is_process_running(pid) {
+                    Ok(true) => ProcessStatus::Running,
+                    Ok(false) => ProcessStatus::Stopped,
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "ui.status_update.process_check_failed",
+                            pid = pid,
+                            branch = shard_display.session.branch,
+                            error = %e
+                        );
+                        ProcessStatus::Unknown
+                    }
+                };
+            }
+        }
+        self.last_refresh = Some(std::time::Instant::now());
     }
 
     /// Reset the create form to default state.
@@ -193,6 +225,7 @@ mod tests {
             confirm_error: Some("Some error".to_string()),
             open_error: None,
             stop_error: None,
+            last_refresh: None,
         };
 
         state.reset_confirm_dialog();
@@ -218,6 +251,7 @@ mod tests {
                 message: "error".to_string(),
             }),
             stop_error: None,
+            last_refresh: None,
         };
 
         state.clear_open_error();
@@ -241,6 +275,7 @@ mod tests {
                 branch: "branch".to_string(),
                 message: "error".to_string(),
             }),
+            last_refresh: None,
         };
 
         state.clear_stop_error();
@@ -276,5 +311,26 @@ mod tests {
 
         let display = ShardDisplay::from_session(session);
         assert_eq!(display.status, ProcessStatus::Stopped);
+    }
+
+    #[test]
+    fn test_update_statuses_only_sets_last_refresh() {
+        let mut state = AppState {
+            displays: Vec::new(),
+            load_error: None,
+            show_create_dialog: false,
+            create_form: CreateFormState::default(),
+            create_error: None,
+            show_confirm_dialog: false,
+            confirm_target_branch: None,
+            confirm_error: None,
+            open_error: None,
+            stop_error: None,
+            last_refresh: None,
+        };
+
+        assert!(state.last_refresh.is_none());
+        state.update_statuses_only();
+        assert!(state.last_refresh.is_some());
     }
 }
