@@ -306,14 +306,10 @@ fn handle_destroy_all(force: bool) -> Result<(), Box<dyn std::error::Error>> {
             "Destroy ALL {} shard(s)? This cannot be undone. [y/N] ",
             sessions.len()
         );
-        io::stdout()
-            .flush()
-            .map_err(|e| format!("Failed to flush stdout for confirmation prompt: {}", e))?;
+        io::stdout().flush()?;
 
         let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| format!("Failed to read confirmation input: {}", e))?;
+        io::stdin().read_line(&mut input)?;
 
         if !is_confirmation_accepted(&input) {
             println!("Aborted.");
