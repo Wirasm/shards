@@ -106,6 +106,9 @@ pub struct CreateSessionRequest {
     pub branch: String,
     pub agent: Option<String>,
     pub note: Option<String>,
+    /// Optional project path for UI context. When provided, this path is used
+    /// instead of current working directory for project detection.
+    pub project_path: Option<PathBuf>,
 }
 
 impl CreateSessionRequest {
@@ -114,6 +117,22 @@ impl CreateSessionRequest {
             branch,
             agent,
             note,
+            project_path: None,
+        }
+    }
+
+    /// Create a request with explicit project path (for UI usage)
+    pub fn with_project_path(
+        branch: String,
+        agent: Option<String>,
+        note: Option<String>,
+        project_path: PathBuf,
+    ) -> Self {
+        Self {
+            branch,
+            agent,
+            note,
+            project_path: Some(project_path),
         }
     }
 
@@ -363,5 +382,26 @@ mod tests {
         let session: Session = serde_json::from_str(json_without_window_id).unwrap();
         assert_eq!(session.terminal_type, Some(TerminalType::ITerm));
         assert_eq!(session.terminal_window_id, None);
+    }
+
+    #[test]
+    fn test_create_session_request_with_project_path() {
+        let request = CreateSessionRequest::with_project_path(
+            "test-branch".to_string(),
+            Some("claude".to_string()),
+            None,
+            PathBuf::from("/path/to/project"),
+        );
+        assert_eq!(request.branch, "test-branch");
+        assert_eq!(
+            request.project_path,
+            Some(PathBuf::from("/path/to/project"))
+        );
+    }
+
+    #[test]
+    fn test_create_session_request_new_has_no_project_path() {
+        let request = CreateSessionRequest::new("test-branch".to_string(), None, None);
+        assert!(request.project_path.is_none());
     }
 }

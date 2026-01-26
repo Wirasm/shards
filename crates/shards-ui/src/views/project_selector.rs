@@ -2,7 +2,7 @@
 //!
 //! Dropdown for switching between projects and adding new ones.
 
-use gpui::{Context, IntoElement, div, prelude::*, px, rgb};
+use gpui::{Context, FontWeight, IntoElement, div, prelude::*, px, rgb};
 
 use crate::projects::Project;
 use crate::state::AppState;
@@ -51,7 +51,7 @@ pub fn render_project_selector(state: &AppState, cx: &mut Context<MainView>) -> 
             .find(|p| &p.path == path)
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "Select Project".to_string()),
-        None => "Select Project".to_string(),
+        None => "All Projects".to_string(),
     };
 
     let projects_for_dropdown: Vec<Project> = projects.clone();
@@ -114,6 +114,49 @@ pub fn render_project_selector(state: &AppState, cx: &mut Context<MainView>) -> 
                     .shadow_lg()
                     .flex()
                     .flex_col()
+                    // "All Projects" option
+                    .child(
+                        div()
+                            .id("project-all")
+                            .px_3()
+                            .py_2()
+                            .hover(|style| style.bg(rgb(0x3d3d3d)))
+                            .cursor_pointer()
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(|view, _, _, cx| {
+                                    view.on_project_select_all(cx);
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .w(px(16.0))
+                                            .text_color(if active_for_dropdown.is_none() {
+                                                rgb(0x4a9eff)
+                                            } else {
+                                                rgb(0x444444)
+                                            })
+                                            .child(if active_for_dropdown.is_none() {
+                                                "●"
+                                            } else {
+                                                "○"
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(rgb(0xffffff))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child("All Projects"),
+                                    ),
+                            ),
+                    )
+                    // Divider after "All Projects"
+                    .child(div().h(px(1.0)).bg(rgb(0x444444)).mx_2().my_1())
                     // Project list
                     .children(
                         projects_for_dropdown

@@ -150,7 +150,18 @@ impl MainView {
             Some(self.state.create_form.note.trim().to_string())
         };
 
-        match actions::create_shard(&branch, &agent, note) {
+        // Get active project path for shard creation context
+        let project_path = self.state.active_project.clone();
+
+        // Warn if no project selected (shouldn't happen with current UI flow)
+        if project_path.is_none() {
+            tracing::warn!(
+                event = "ui.dialog_submit.no_active_project",
+                message = "Creating shard without active project - will use cwd detection"
+            );
+        }
+
+        match actions::create_shard(&branch, &agent, note, project_path) {
             Ok(_session) => {
                 // Success - close dialog and refresh list
                 self.state.show_create_dialog = false;
@@ -518,6 +529,23 @@ impl MainView {
         }
 
         self.state.active_project = Some(path);
+        self.state.show_project_dropdown = false;
+        cx.notify();
+    }
+
+    /// Handle "All Projects" selection from dropdown.
+    pub fn on_project_select_all(&mut self, cx: &mut Context<Self>) {
+        tracing::info!(event = "ui.project_selected_all");
+
+        if let Err(e) = actions::set_active_project(None) {
+            tracing::error!(event = "ui.project_select_all.failed", error = %e);
+            self.state.add_project_error =
+                Some(format!("Failed to clear project selection: {}", e));
+            cx.notify();
+            return;
+        }
+
+        self.state.active_project = None;
         self.state.show_project_dropdown = false;
         cx.notify();
     }

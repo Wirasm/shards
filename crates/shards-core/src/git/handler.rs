@@ -57,6 +57,50 @@ pub fn detect_project() -> Result<ProjectInfo, GitError> {
     Ok(project)
 }
 
+/// Detect project from a specific path (for UI usage).
+///
+/// Unlike `detect_project()` which uses current directory, this function
+/// uses the provided path to discover the git repository.
+pub fn detect_project_at(path: &Path) -> Result<ProjectInfo, GitError> {
+    info!(event = "core.git.project.detect_at_started", path = %path.display());
+
+    let repo = Repository::discover(path).map_err(|_| GitError::NotInRepository)?;
+
+    let repo_path = repo.workdir().ok_or_else(|| GitError::OperationFailed {
+        message: "Repository has no working directory".to_string(),
+    })?;
+
+    let remote_url = repo
+        .find_remote("origin")
+        .ok()
+        .and_then(|remote| remote.url().map(|s| s.to_string()));
+
+    let project_name = if let Some(ref url) = remote_url {
+        operations::derive_project_name_from_remote(url)
+    } else {
+        operations::derive_project_name_from_path(repo_path)
+    };
+
+    let project_id = operations::generate_project_id(repo_path);
+
+    let project = ProjectInfo::new(
+        project_id.clone(),
+        project_name.clone(),
+        repo_path.to_path_buf(),
+        remote_url.clone(),
+    );
+
+    info!(
+        event = "core.git.project.detect_at_completed",
+        project_id = project_id,
+        project_name = project_name,
+        repo_path = %repo_path.display(),
+        remote_url = remote_url.as_deref().unwrap_or("none")
+    );
+
+    Ok(project)
+}
+
 pub fn create_worktree(
     base_dir: &Path,
     project: &ProjectInfo,

@@ -115,14 +115,19 @@ pub fn render_shard_list(state: &AppState, cx: &mut Context<MainView>) -> impl I
         let filtered: Vec<_> = state.filtered_displays().into_iter().cloned().collect();
 
         if filtered.is_empty() {
-            // Empty state - no shards for the current project
+            // Empty state - message depends on whether filtering is active
+            let message = if state.active_project.is_some() {
+                "No active shards for this project"
+            } else {
+                "No active shards"
+            };
             div()
                 .flex()
                 .flex_1()
                 .justify_center()
                 .items_center()
                 .text_color(rgb(0x888888))
-                .child("No active shards for this project")
+                .child(message)
         } else {
             // List state - show shards with action buttons
             let item_count = filtered.len();

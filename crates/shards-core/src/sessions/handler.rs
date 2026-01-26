@@ -73,8 +73,18 @@ pub fn create_session(
     let validated = operations::validate_session_request(&request.branch, &agent_command, &agent)?;
 
     // 2. Detect git project (I/O)
-    let project =
-        git::handler::detect_project().map_err(|e| SessionError::GitError { source: e })?;
+    // Use explicit project path if provided (UI context), otherwise use cwd (CLI context)
+    let project = match &request.project_path {
+        Some(path) => {
+            info!(
+                event = "core.session.using_explicit_project_path",
+                path = %path.display()
+            );
+            git::handler::detect_project_at(path)
+        }
+        None => git::handler::detect_project(),
+    }
+    .map_err(|e| SessionError::GitError { source: e })?;
 
     info!(
         event = "core.session.project_detected",

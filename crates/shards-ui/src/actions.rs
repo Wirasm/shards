@@ -13,15 +13,24 @@ use crate::projects::{
 };
 use crate::state::{OperationError, ProcessStatus, ShardDisplay};
 
-/// Create a new shard with the given branch name, agent, and optional note.
+/// Create a new shard with the given branch name, agent, optional note, and optional project path.
+///
+/// When `project_path` is provided (UI context), creates the shard in that project.
+/// When `None` (shouldn't happen in UI), falls back to current directory detection.
 ///
 /// Returns the created session on success, or an error message on failure.
-pub fn create_shard(branch: &str, agent: &str, note: Option<String>) -> Result<Session, String> {
+pub fn create_shard(
+    branch: &str,
+    agent: &str,
+    note: Option<String>,
+    project_path: Option<PathBuf>,
+) -> Result<Session, String> {
     tracing::info!(
         event = "ui.create_shard.started",
         branch = branch,
         agent = agent,
-        note = ?note
+        note = ?note,
+        project_path = ?project_path
     );
 
     if branch.trim().is_empty() {
@@ -43,7 +52,15 @@ pub fn create_shard(branch: &str, agent: &str, note: Option<String>) -> Result<S
         }
     };
 
-    let request = CreateSessionRequest::new(branch.to_string(), Some(agent.to_string()), note);
+    let request = match project_path {
+        Some(path) => CreateSessionRequest::with_project_path(
+            branch.to_string(),
+            Some(agent.to_string()),
+            note,
+            path,
+        ),
+        None => CreateSessionRequest::new(branch.to_string(), Some(agent.to_string()), note),
+    };
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {
