@@ -10,6 +10,7 @@
 
 | Date       | Change                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-01-26 | Phase 2.5 Bulk Open/Stop (`--all`): COMPLETE                                                   |
 | 2026-01-26 | Phase 2.1 Focus Terminal (`shards focus`): COMPLETE                                            |
 | 2026-01-25 | Phase 1.1 Session Notes (`--note`): COMPLETE                                                   |
 | 2026-01-24 | `--force` on destroy: DONE (Phase 6 lifecycle)                                                 |
@@ -106,8 +107,8 @@ Important features that improve workflow significantly.
 | Git diff       | `shards diff <branch>`    | See changes without entering worktree |         |
 | Git commits    | `shards commits <branch>` | See work done                         |         |
 | Bulk destroy   | `shards destroy --all`    | Clean slate                           |         |
-| Bulk open      | `shards open --all`       | Launch agents in all stopped shards   |         |
-| Bulk stop      | `shards stop --all`       | Stop all running agents               |         |
+| Bulk open      | `shards open --all`       | Launch agents in all stopped shards   | ✅ DONE |
+| Bulk stop      | `shards stop --all`       | Stop all running agents               | ✅ DONE |
 | Fuzzy matching | Partial branch names      | Less typing                           |         |
 
 **Note**: `restart` is deprecated. Use `stop` then `open` for similar behavior, or `open --all` for bulk agent launch.
