@@ -137,6 +137,16 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("focus")
+                .about("Bring a shard's terminal window to the foreground")
+                .arg(
+                    Arg::new("branch")
+                        .help("Branch name of the shard to focus")
+                        .required(true)
+                        .index(1)
+                )
+        )
+        .subcommand(
             Command::new("restart")
                 .about("Restart agent in existing shard without destroying worktree")
                 .arg(
@@ -598,5 +608,26 @@ mod tests {
             "test-branch"
         );
         assert_eq!(code_matches.get_one::<String>("editor").unwrap(), "vim");
+    }
+
+    #[test]
+    fn test_cli_focus_command() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "focus", "test-branch"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let focus_matches = matches.subcommand_matches("focus").unwrap();
+        assert_eq!(
+            focus_matches.get_one::<String>("branch").unwrap(),
+            "test-branch"
+        );
+    }
+
+    #[test]
+    fn test_cli_focus_requires_branch() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["shards", "focus"]);
+        assert!(matches.is_err());
     }
 }

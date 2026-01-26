@@ -61,6 +61,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("open", sub_matches)) => handle_open_command(sub_matches),
         Some(("stop", sub_matches)) => handle_stop_command(sub_matches),
         Some(("code", sub_matches)) => handle_code_command(sub_matches),
+        Some(("focus", sub_matches)) => handle_focus_command(sub_matches),
         Some(("status", sub_matches)) => handle_status_command(sub_matches),
         Some(("cleanup", sub_matches)) => handle_cleanup_command(sub_matches),
         Some(("health", sub_matches)) => handle_health_command(sub_matches),
@@ -412,6 +413,66 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 editor = editor,
                 error = %e
             );
+            Err(e.into())
+        }
+    }
+}
+
+fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or("Branch argument is required")?;
+
+    info!(event = "cli.focus_started", branch = branch);
+
+    // 1. Look up the session
+    let session = match session_handler::get_session(branch) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to find shard '{}': {}", branch, e);
+            error!(event = "cli.focus_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
+            return Err(e.into());
+        }
+    };
+
+    // 2. Get terminal type and window ID
+    let terminal_type = match session.terminal_type.as_ref() {
+        Some(t) => t,
+        None => {
+            eprintln!("No terminal type recorded for shard '{}'", branch);
+            error!(
+                event = "cli.focus_failed",
+                branch = branch,
+                error = "no_terminal_type"
+            );
+            return Err("No terminal type recorded for this shard".into());
+        }
+    };
+
+    let window_id = match session.terminal_window_id.as_ref() {
+        Some(id) => id,
+        None => {
+            eprintln!("No window ID recorded for shard '{}'", branch);
+            error!(
+                event = "cli.focus_failed",
+                branch = branch,
+                error = "no_window_id"
+            );
+            return Err("No window ID recorded for this shard".into());
+        }
+    };
+
+    // 3. Focus the terminal window
+    match shards_core::terminal_ops::focus_terminal(terminal_type, window_id) {
+        Ok(()) => {
+            println!("Focused shard '{}' terminal window", branch);
+            info!(event = "cli.focus_completed", branch = branch);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to focus terminal for '{}': {}", branch, e);
+            error!(event = "cli.focus_failed", branch = branch, error = %e);
             Err(e.into())
         }
     }

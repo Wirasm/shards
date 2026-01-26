@@ -338,6 +338,25 @@ pub fn close_terminal(terminal_type: &TerminalType, window_id: Option<&str>) {
     );
 }
 
+/// Focus a terminal window (bring to foreground).
+///
+/// # Arguments
+/// * `terminal_type` - The type of terminal (iTerm, Terminal.app, Ghostty)
+/// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+///
+/// # Returns
+/// * `Ok(())` - Window was focused successfully
+/// * `Err(TerminalError)` - Focus failed (window not found, permission denied, etc.)
+pub fn focus_terminal(terminal_type: &TerminalType, window_id: &str) -> Result<(), TerminalError> {
+    info!(
+        event = "core.terminal.focus_requested",
+        terminal_type = %terminal_type,
+        window_id = %window_id
+    );
+
+    operations::focus_terminal_window(terminal_type, window_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -229,6 +229,41 @@ pub fn close_terminal_window(_terminal_type: &TerminalType, _window_id: Option<&
     );
 }
 
+/// Focus a terminal window by terminal type and window ID.
+///
+/// This function delegates to the appropriate backend via the registry.
+///
+/// # Arguments
+/// * `terminal_type` - The type of terminal (iTerm, Terminal.app, Ghostty)
+/// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+///
+/// # Returns
+/// * `Ok(())` - Window was focused successfully
+/// * `Err(TerminalError)` - Focus failed (window not found, permission denied, etc.)
+#[cfg(target_os = "macos")]
+pub fn focus_terminal_window(
+    terminal_type: &TerminalType,
+    window_id: &str,
+) -> Result<(), TerminalError> {
+    let resolved_type = match terminal_type {
+        TerminalType::Native => registry::detect_terminal()?,
+        t => t.clone(),
+    };
+
+    let backend = registry::get_backend(&resolved_type).ok_or(TerminalError::NoTerminalFound)?;
+    backend.focus_window(window_id)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focus_terminal_window(
+    _terminal_type: &TerminalType,
+    _window_id: &str,
+) -> Result<(), TerminalError> {
+    Err(TerminalError::FocusFailed {
+        message: "Focus not supported on this platform".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

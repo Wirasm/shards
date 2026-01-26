@@ -98,6 +98,80 @@ pub fn execute_spawn_script(
 #[cfg(not(target_os = "macos"))]
 pub fn close_applescript_window(_script: &str, _terminal_name: &str, _window_id: &str) {}
 
+/// Focus a window via AppleScript (returns result for user feedback).
+#[cfg(target_os = "macos")]
+pub fn focus_applescript_window(
+    script: &str,
+    terminal_name: &str,
+    window_id: &str,
+) -> Result<(), crate::terminal::errors::TerminalError> {
+    use crate::terminal::errors::TerminalError;
+    use tracing::{error, info};
+
+    debug!(
+        event = "core.terminal.focus_started",
+        terminal = terminal_name,
+        window_id = %window_id
+    );
+
+    match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            info!(
+                event = "core.terminal.focus_completed",
+                terminal = terminal_name,
+                window_id = %window_id
+            );
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                event = "core.terminal.focus_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                stderr = %stderr.trim()
+            );
+            Err(TerminalError::FocusFailed {
+                message: format!(
+                    "{} focus failed for window {}: {}",
+                    terminal_name,
+                    window_id,
+                    stderr.trim()
+                ),
+            })
+        }
+        Err(e) => {
+            error!(
+                event = "core.terminal.focus_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                error = %e
+            );
+            Err(TerminalError::FocusFailed {
+                message: format!(
+                    "Failed to execute osascript for {} focus: {}",
+                    terminal_name, e
+                ),
+            })
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focus_applescript_window(
+    _script: &str,
+    _terminal_name: &str,
+    _window_id: &str,
+) -> Result<(), crate::terminal::errors::TerminalError> {
+    Err(crate::terminal::errors::TerminalError::FocusFailed {
+        message: "Focus not supported on this platform".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

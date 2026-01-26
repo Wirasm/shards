@@ -23,6 +23,9 @@ pub enum TerminalError {
     #[error("AppleScript failed with error: {stderr}")]
     AppleScriptFailed { stderr: String },
 
+    #[error("Failed to focus terminal window: {message}")]
+    FocusFailed { message: String },
+
     #[error("IO error during terminal operation: {source}")]
     IoError {
         #[from]
@@ -40,6 +43,7 @@ impl ShardsError for TerminalError {
             TerminalError::InvalidCommand => "INVALID_COMMAND",
             TerminalError::AppleScriptExecution { .. } => "APPLESCRIPT_EXECUTION_FAILED",
             TerminalError::AppleScriptFailed { .. } => "APPLESCRIPT_FAILED",
+            TerminalError::FocusFailed { .. } => "TERMINAL_FOCUS_FAILED",
             TerminalError::IoError { .. } => "TERMINAL_IO_ERROR",
         }
     }
@@ -52,6 +56,7 @@ impl ShardsError for TerminalError {
                 | TerminalError::InvalidCommand
                 | TerminalError::AppleScriptExecution { .. }
                 | TerminalError::AppleScriptFailed { .. }
+                | TerminalError::FocusFailed { .. }
         )
     }
 }

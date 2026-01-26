@@ -26,6 +26,12 @@ const TERMINAL_CLOSE_SCRIPT: &str = r#"tell application "Terminal"
         close window id {window_id}
     end tell"#;
 
+/// AppleScript template for Terminal.app window focusing.
+const TERMINAL_FOCUS_SCRIPT: &str = r#"tell application "Terminal"
+        activate
+        set frontmost of window id {window_id} to true
+    end tell"#;
+
 /// Backend implementation for Terminal.app.
 pub struct TerminalAppBackend;
 
@@ -88,6 +94,23 @@ impl TerminalBackend for TerminalAppBackend {
             event = "core.terminal.close_not_supported",
             platform = std::env::consts::OS
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn focus_window(&self, window_id: &str) -> Result<(), TerminalError> {
+        let script = TERMINAL_FOCUS_SCRIPT.replace("{window_id}", window_id);
+        crate::terminal::common::applescript::focus_applescript_window(
+            &script,
+            self.display_name(),
+            window_id,
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
+        Err(TerminalError::FocusFailed {
+            message: "Focus not supported on this platform".to_string(),
+        })
     }
 }
 

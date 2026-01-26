@@ -43,6 +43,16 @@ pub trait TerminalBackend: Send + Sync {
     /// - Close failures are non-fatal and logged at warn level
     /// - Returns () because close operations should never block session destruction
     fn close_window(&self, window_id: Option<&str>);
+
+    /// Focus a terminal window (bring to foreground).
+    ///
+    /// # Arguments
+    /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+    ///
+    /// # Returns
+    /// * `Ok(())` - Window was focused successfully
+    /// * `Err(TerminalError)` - Focus failed (window not found, permission denied, etc.)
+    fn focus_window(&self, window_id: &str) -> Result<(), TerminalError>;
 }
 
 #[cfg(test)]
@@ -74,6 +84,10 @@ mod tests {
         }
 
         fn close_window(&self, _window_id: Option<&str>) {}
+
+        fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
     }
 
     #[test]

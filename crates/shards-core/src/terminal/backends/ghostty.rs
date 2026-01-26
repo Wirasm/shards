@@ -173,6 +173,76 @@ impl TerminalBackend for GhosttyBackend {
             platform = std::env::consts::OS
         );
     }
+
+    #[cfg(target_os = "macos")]
+    fn focus_window(&self, window_id: &str) -> Result<(), TerminalError> {
+        use tracing::info;
+
+        debug!(
+            event = "core.terminal.focus_ghostty_started",
+            window_title = %window_id
+        );
+
+        // Ghostty uses window title, not numeric ID
+        // First activate the app
+        let activate_script = r#"tell application "Ghostty" to activate"#;
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(activate_script)
+            .output();
+
+        // Use System Events to find and raise the window by title
+        let focus_script = format!(
+            r#"tell application "System Events"
+            tell process "Ghostty"
+                set frontmost to true
+                repeat with w in windows
+                    if name of w contains "{}" then
+                        perform action "AXRaise" of w
+                        return "focused"
+                    end if
+                end repeat
+                return "not found"
+            end tell
+        end tell"#,
+            window_id
+        );
+
+        match std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&focus_script)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if result == "focused" {
+                    info!(
+                        event = "core.terminal.focus_completed",
+                        terminal = "Ghostty",
+                        window_title = %window_id
+                    );
+                    Ok(())
+                } else {
+                    Err(TerminalError::FocusFailed {
+                        message: format!("Ghostty window '{}' not found", window_id),
+                    })
+                }
+            }
+            Ok(output) => Err(TerminalError::FocusFailed {
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            }),
+            Err(e) => Err(TerminalError::FocusFailed {
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
+        Err(TerminalError::FocusFailed {
+            message: "Focus not supported on this platform".to_string(),
+        })
+    }
 }
 
 #[cfg(test)]

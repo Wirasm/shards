@@ -10,6 +10,7 @@
 
 | Date       | Change                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------- |
+| 2026-01-26 | Phase 2.1 Focus Terminal (`shards focus`): COMPLETE                                            |
 | 2026-01-25 | Phase 1.1 Session Notes (`--note`): COMPLETE                                                   |
 | 2026-01-24 | `--force` on destroy: DONE (Phase 6 lifecycle)                                                 |
 | 2026-01-24 | Renamed `shards open` (editor) → `shards code` to avoid conflict with lifecycle `open` command |
@@ -99,15 +100,15 @@ Essential features that significantly improve daily usability.
 
 Important features that improve workflow significantly.
 
-| Feature        | Command/Flag              | Value                                 |
-| -------------- | ------------------------- | ------------------------------------- |
-| Focus terminal | `shards focus <branch>`   | Quick window switching                |
-| Git diff       | `shards diff <branch>`    | See changes without entering worktree |
-| Git commits    | `shards commits <branch>` | See work done                         |
-| Bulk destroy   | `shards destroy --all`    | Clean slate                           |
-| Bulk open      | `shards open --all`       | Launch agents in all stopped shards   |
-| Bulk stop      | `shards stop --all`       | Stop all running agents               |
-| Fuzzy matching | Partial branch names      | Less typing                           |
+| Feature        | Command/Flag              | Value                                 | Status  |
+| -------------- | ------------------------- | ------------------------------------- | ------- |
+| Focus terminal | `shards focus <branch>`   | Quick window switching                | ✅ DONE |
+| Git diff       | `shards diff <branch>`    | See changes without entering worktree |         |
+| Git commits    | `shards commits <branch>` | See work done                         |         |
+| Bulk destroy   | `shards destroy --all`    | Clean slate                           |         |
+| Bulk open      | `shards open --all`       | Launch agents in all stopped shards   |         |
+| Bulk stop      | `shards stop --all`       | Stop all running agents               |         |
+| Fuzzy matching | Partial branch names      | Less typing                           |         |
 
 **Note**: `restart` is deprecated. Use `stop` then `open` for similar behavior, or `open --all` for bulk agent launch.
 
@@ -470,7 +471,9 @@ shards destroy --force feature-auth
 
 ---
 
-#### 2.1 Focus Terminal (`shards focus`)
+#### 2.1 Focus Terminal (`shards focus`) - COMPLETE
+
+**Status**: COMPLETE (2026-01-26)
 
 **What**: Bring a shard's terminal window to foreground.
 
