@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use super::backends::{AetherBackend, ClaudeBackend, CodexBackend, GeminiBackend, KiroBackend};
+use super::backends::{AmpBackend, ClaudeBackend, CodexBackend, GeminiBackend, KiroBackend};
 use super::traits::AgentBackend;
 use super::types::AgentType;
 
@@ -21,11 +21,11 @@ struct AgentRegistry {
 impl AgentRegistry {
     fn new() -> Self {
         let mut backends: HashMap<AgentType, Box<dyn AgentBackend>> = HashMap::new();
+        backends.insert(AgentType::Amp, Box::new(AmpBackend));
         backends.insert(AgentType::Claude, Box::new(ClaudeBackend));
         backends.insert(AgentType::Kiro, Box::new(KiroBackend));
         backends.insert(AgentType::Gemini, Box::new(GeminiBackend));
         backends.insert(AgentType::Codex, Box::new(CodexBackend));
-        backends.insert(AgentType::Aether, Box::new(AetherBackend));
         Self { backends }
     }
 
@@ -87,6 +87,13 @@ pub fn get_process_patterns(name: &str) -> Option<Vec<String>> {
     get_agent(name).map(|backend| backend.process_patterns())
 }
 
+/// Get a comma-separated string of all supported agent names.
+///
+/// Used for error messages to ensure they stay in sync with available agents.
+pub fn supported_agents_string() -> String {
+    valid_agent_names().join(", ")
+}
+
 /// Check if an agent's CLI is available in PATH (case-insensitive).
 pub fn is_agent_available(name: &str) -> Option<bool> {
     get_agent(name).map(|backend| backend.is_available())
@@ -134,11 +141,11 @@ mod tests {
 
     #[test]
     fn test_is_valid_agent() {
+        assert!(is_valid_agent("amp"));
         assert!(is_valid_agent("claude"));
         assert!(is_valid_agent("kiro"));
         assert!(is_valid_agent("gemini"));
         assert!(is_valid_agent("codex"));
-        assert!(is_valid_agent("aether"));
 
         // Now case-insensitive
         assert!(is_valid_agent("Claude"));
@@ -152,11 +159,9 @@ mod tests {
     fn test_valid_agent_names() {
         let names = valid_agent_names();
         assert_eq!(names.len(), 5);
-        assert!(names.contains(&"claude"));
-        assert!(names.contains(&"kiro"));
-        assert!(names.contains(&"gemini"));
-        assert!(names.contains(&"codex"));
-        assert!(names.contains(&"aether"));
+        for agent in ["amp", "claude", "kiro", "gemini", "codex"] {
+            assert!(names.contains(&agent));
+        }
     }
 
     #[test]
@@ -171,11 +176,11 @@ mod tests {
 
     #[test]
     fn test_get_default_command() {
+        assert_eq!(get_default_command("amp"), Some("amp"));
         assert_eq!(get_default_command("claude"), Some("claude"));
         assert_eq!(get_default_command("kiro"), Some("kiro-cli chat"));
         assert_eq!(get_default_command("gemini"), Some("gemini"));
         assert_eq!(get_default_command("codex"), Some("codex"));
-        assert_eq!(get_default_command("aether"), Some("aether"));
         assert_eq!(get_default_command("unknown"), None);
     }
 
@@ -210,7 +215,7 @@ mod tests {
     #[test]
     fn test_registry_contains_all_agents() {
         // Ensure all expected agents are registered
-        let expected_agents = ["claude", "kiro", "gemini", "codex", "aether"];
+        let expected_agents = ["amp", "claude", "kiro", "gemini", "codex"];
         for agent in expected_agents {
             assert!(
                 is_valid_agent(agent),
@@ -218,6 +223,33 @@ mod tests {
                 agent
             );
         }
+    }
+
+    #[test]
+    fn test_supported_agents_string() {
+        let s = supported_agents_string();
+        assert!(s.contains("amp"));
+        assert!(s.contains("claude"));
+        assert!(s.contains("kiro"));
+        assert!(s.contains("gemini"));
+        assert!(s.contains("codex"));
+        // Verify it's comma-separated
+        assert!(s.contains(", "));
+        // Verify removed agents are NOT present
+        assert!(!s.contains("aether"));
+    }
+
+    #[test]
+    fn test_registry_and_agent_type_in_sync() {
+        // Verify registry count matches AgentType count
+        // This ensures no orphaned backends and no missing registrations
+        let agent_count = valid_agent_names().len();
+        let type_count = AgentType::all().len();
+        assert_eq!(
+            agent_count, type_count,
+            "Registry should have exactly as many agents ({}) as AgentType variants ({})",
+            agent_count, type_count
+        );
     }
 
     #[test]

@@ -95,7 +95,7 @@ cargo run -p kild -- destroy --all --force       # Force destroy all (skip confi
 **Key modules in kild-core:**
 - `sessions/` - Session lifecycle (create, open, stop, destroy, list)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app)
-- `agents/` - Agent backend system (claude, kiro, gemini, etc.)
+- `agents/` - Agent backend system (amp, claude, kiro, gemini, codex)
 - `git/` - Git worktree operations via git2
 - `config/` - Hierarchical TOML config (defaults → user → project → CLI)
 - `cleanup/` - Orphaned resource cleanup with multiple strategies

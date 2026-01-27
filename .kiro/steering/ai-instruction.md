@@ -20,11 +20,11 @@ Shards is a CLI tool that manages multiple AI coding agents in isolated Git work
 
 ## Supported Agents
 
+- **amp** - Amp CLI
 - **claude** - Claude Code CLI (default)
 - **kiro** - Kiro CLI
 - **gemini** - Gemini CLI
 - **codex** - OpenAI Codex CLI
-- **aether** - Aether CLI
 
 ## How to Use Shards
 

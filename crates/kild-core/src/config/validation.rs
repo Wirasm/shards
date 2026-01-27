@@ -14,7 +14,7 @@ pub const VALID_TERMINALS: [&str; 5] = ["iterm2", "iterm", "terminal", "ghostty"
 ///
 /// # Validation Rules
 ///
-/// - Agent name must be a known agent (claude, kiro, gemini, codex, aether)
+/// - Agent name must be a known agent (see [`AgentType`](crate::agents::AgentType) for supported agents)
 /// - Terminal preference, if set, should be a valid terminal name (warning only)
 /// - Include patterns, if configured, must be valid
 ///
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_config_validation_all_valid_agents() {
-        let valid_agents = ["claude", "kiro", "gemini", "codex", "aether"];
+        let valid_agents = ["amp", "claude", "kiro", "gemini", "codex"];
         for agent in valid_agents {
             let mut config = KildConfig::default();
             config.agent = AgentConfig {
