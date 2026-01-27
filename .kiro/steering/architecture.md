@@ -20,7 +20,7 @@ crates/
 │       │   ├── backends/   # Terminal implementations (ghostty, iterm, terminal_app)
 │       │   └── common/     # Shared utilities (applescript, detection, escape)
 │       ├── agents/    # Feature slice: agent backend system
-│       │   └── backends/   # Agent implementations (claude, kiro, gemini, codex, aether)
+│       │   └── backends/   # Agent implementations (amp, claude, kiro, gemini, codex)
 │       ├── health/    # Feature slice: health monitoring
 │       ├── cleanup/   # Feature slice: cleanup operations
 │       ├── process/   # Feature slice: process management

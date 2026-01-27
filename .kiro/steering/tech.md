@@ -44,7 +44,7 @@
 - **sessions/**: Session lifecycle (create, list, destroy, restart, status)
 - **git/**: Git worktree operations via git2
 - **terminal/**: Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app)
-- **agents/**: Agent backend system (claude, kiro, gemini, codex, aether)
+- **agents/**: Agent backend system (amp, claude, kiro, gemini, codex)
 - **health/**: Session health monitoring with CPU/memory metrics
 - **cleanup/**: Orphaned resource cleanup with multiple strategies
 - **process/**: PID tracking with process reuse protection
