@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentType {
+    Amp,
     Claude,
     Kiro,
     Gemini,
@@ -19,6 +20,7 @@ impl AgentType {
     /// Get the canonical string name for this agent type.
     pub fn as_str(&self) -> &'static str {
         match self {
+            AgentType::Amp => "amp",
             AgentType::Claude => "claude",
             AgentType::Kiro => "kiro",
             AgentType::Gemini => "gemini",
@@ -29,6 +31,7 @@ impl AgentType {
     /// Parse an agent type from a string (case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            "amp" => Some(AgentType::Amp),
             "claude" => Some(AgentType::Claude),
             "kiro" => Some(AgentType::Kiro),
             "gemini" => Some(AgentType::Gemini),
@@ -40,6 +43,7 @@ impl AgentType {
     /// Get all supported agent types.
     pub fn all() -> &'static [AgentType] {
         &[
+            AgentType::Amp,
             AgentType::Claude,
             AgentType::Kiro,
             AgentType::Gemini,
@@ -78,6 +82,7 @@ mod tests {
 
     #[test]
     fn test_agent_type_as_str() {
+        assert_eq!(AgentType::Amp.as_str(), "amp");
         assert_eq!(AgentType::Claude.as_str(), "claude");
         assert_eq!(AgentType::Kiro.as_str(), "kiro");
         assert_eq!(AgentType::Gemini.as_str(), "gemini");
@@ -97,7 +102,8 @@ mod tests {
     #[test]
     fn test_agent_type_all() {
         let all = AgentType::all();
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&AgentType::Amp));
         assert!(all.contains(&AgentType::Claude));
         assert!(all.contains(&AgentType::Kiro));
         assert!(all.contains(&AgentType::Gemini));

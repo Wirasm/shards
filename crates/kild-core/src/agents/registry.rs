@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use super::backends::{ClaudeBackend, CodexBackend, GeminiBackend, KiroBackend};
+use super::backends::{AmpBackend, ClaudeBackend, CodexBackend, GeminiBackend, KiroBackend};
 use super::traits::AgentBackend;
 use super::types::AgentType;
 
@@ -21,6 +21,7 @@ struct AgentRegistry {
 impl AgentRegistry {
     fn new() -> Self {
         let mut backends: HashMap<AgentType, Box<dyn AgentBackend>> = HashMap::new();
+        backends.insert(AgentType::Amp, Box::new(AmpBackend));
         backends.insert(AgentType::Claude, Box::new(ClaudeBackend));
         backends.insert(AgentType::Kiro, Box::new(KiroBackend));
         backends.insert(AgentType::Gemini, Box::new(GeminiBackend));
@@ -133,6 +134,7 @@ mod tests {
 
     #[test]
     fn test_is_valid_agent() {
+        assert!(is_valid_agent("amp"));
         assert!(is_valid_agent("claude"));
         assert!(is_valid_agent("kiro"));
         assert!(is_valid_agent("gemini"));
@@ -149,7 +151,8 @@ mod tests {
     #[test]
     fn test_valid_agent_names() {
         let names = valid_agent_names();
-        assert_eq!(names.len(), 4);
+        assert_eq!(names.len(), 5);
+        assert!(names.contains(&"amp"));
         assert!(names.contains(&"claude"));
         assert!(names.contains(&"kiro"));
         assert!(names.contains(&"gemini"));
@@ -168,6 +171,7 @@ mod tests {
 
     #[test]
     fn test_get_default_command() {
+        assert_eq!(get_default_command("amp"), Some("amp"));
         assert_eq!(get_default_command("claude"), Some("claude"));
         assert_eq!(get_default_command("kiro"), Some("kiro-cli chat"));
         assert_eq!(get_default_command("gemini"), Some("gemini"));
@@ -206,7 +210,7 @@ mod tests {
     #[test]
     fn test_registry_contains_all_agents() {
         // Ensure all expected agents are registered
-        let expected_agents = ["claude", "kiro", "gemini", "codex"];
+        let expected_agents = ["amp", "claude", "kiro", "gemini", "codex"];
         for agent in expected_agents {
             assert!(
                 is_valid_agent(agent),
