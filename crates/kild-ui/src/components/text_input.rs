@@ -1,7 +1,8 @@
 //! TextInput component with themed styling.
 //!
 //! A display-only text input that renders value, placeholder, and cursor.
-//! Keyboard input is handled by the parent view.
+//! This component does not handle keyboard events or maintain input state -
+//! the parent view is responsible for event handling and state management.
 
 // Allow dead_code - this component is defined ahead of usage in create_dialog.rs.
 // Remove this attribute once Phase 9.6 integrates this component.
@@ -18,7 +19,7 @@ use crate::theme;
 /// - Themed background and border
 /// - Placeholder text when empty (muted color)
 /// - Value text when not empty (bright color)
-/// - Cursor indicator (`|`) when focused
+/// - Cursor indicator (`|`) appended to value when focused and non-empty
 ///
 /// # Example
 ///
@@ -61,7 +62,8 @@ impl TextInput {
 
     /// Set whether the input is currently focused.
     ///
-    /// When focused, the border color changes to Ice and a cursor is shown.
+    /// When focused, the border color changes to Ice. A cursor (`|`) is appended
+    /// to the value if non-empty. Empty focused inputs show only the placeholder.
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
@@ -104,6 +106,7 @@ impl RenderOnce for TextInput {
             .border_1()
             .border_color(border_color)
             .min_h(px(36.0))
-            .child(div().text_color(text_color).child(display_text))
+            .text_color(text_color)
+            .child(display_text)
     }
 }
