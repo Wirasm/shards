@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use crate::agents::supported_agents_string;
+
 /// Base trait for all application errors
 pub trait KildError: Error + Send + Sync + 'static {
     /// Error code for programmatic handling
@@ -14,25 +16,55 @@ pub trait KildError: Error + Send + Sync + 'static {
 /// Common result type for the application
 pub type KildResult<T> = Result<T, Box<dyn KildError>>;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ConfigError {
-    #[error("Config file not found at '{path}'")]
     ConfigNotFound { path: String },
-
-    #[error("Failed to parse config file: {message}")]
     ConfigParseError { message: String },
-
-    #[error("Invalid agent '{agent}'. Supported agents: claude, kiro, gemini, codex, aether")]
     InvalidAgent { agent: String },
-
-    #[error("Invalid configuration: {message}")]
     InvalidConfiguration { message: String },
+    IoError { source: std::io::Error },
+}
 
-    #[error("IO error reading config: {source}")]
-    IoError {
-        #[from]
-        source: std::io::Error,
-    },
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::ConfigNotFound { path } => {
+                write!(f, "Config file not found at '{}'", path)
+            }
+            ConfigError::ConfigParseError { message } => {
+                write!(f, "Failed to parse config file: {}", message)
+            }
+            ConfigError::InvalidAgent { agent } => {
+                write!(
+                    f,
+                    "Invalid agent '{}'. Supported agents: {}",
+                    agent,
+                    supported_agents_string()
+                )
+            }
+            ConfigError::InvalidConfiguration { message } => {
+                write!(f, "Invalid configuration: {}", message)
+            }
+            ConfigError::IoError { source } => {
+                write!(f, "IO error reading config: {}", source)
+            }
+        }
+    }
+}
+
+impl Error for ConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ConfigError::IoError { source } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(source: std::io::Error) -> Self {
+        ConfigError::IoError { source }
+    }
 }
 
 impl KildError for ConfigError {
@@ -70,10 +102,21 @@ mod tests {
         let error = ConfigError::InvalidAgent {
             agent: "unknown".to_string(),
         };
-        assert_eq!(
-            error.to_string(),
-            "Invalid agent 'unknown'. Supported agents: claude, kiro, gemini, codex, aether"
+        let msg = error.to_string();
+        // Verify message format
+        assert!(msg.starts_with("Invalid agent 'unknown'. Supported agents: "));
+        // Verify all valid agents are listed
+        assert!(msg.contains("amp"), "Error should list amp");
+        assert!(msg.contains("claude"), "Error should list claude");
+        assert!(msg.contains("kiro"), "Error should list kiro");
+        assert!(msg.contains("gemini"), "Error should list gemini");
+        assert!(msg.contains("codex"), "Error should list codex");
+        // Verify removed agents are NOT listed
+        assert!(
+            !msg.contains("aether"),
+            "Error should NOT list removed agent aether"
         );
+        // Verify error trait methods
         assert_eq!(error.error_code(), "INVALID_AGENT");
         assert!(error.is_user_error());
     }

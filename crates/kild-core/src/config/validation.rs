@@ -14,7 +14,7 @@ pub const VALID_TERMINALS: [&str; 5] = ["iterm2", "iterm", "terminal", "ghostty"
 ///
 /// # Validation Rules
 ///
-/// - Agent name must be a known agent (claude, kiro, gemini, codex, aether)
+/// - Agent name must be a known agent (see [`AgentType`](crate::agents::AgentType) for supported agents)
 /// - Terminal preference, if set, should be a valid terminal name (warning only)
 /// - Include patterns, if configured, must be valid
 ///

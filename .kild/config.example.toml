@@ -15,7 +15,7 @@
 
 [agent]
 # Default agent when --agent is not specified
-# Options: claude, kiro, gemini, codex, aether
+# Options: amp, claude, codex, gemini, kiro
 default = "claude"
 
 # Global startup command (used if agent has no specific command)

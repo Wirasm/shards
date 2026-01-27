@@ -87,6 +87,13 @@ pub fn get_process_patterns(name: &str) -> Option<Vec<String>> {
     get_agent(name).map(|backend| backend.process_patterns())
 }
 
+/// Get a comma-separated string of all supported agent names.
+///
+/// Used for error messages to ensure they stay in sync with available agents.
+pub fn supported_agents_string() -> String {
+    valid_agent_names().join(", ")
+}
+
 /// Check if an agent's CLI is available in PATH (case-insensitive).
 pub fn is_agent_available(name: &str) -> Option<bool> {
     get_agent(name).map(|backend| backend.is_available())
@@ -218,6 +225,33 @@ mod tests {
                 agent
             );
         }
+    }
+
+    #[test]
+    fn test_supported_agents_string() {
+        let s = supported_agents_string();
+        assert!(s.contains("amp"));
+        assert!(s.contains("claude"));
+        assert!(s.contains("kiro"));
+        assert!(s.contains("gemini"));
+        assert!(s.contains("codex"));
+        // Verify it's comma-separated
+        assert!(s.contains(", "));
+        // Verify removed agents are NOT present
+        assert!(!s.contains("aether"));
+    }
+
+    #[test]
+    fn test_registry_and_agent_type_in_sync() {
+        // Verify registry count matches AgentType count
+        // This ensures no orphaned backends and no missing registrations
+        let agent_count = valid_agent_names().len();
+        let type_count = AgentType::all().len();
+        assert_eq!(
+            agent_count, type_count,
+            "Registry should have exactly as many agents ({}) as AgentType variants ({})",
+            agent_count, type_count
+        );
     }
 
     #[test]
