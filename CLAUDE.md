@@ -18,12 +18,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git as First-Class Citizen
 
-Shards is built around git worktrees. Let git handle what git does best:
+KILD is built around git worktrees. Let git handle what git does best:
 
 - **Surface git errors to users** for actionable issues (conflicts, uncommitted changes, branch already exists)
 - **Handle expected failures gracefully** (missing directories during cleanup, worktree already removed)
 - **Trust git's natural guardrails** (e.g., git2 refuses to remove worktree with uncommitted changes - surface this, don't bypass it)
-- **Branch naming:** Shards creates `shard_<hash>` branches automatically for isolation
+- **Branch naming:** KILD creates `kild_<hash>` branches automatically for isolation
 
 ## Code Quality Standards
 
@@ -47,11 +47,11 @@ cargo build --all              # Clean build
 ```bash
 # Build
 cargo build --all              # Build all crates
-cargo build -p shards-core     # Build specific crate
+cargo build -p kild-core       # Build specific crate
 
 # Test
 cargo test --all               # Run all tests
-cargo test -p shards-core      # Test specific crate
+cargo test -p kild-core        # Test specific crate
 cargo test test_name           # Run single test by name
 
 # Lint & Format
@@ -60,39 +60,39 @@ cargo fmt --check              # Check formatting
 cargo clippy --all -- -D warnings  # Lint with warnings as errors
 
 # Run
-cargo run -- create my-branch --agent claude
-cargo run -- create my-branch --agent claude --note "Working on auth feature"
-cargo run -- list
-cargo run -- list --json                 # JSON output for scripting
-cargo run -- status my-branch --json     # JSON output for single shard
-cargo run -- -q list                     # Quiet mode (suppress JSON logs)
-cargo run -- cd my-branch                # Print worktree path for shell integration
-cargo run -- open my-branch              # Open new agent in existing shard (additive)
-cargo run -- open my-branch --agent kiro # Open with different agent
-cargo run -- open --all                  # Open agents in all stopped shards
-cargo run -- open --all --agent claude   # Open all stopped shards with specific agent
-cargo run -- code my-branch              # Open worktree in editor
-cargo run -- focus my-branch             # Bring terminal window to foreground
-cargo run -- diff my-branch              # Show git diff for worktree
-cargo run -- diff my-branch --staged     # Show only staged changes
-cargo run -- commits my-branch           # Show recent commits in shard's branch
-cargo run -- commits my-branch -n 5      # Show last 5 commits
-cargo run -- stop my-branch              # Stop agent, preserve shard
-cargo run -- stop --all                  # Stop all running shards
-cargo run -- destroy my-branch           # Destroy shard
-cargo run -- destroy my-branch --force   # Force destroy (bypass git checks)
-cargo run -- destroy --all               # Destroy all shards (with confirmation)
-cargo run -- destroy --all --force       # Force destroy all (skip confirmation)
+cargo run -p kild -- create my-branch --agent claude
+cargo run -p kild -- create my-branch --agent claude --note "Working on auth feature"
+cargo run -p kild -- list
+cargo run -p kild -- list --json                 # JSON output for scripting
+cargo run -p kild -- status my-branch --json     # JSON output for single kild
+cargo run -p kild -- -q list                     # Quiet mode (suppress JSON logs)
+cargo run -p kild -- cd my-branch                # Print worktree path for shell integration
+cargo run -p kild -- open my-branch              # Open new agent in existing kild (additive)
+cargo run -p kild -- open my-branch --agent kiro # Open with different agent
+cargo run -p kild -- open --all                  # Open agents in all stopped kilds
+cargo run -p kild -- open --all --agent claude   # Open all stopped kilds with specific agent
+cargo run -p kild -- code my-branch              # Open worktree in editor
+cargo run -p kild -- focus my-branch             # Bring terminal window to foreground
+cargo run -p kild -- diff my-branch              # Show git diff for worktree
+cargo run -p kild -- diff my-branch --staged     # Show only staged changes
+cargo run -p kild -- commits my-branch           # Show recent commits in kild's branch
+cargo run -p kild -- commits my-branch -n 5      # Show last 5 commits
+cargo run -p kild -- stop my-branch              # Stop agent, preserve kild
+cargo run -p kild -- stop --all                  # Stop all running kilds
+cargo run -p kild -- destroy my-branch           # Destroy kild
+cargo run -p kild -- destroy my-branch --force   # Force destroy (bypass git checks)
+cargo run -p kild -- destroy --all               # Destroy all kilds (with confirmation)
+cargo run -p kild -- destroy --all --force       # Force destroy all (skip confirmation)
 ```
 
 ## Architecture
 
 **Workspace structure:**
-- `crates/shards-core` - Core library with all business logic, no CLI dependencies
-- `crates/shards` - Thin CLI that consumes shards-core (clap for arg parsing)
-- `crates/shards-ui` - GPUI-based native GUI with multi-project support
+- `crates/kild-core` - Core library with all business logic, no CLI dependencies
+- `crates/kild` - Thin CLI that consumes kild-core (clap for arg parsing)
+- `crates/kild-ui` - GPUI-based native GUI with multi-project support
 
-**Key modules in shards-core:**
+**Key modules in kild-core:**
 - `sessions/` - Session lifecycle (create, open, stop, destroy, list)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app)
 - `agents/` - Agent backend system (claude, kiro, gemini, etc.)
@@ -104,15 +104,15 @@ cargo run -- destroy --all --force       # Force destroy all (skip confirmation)
 - `logging/` - Tracing initialization with JSON output
 - `events/` - App lifecycle event helpers
 
-**Key modules in shards-ui:**
-- `projects.rs` - Project storage, validation, persistence to ~/.shards/projects.json
+**Key modules in kild-ui:**
+- `projects.rs` - Project storage, validation, persistence to ~/.kild/projects.json
 - `state.rs` - Application state with project filtering
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
-- `views/` - GPUI components (main view, shard list, dialogs, project selector)
+- `views/` - GPUI components (main view, kild list, dialogs, project selector)
 
 **Module pattern:** Each domain follows `errors.rs`, `types.rs`, `operations.rs`, `handler.rs` structure.
 
-**CLI interaction:** Commands delegate directly to `shards-core` handlers. No business logic in CLI layer.
+**CLI interaction:** Commands delegate directly to `kild-core` handlers. No business logic in CLI layer.
 
 ## Code Style Preferences
 
@@ -122,7 +122,7 @@ cargo run -- destroy --all --force       # Force destroy all (skip confirmation)
 
 ### Setup
 
-Logging is initialized via `shards_core::init_logging(quiet)` in the CLI main.rs. Output is JSON format via tracing-subscriber.
+Logging is initialized via `kild_core::init_logging(quiet)` in the CLI main.rs. Output is JSON format via tracing-subscriber.
 
 When `quiet` is true (via `-q` flag), only error-level events are emitted. When false, info-level and above events are emitted.
 
@@ -136,9 +136,9 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 
 | Layer | Crate | Description |
 |-------|-------|-------------|
-| `cli` | `crates/shards/` | User-facing CLI commands |
-| `core` | `crates/shards-core/` | Core library logic |
-| `ui` | `crates/shards-ui/` | GPUI native GUI |
+| `cli` | `crates/kild/` | User-facing CLI commands |
+| `core` | `crates/kild-core/` | Core library logic |
+| `ui` | `crates/kild-ui/` | GPUI native GUI |
 
 **Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`
 
@@ -173,10 +173,10 @@ warn!(event = "core.files.walk.error", error = %e, path = %path.display());
 
 ### App Lifecycle Events
 
-Use helpers from `shards_core::events`:
+Use helpers from `kild_core::events`:
 
 ```rust
-use shards_core::events;
+use kild_core::events;
 
 events::log_app_startup();           // core.app.startup_completed
 events::log_app_shutdown();          // core.app.shutdown_started
@@ -229,8 +229,8 @@ Backends registered in `terminal/registry.rs`. Detection preference: Ghostty > i
 
 ## Configuration Hierarchy
 
-Priority (highest wins): CLI args → project config (`./shards/config.toml`) → user config (`~/.shards/config.toml`) → defaults
+Priority (highest wins): CLI args → project config (`./.kild/config.toml`) → user config (`~/.kild/config.toml`) → defaults
 
 ## Error Handling
 
-All domain errors implement `ShardsError` trait with `error_code()` and `is_user_error()`. Use `thiserror` for definitions.
+All domain errors implement `KildError` trait with `error_code()` and `is_user_error()`. Use `thiserror` for definitions.

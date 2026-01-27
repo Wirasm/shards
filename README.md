@@ -1,40 +1,40 @@
 <p align="center">
-  <img src="assets/shards-hero.png" alt="Shards - Manage parallel AI development agents" />
+  <img src="assets/kild-hero.png" alt="KILD - Manage parallel AI development agents" />
 </p>
 
-# Shards
+# KILD
 
 Manage parallel AI development agents in isolated Git worktrees.
 
 ## Overview
 
-Shards eliminates context switching between scattered terminals when working with multiple AI coding assistants. Each shard runs in its own Git worktree with automatic branch creation, allowing you to manage parallel AI development sessions from a centralized interface.
+KILD eliminates context switching between scattered terminals when working with multiple AI coding assistants. Each kild runs in its own Git worktree with automatic branch creation, allowing you to manage parallel AI development sessions from a centralized interface.
 
 ## Features
 
-- **Isolated Worktrees**: Each shard gets its own Git worktree with unique `shard_<hash>` branch
+- **Isolated Worktrees**: Each kild gets its own Git worktree with unique `kild_<hash>` branch
 - **Native Terminal Integration**: Launches AI agents in native terminal windows
-- **Session Tracking**: Persistent registry tracks all active shards
+- **Session Tracking**: Persistent registry tracks all active kilds
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **Agent-Friendly**: Designed for programmatic use by AI assistants
 
 ## GUI (Experimental)
 
-A native graphical interface is under development using GPUI. The UI provides visual shard management as an alternative to the CLI.
+A native graphical interface is under development using GPUI. The UI provides visual kild management as an alternative to the CLI.
 
 ```bash
 # Build and run the experimental GPUI GUI
-cargo run -p shards-ui
+cargo run -p kild-ui
 ```
 
 The GUI currently supports:
 - Multi-project management: Add git repositories as projects, switch between them
-- Shard listing with status indicators (running, stopped, git dirty state)
-- Creating new shards with agent selection
-- Opening new agents in existing shards
-- Stopping agents without destroying shards
-- Destroying shards with confirmation dialog
-- Bulk operations: Open All stopped shards, Stop All running shards
+- KILD listing with status indicators (running, stopped, git dirty state)
+- Creating new kilds with agent selection
+- Opening new agents in existing kilds
+- Stopping agents without destroying kilds
+- Destroying kilds with confirmation dialog
+- Bulk operations: Open All stopped kilds, Stop All running kilds
 - Quick actions: Copy path to clipboard, open in editor, focus terminal window
 
 See the [PRD](.claude/PRPs/prds/gpui-native-terminal-ui.prd.md) for the development roadmap.
@@ -51,121 +51,121 @@ cargo install --path .
 
 ```bash
 # Suppress JSON log output (show only user-facing output)
-shards -q <command>
-shards --quiet <command>
+kild -q <command>
+kild --quiet <command>
 ```
 
-### Create a new shard
+### Create a new kild
 ```bash
-shards create <branch> --agent <agent>
+kild create <branch> --agent <agent>
 
 # Examples:
-shards create kiro-session --agent kiro
-shards create claude-work --agent claude
-shards create gemini-task --agent gemini
+kild create kiro-session --agent kiro
+kild create claude-work --agent claude
+kild create gemini-task --agent gemini
 
 # Add a description with --note
-shards create feature-auth --agent claude --note "Implementing JWT authentication"
+kild create feature-auth --agent claude --note "Implementing JWT authentication"
 ```
 
-### List active shards
+### List active kilds
 ```bash
-shards list
+kild list
 
 # Machine-readable JSON output
-shards list --json
+kild list --json
 ```
 
-### Navigate to a shard (shell integration)
+### Navigate to a kild (shell integration)
 ```bash
 # Print worktree path
-shards cd <branch>
+kild cd <branch>
 
 # Shell function for quick navigation
-scd() { cd "$(shards cd "$1")"; }
+kcd() { cd "$(kild cd "$1")"; }
 
 # Usage with shell function
-scd my-branch
+kcd my-branch
 ```
 
-### Open a new agent in an existing shard
+### Open a new agent in an existing kild
 ```bash
 # Open with same agent (additive - doesn't close existing terminals)
-shards open <branch>
+kild open <branch>
 
 # Open with different agent
-shards open <branch> --agent <agent>
+kild open <branch> --agent <agent>
 
-# Open agents in all stopped shards
-shards open --all
+# Open agents in all stopped kilds
+kild open --all
 
-# Open all stopped shards with specific agent
-shards open --all --agent <agent>
+# Open all stopped kilds with specific agent
+kild open --all --agent <agent>
 ```
 
-### Open shard in code editor
+### Open kild in code editor
 ```bash
 # Open worktree in editor (uses $EDITOR or defaults to 'zed')
-shards code <branch>
+kild code <branch>
 
 # Use specific editor
-shards code <branch> --editor vim
+kild code <branch> --editor vim
 ```
 
-### Focus on a shard
+### Focus on a kild
 ```bash
 # Bring terminal window to foreground
-shards focus <branch>
+kild focus <branch>
 ```
 
-### View git changes in a shard
+### View git changes in a kild
 ```bash
 # Show uncommitted changes
-shards diff <branch>
+kild diff <branch>
 
 # Show only staged changes
-shards diff <branch> --staged
+kild diff <branch> --staged
 ```
 
 ### Show recent commits
 ```bash
 # Show last 10 commits (default)
-shards commits <branch>
+kild commits <branch>
 
 # Show last 5 commits
-shards commits <branch> -n 5
-shards commits <branch> --count 5
+kild commits <branch> -n 5
+kild commits <branch> --count 5
 ```
 
-### Stop a shard
+### Stop a kild
 ```bash
 # Stop agent, preserve worktree
-shards stop <branch>
+kild stop <branch>
 
-# Stop all running shards
-shards stop --all
+# Stop all running kilds
+kild stop --all
 ```
 
-### Get shard information
+### Get kild information
 ```bash
-shards status <branch>
+kild status <branch>
 
 # Machine-readable JSON output
-shards status <branch> --json
+kild status <branch> --json
 ```
 
-### Destroy a shard
+### Destroy a kild
 ```bash
-shards destroy <branch>
+kild destroy <branch>
 
 # Force destroy (bypass git uncommitted changes check)
-shards destroy <branch> --force
+kild destroy <branch> --force
 
-# Destroy all shards (with confirmation prompt)
-shards destroy --all
+# Destroy all kilds (with confirmation prompt)
+kild destroy --all
 
 # Force destroy all (skip confirmation and git checks)
-shards destroy --all --force
+kild destroy --all --force
 ```
 
 ### Note on deprecated commands
@@ -173,37 +173,37 @@ shards destroy --all --force
 The `restart` command is deprecated. Use `open` instead:
 ```bash
 # Old (deprecated, still works with warning)
-shards restart <branch>
+kild restart <branch>
 
 # New (preferred)
-shards open <branch>
+kild open <branch>
 ```
 
-### Clean up orphaned shards
+### Clean up orphaned kilds
 ```bash
-shards cleanup
+kild cleanup
 ```
 
 ## How It Works
 
-1. **Worktree Creation**: Creates a new Git worktree in `.shards/<name>` with a unique branch
+1. **Worktree Creation**: Creates a new Git worktree in `.kild/<name>` with a unique branch
 2. **Agent Launch**: Launches the specified agent command in a native terminal window
-3. **Session Tracking**: Records session metadata in `~/.shards/registry.json`
+3. **Session Tracking**: Records session metadata in `~/.kild/registry.json`
 4. **Lifecycle Management**: Provides commands to monitor, stop, and clean up sessions
 
 ## Requirements
 
 - Rust 1.89.0 or later
-- Git repository (shards must be run from within a Git repository)
+- Git repository (kild must be run from within a Git repository)
 - Native terminal emulator (Terminal.app on macOS, gnome-terminal/konsole on Linux, etc.)
 
 ## Agent Integration
 
-Shards is designed to be used by AI agents themselves. For example, an AI assistant can create a new shard for a specific task:
+KILD is designed to be used by AI agents themselves. For example, an AI assistant can create a new kild for a specific task:
 
 ```bash
 # AI agent creates isolated workspace for bug fix
-shards start bug-fix-123 "kiro-cli chat"
+kild create bug-fix-123 --agent claude
 ```
 
 This enables parallel AI workflows without manual terminal management.

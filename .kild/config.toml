@@ -1,0 +1,13 @@
+# Shards project configuration
+
+[agent]
+default = "claude"
+
+[terminal]
+preferred = "ghostty"
+spawn_delay_ms = 1000
+max_retry_attempts = 5
+
+[agents.claude]
+startup_command = "claude"
+flags = "--dangerously-skip-permissions"

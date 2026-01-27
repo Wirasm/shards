@@ -1,0 +1,19 @@
+[package]
+name = "kild"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI for KILD - manage parallel AI development agents"
+
+[[bin]]
+name = "kild"
+path = "src/main.rs"
+
+[dependencies]
+kild-core.workspace = true
+clap.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

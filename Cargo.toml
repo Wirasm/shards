@@ -31,7 +31,7 @@ uuid = { version = "1", features = ["v4"] }
 clap = { version = "4.0", features = ["derive"] }
 
 # Internal workspace dependencies
-shards-core = { path = "crates/shards-core" }
+kild-core = { path = "crates/kild-core" }
 
 # UI dependencies
 gpui = "0.2"

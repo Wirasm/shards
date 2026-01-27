@@ -2968,6 +2968,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "kild"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "kild-core",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "kild-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "git2",
+ "glob",
+ "ignore",
+ "serde",
+ "serde_json",
+ "sysinfo 0.37.2",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+ "which 7.0.3",
+]
+
+[[package]]
+name = "kild-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "core-text",
+ "dirs 5.0.1",
+ "gpui",
+ "kild-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "kurbo"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4958,54 +5006,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shards"
-version = "0.1.0"
-dependencies = [
- "clap",
- "serde_json",
- "shards-core",
- "tempfile",
- "tracing",
-]
-
-[[package]]
-name = "shards-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs 5.0.1",
- "git2",
- "glob",
- "ignore",
- "serde",
- "serde_json",
- "sysinfo 0.37.2",
- "tempfile",
- "thiserror 2.0.17",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "walkdir",
- "which 7.0.3",
-]
-
-[[package]]
-name = "shards-ui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "core-text",
- "dirs 5.0.1",
- "gpui",
- "serde",
- "serde_json",
- "shards-core",
- "tempfile",
- "tracing",
 ]
 
 [[package]]

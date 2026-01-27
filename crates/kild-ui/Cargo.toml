@@ -1,0 +1,23 @@
+[package]
+name = "kild-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GUI for KILD - visual kild management dashboard"
+
+[[bin]]
+name = "kild-ui"
+path = "src/main.rs"
+
+[dependencies]
+kild-core.workspace = true
+gpui.workspace = true
+core-text.workspace = true  # Pin to fix gpui dependency conflict
+tracing.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
