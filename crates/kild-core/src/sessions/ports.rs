@@ -86,15 +86,15 @@ pub fn is_port_range_available(
 pub fn generate_port_env_vars(session: &Session) -> Vec<(String, String)> {
     vec![
         (
-            "SHARD_PORT_RANGE_START".to_string(),
+            "KILD_PORT_RANGE_START".to_string(),
             session.port_range_start.to_string(),
         ),
         (
-            "SHARD_PORT_RANGE_END".to_string(),
+            "KILD_PORT_RANGE_END".to_string(),
             session.port_range_end.to_string(),
         ),
         (
-            "SHARD_PORT_COUNT".to_string(),
+            "KILD_PORT_COUNT".to_string(),
             session.port_count.to_string(),
         ),
     ]
@@ -235,9 +235,9 @@ mod tests {
         let env_vars = generate_port_env_vars(&session);
 
         assert_eq!(env_vars.len(), 3);
-        assert!(env_vars.contains(&("SHARD_PORT_RANGE_START".to_string(), "3000".to_string())));
-        assert!(env_vars.contains(&("SHARD_PORT_RANGE_END".to_string(), "3009".to_string())));
-        assert!(env_vars.contains(&("SHARD_PORT_COUNT".to_string(), "10".to_string())));
+        assert!(env_vars.contains(&("KILD_PORT_RANGE_START".to_string(), "3000".to_string())));
+        assert!(env_vars.contains(&("KILD_PORT_RANGE_END".to_string(), "3009".to_string())));
+        assert!(env_vars.contains(&("KILD_PORT_COUNT".to_string(), "10".to_string())));
     }
 
     #[test]
@@ -247,8 +247,8 @@ mod tests {
 
         // Verify exact env var names to catch typos
         let names: Vec<&str> = env_vars.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(names.contains(&"SHARD_PORT_RANGE_START"));
-        assert!(names.contains(&"SHARD_PORT_RANGE_END"));
-        assert!(names.contains(&"SHARD_PORT_COUNT"));
+        assert!(names.contains(&"KILD_PORT_RANGE_START"));
+        assert!(names.contains(&"KILD_PORT_RANGE_END"));
+        assert!(names.contains(&"KILD_PORT_COUNT"));
     }
 }

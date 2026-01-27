@@ -230,10 +230,10 @@ pub fn get_session(name: &str) -> Result<Session, SessionError> {
     Ok(session)
 }
 
-/// Destroys a shard by removing its worktree, killing the process, and deleting the session file.
+/// Destroys a kild by removing its worktree, killing the process, and deleting the session file.
 ///
 /// # Arguments
-/// * `name` - Branch name or shard identifier
+/// * `name` - Branch name or kild identifier
 /// * `force` - If true, bypass git safety checks and force removal
 ///
 /// # Force Mode Behavior
@@ -532,10 +532,10 @@ pub fn restart_session(
     Ok(session)
 }
 
-/// Opens a new agent terminal in an existing shard (additive - doesn't close existing terminals).
+/// Opens a new agent terminal in an existing kild (additive - doesn't close existing terminals).
 ///
-/// This is the preferred way to add agents to a shard. Unlike restart, this does NOT
-/// close existing terminals - multiple agents can run in the same shard.
+/// This is the preferred way to add agents to a kild. Unlike restart, this does NOT
+/// close existing terminals - multiple agents can run in the same kild.
 pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Session, SessionError> {
     info!(
         event = "core.session.open_started",
@@ -647,9 +647,9 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     Ok(session)
 }
 
-/// Stops the agent process in a shard without destroying the shard.
+/// Stops the agent process in a kild without destroying the kild.
 ///
-/// The worktree and session file are preserved. The shard can be reopened with `open_session()`.
+/// The worktree and session file are preserved. The kild can be reopened with `open_session()`.
 pub fn stop_session(name: &str) -> Result<(), SessionError> {
     info!(event = "core.session.stop_started", name = name);
 

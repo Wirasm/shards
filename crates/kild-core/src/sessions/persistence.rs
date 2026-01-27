@@ -173,7 +173,7 @@ mod tests {
     fn test_ensure_sessions_directory() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_sessions");
+        let temp_dir = env::temp_dir().join("kild_test_sessions");
 
         // Clean up if exists
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -193,7 +193,7 @@ mod tests {
     fn test_save_session_to_file() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_save_session");
+        let temp_dir = env::temp_dir().join("kild_test_save_session");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -242,7 +242,7 @@ mod tests {
     fn test_save_session_atomic_write_temp_cleanup() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_atomic_write");
+        let temp_dir = env::temp_dir().join("kild_test_atomic_write");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -293,7 +293,7 @@ mod tests {
     fn test_save_session_atomic_behavior() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_atomic_behavior");
+        let temp_dir = env::temp_dir().join("kild_test_atomic_behavior");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -347,7 +347,7 @@ mod tests {
     fn test_save_session_temp_file_cleanup_on_failure() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_temp_cleanup");
+        let temp_dir = env::temp_dir().join("kild_test_temp_cleanup");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -399,7 +399,7 @@ mod tests {
     fn test_load_sessions_from_files() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_load_sessions");
+        let temp_dir = env::temp_dir().join("kild_test_load_sessions");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -478,7 +478,7 @@ mod tests {
     fn test_load_sessions_nonexistent_directory() {
         use std::env;
 
-        let nonexistent_dir = env::temp_dir().join("shards_test_nonexistent");
+        let nonexistent_dir = env::temp_dir().join("kild_test_nonexistent");
         let _ = std::fs::remove_dir_all(&nonexistent_dir);
 
         let (sessions, skipped) = load_sessions_from_files(&nonexistent_dir).unwrap();
@@ -490,7 +490,7 @@ mod tests {
     fn test_find_session_by_name() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_find_session");
+        let temp_dir = env::temp_dir().join("kild_test_find_session");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -539,7 +539,7 @@ mod tests {
     fn test_remove_session_file() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_remove_session");
+        let temp_dir = env::temp_dir().join("kild_test_remove_session");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -589,7 +589,7 @@ mod tests {
     fn test_load_sessions_with_invalid_files() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_invalid_files");
+        let temp_dir = env::temp_dir().join("kild_test_invalid_files");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 

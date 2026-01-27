@@ -167,7 +167,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_shards_config_serialization() {
+    fn test_kild_config_serialization() {
         let config = KildConfig::default();
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: KildConfig = toml::from_str(&toml_str).unwrap();

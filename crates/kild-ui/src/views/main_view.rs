@@ -183,7 +183,7 @@ impl MainView {
             Some(self.state.create_form.note.trim().to_string())
         };
 
-        // Get active project path for shard creation context
+        // Get active project path for kild creation context
         let project_path = self.state.active_project.clone();
 
         // Warn if no project selected (shouldn't happen with current UI flow)

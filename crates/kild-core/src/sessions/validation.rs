@@ -128,7 +128,7 @@ mod tests {
         use std::env;
 
         // Create a temporary directory that exists
-        let temp_dir = env::temp_dir().join("shards_test_validation");
+        let temp_dir = env::temp_dir().join("kild_test_validation");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -248,7 +248,7 @@ mod tests {
     fn test_validate_session_structure_all_fields() {
         use std::env;
 
-        let temp_dir = env::temp_dir().join("shards_test_validation_fields");
+        let temp_dir = env::temp_dir().join("kild_test_validation_fields");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 

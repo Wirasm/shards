@@ -79,9 +79,9 @@ pub struct Session {
     #[serde(default)]
     pub last_activity: Option<String>,
 
-    /// Optional description of what this shard is for.
+    /// Optional description of what this kild is for.
     ///
-    /// Set via `--note` flag during `shards create`. Shown truncated to 30 chars
+    /// Set via `--note` flag during `kild create`. Shown truncated to 30 chars
     /// in list output, and truncated to 47 chars in status output.
     #[serde(default)]
     pub note: Option<String>,

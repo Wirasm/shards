@@ -460,7 +460,7 @@ mod tests {
 
         assert_eq!(stopped.len(), 1);
         assert_eq!(stopped[0], "stopped-1");
-        // Unknown status shards should NOT be included
+        // Unknown status kilds should NOT be included
         assert!(!stopped.contains(&"unknown-1".to_string()));
         assert!(!stopped.contains(&"unknown-2".to_string()));
     }
@@ -478,7 +478,7 @@ mod tests {
 
         assert_eq!(running.len(), 1);
         assert_eq!(running[0], "running-1");
-        // Unknown status shards should NOT be included
+        // Unknown status kilds should NOT be included
         assert!(!running.contains(&"unknown-1".to_string()));
         assert!(!running.contains(&"unknown-2".to_string()));
     }
@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_stopped_branches_no_stopped_shards() {
+    fn test_get_stopped_branches_no_stopped_kilds() {
         let displays = vec![
             make_display("1", "running-1", ProcessStatus::Running),
             make_display("2", "running-2", ProcessStatus::Running),
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_running_branches_no_running_shards() {
+    fn test_get_running_branches_no_running_kilds() {
         let displays = vec![
             make_display("1", "stopped-1", ProcessStatus::Stopped),
             make_display("2", "stopped-2", ProcessStatus::Stopped),

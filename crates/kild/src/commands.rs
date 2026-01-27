@@ -1179,7 +1179,7 @@ fn run_health_once(
             }
         }
     } else {
-        // All shards health
+        // All kilds health
         match health::get_health_all_sessions() {
             Ok(health_output) => {
                 if json_output {

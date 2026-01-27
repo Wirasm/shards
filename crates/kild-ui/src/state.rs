@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::projects::Project;
 
-/// Process status for a shard, distinguishing between running, stopped, and unknown states.
+/// Process status for a kild, distinguishing between running, stopped, and unknown states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessStatus {
     /// Process is confirmed running
@@ -1206,7 +1206,7 @@ mod tests {
         let filtered = state.filtered_displays();
         assert!(
             filtered.is_empty(),
-            "Should return empty when no shards match active project"
+            "Should return empty when no kilds match active project"
         );
     }
 }

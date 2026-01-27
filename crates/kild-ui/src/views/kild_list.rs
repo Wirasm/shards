@@ -37,7 +37,7 @@ fn format_relative_time(timestamp: &str) -> String {
     }
 }
 
-/// Render the shard list based on current state.
+/// Render the kild list based on current state.
 ///
 /// Handles states:
 /// - Error: Display error message

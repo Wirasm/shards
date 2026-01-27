@@ -307,7 +307,7 @@ pub fn scan_for_orphans_with_strategy(
                 }
             })?;
 
-            // Detect untracked worktrees (in shards dir but no session)
+            // Detect untracked worktrees (in kild dir but no session)
             let untracked = operations::detect_untracked_worktrees(
                 &repo,
                 &config.worktrees_dir(),

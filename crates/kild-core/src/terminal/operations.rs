@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn test_escape_regex_mixed() {
         // Test realistic session identifiers with potential metacharacters
-        assert_eq!(escape_regex("shards-session"), "shards-session");
+        assert_eq!(escape_regex("kild-session"), "kild-session");
         assert_eq!(escape_regex("session.1"), "session\\.1");
         assert_eq!(escape_regex("test[0]"), "test\\[0\\]");
         assert_eq!(escape_regex("foo*bar"), "foo\\*bar");
@@ -499,17 +499,17 @@ mod tests {
     #[test]
     fn test_ghostty_pkill_pattern_escaping() {
         // Verify the pattern format used in close_terminal_window
-        let session_id = "my-shard.test";
+        let session_id = "my-kild.test";
         let escaped = escape_regex(session_id);
         let pattern = format!("Ghostty.*{}", escaped);
         // The pattern should escape the dot to avoid matching any character
-        assert_eq!(pattern, "Ghostty.*my-shard\\.test");
+        assert_eq!(pattern, "Ghostty.*my-kild\\.test");
     }
 
     #[test]
     fn test_ghostty_ansi_title_escaping() {
         // Verify shell_escape works for ANSI title injection prevention
-        let title_with_quotes = "my'shard";
+        let title_with_quotes = "my'kild";
         let escaped = shell_escape(title_with_quotes);
         // Single quotes should be properly escaped
         assert!(escaped.contains("'\"'\"'"));

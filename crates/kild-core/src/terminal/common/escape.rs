@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_escape_regex_mixed() {
-        assert_eq!(escape_regex("shards-session"), "shards-session");
+        assert_eq!(escape_regex("kild-session"), "kild-session");
         assert_eq!(escape_regex("session.1"), "session\\.1");
         assert_eq!(escape_regex("test[0]"), "test\\[0\\]");
         assert_eq!(escape_regex("foo*bar"), "foo\\*bar");

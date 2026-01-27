@@ -119,17 +119,17 @@ pub fn detect_orphaned_worktrees(repo: &Repository) -> Result<Vec<PathBuf>, Clea
     Ok(orphaned_worktrees)
 }
 
-/// Detect worktrees in the shards directory that have no corresponding session.
+/// Detect worktrees in the kild directory that have no corresponding session.
 ///
 /// This finds worktrees that:
 /// 1. Are registered in git
-/// 2. Have paths under `~/.shards/worktrees/<project>/`
+/// 2. Have paths under `~/.kild/worktrees/<project>/`
 /// 3. Have no session file with matching `worktree_path`
 ///
 /// # Arguments
 /// * `repo` - The git repository
-/// * `worktrees_dir` - Base worktrees directory (~/.shards/worktrees)
-/// * `sessions_dir` - Sessions directory (~/.shards/sessions)
+/// * `worktrees_dir` - Base worktrees directory (~/.kild/worktrees)
+/// * `sessions_dir` - Sessions directory (~/.kild/sessions)
 /// * `project_name` - Current project name for scoping
 pub fn detect_untracked_worktrees(
     repo: &Repository,
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_empty_dir() {
-        let temp_dir = std::env::temp_dir().join("shards_test_empty_sessions");
+        let temp_dir = std::env::temp_dir().join("kild_test_empty_sessions");
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let result = detect_stale_sessions(&temp_dir);
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_nonexistent_dir() {
-        let nonexistent_dir = std::env::temp_dir().join("shards_test_nonexistent");
+        let nonexistent_dir = std::env::temp_dir().join("kild_test_nonexistent");
 
         let result = detect_stale_sessions(&nonexistent_dir);
         assert!(result.is_ok());
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_with_valid_session() {
-        let temp_dir = env::temp_dir().join("shards_test_valid_session");
+        let temp_dir = env::temp_dir().join("kild_test_valid_session");
         let _ = fs::create_dir_all(&temp_dir);
 
         // Create a valid session file with existing worktree path
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_with_stale_session() {
-        let temp_dir = env::temp_dir().join("shards_test_stale_session");
+        let temp_dir = env::temp_dir().join("kild_test_stale_session");
         let _ = fs::create_dir_all(&temp_dir);
 
         // Create a stale session file with non-existent worktree path
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_with_invalid_json() {
-        let temp_dir = env::temp_dir().join("shards_test_invalid_json");
+        let temp_dir = env::temp_dir().join("kild_test_invalid_json");
         let _ = fs::create_dir_all(&temp_dir);
 
         // Create an invalid JSON file
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_detect_stale_sessions_mixed_files() {
-        let temp_dir = env::temp_dir().join("shards_test_mixed_files");
+        let temp_dir = env::temp_dir().join("kild_test_mixed_files");
         let _ = fs::create_dir_all(&temp_dir);
 
         // Create a valid session
@@ -548,7 +548,7 @@ mod tests {
         use std::fs;
 
         // Create a temporary directory for testing
-        let temp_dir = env::temp_dir().join("shards_cleanup_integration_test");
+        let temp_dir = env::temp_dir().join("kild_cleanup_integration_test");
         let _ = fs::create_dir_all(&temp_dir);
 
         // Test that all detection functions work together
@@ -588,7 +588,7 @@ mod tests {
         use std::fs;
 
         // Test cleanup workflow with empty directory
-        let temp_dir = env::temp_dir().join("shards_cleanup_empty_test");
+        let temp_dir = env::temp_dir().join("kild_cleanup_empty_test");
         let _ = fs::create_dir_all(&temp_dir);
 
         let stale_result = detect_stale_sessions(&temp_dir);

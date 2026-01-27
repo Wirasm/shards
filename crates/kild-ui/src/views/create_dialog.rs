@@ -13,7 +13,7 @@ pub fn agent_options() -> Vec<&'static str> {
     kild_core::agents::valid_agent_names()
 }
 
-/// Render the create shard dialog.
+/// Render the create kild dialog.
 ///
 /// This is a modal dialog with:
 /// - Semi-transparent overlay background

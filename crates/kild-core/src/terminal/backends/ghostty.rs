@@ -35,7 +35,7 @@ impl TerminalBackend for GhosttyBackend {
         window_title: Option<&str>,
     ) -> Result<Option<String>, TerminalError> {
         let cd_command = build_cd_command(config.working_directory(), config.command());
-        let title = window_title.unwrap_or("shards-session");
+        let title = window_title.unwrap_or("kild-session");
 
         // Shell-escape the title to prevent injection if it contains special characters
         let escaped_title = shell_escape(title);
@@ -323,11 +323,11 @@ mod tests {
     #[test]
     fn test_ghostty_pkill_pattern_escaping() {
         // Verify the pattern format used in close_window
-        let session_id = "my-shard.test";
+        let session_id = "my-kild.test";
         let escaped = escape_regex(session_id);
         let pattern = format!("Ghostty.*{}", escaped);
         // The pattern should escape the dot to avoid matching any character
-        assert_eq!(pattern, "Ghostty.*my-shard\\.test");
+        assert_eq!(pattern, "Ghostty.*my-kild\\.test");
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
         );
 
         // The title escaping should work correctly
-        let title = "shards-test-session";
+        let title = "kild-test-session";
         let escaped_title = shell_escape(title);
         let cd_command = build_cd_command(config.working_directory(), config.command());
         let ghostty_command = format!(
@@ -348,7 +348,7 @@ mod tests {
             escaped_title, cd_command
         );
 
-        assert!(ghostty_command.contains("shards-test-session"));
+        assert!(ghostty_command.contains("kild-test-session"));
         assert!(ghostty_command.contains("claude"));
         assert!(ghostty_command.contains("/tmp/test"));
     }

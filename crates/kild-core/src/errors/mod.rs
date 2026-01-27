@@ -61,7 +61,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_shards_result() {
+    fn test_kild_result() {
         let _result: KildResult<i32> = Ok(42);
     }
 

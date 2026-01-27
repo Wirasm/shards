@@ -2,7 +2,7 @@
 //!
 //! On macOS, sysinfo cannot read command line arguments or working directories
 //! for other processes. This module provides PID file-based tracking as a reliable
-//! alternative for identifying which process belongs to which shard.
+//! alternative for identifying which process belongs to which kild.
 
 use std::fs;
 use std::io::Read;

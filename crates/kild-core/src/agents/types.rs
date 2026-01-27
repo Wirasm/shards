@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Supported agent types in SHARDS.
+/// Supported agent types in KILD.
 ///
 /// Each variant represents a known AI coding assistant that can be
 /// spawned in a worktree session.
