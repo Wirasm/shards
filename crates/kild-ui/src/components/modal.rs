@@ -26,9 +26,14 @@ const DEFAULT_WIDTH: f32 = 400.0;
 /// - Body content area
 /// - Optional footer with top border (typically for buttons)
 ///
-/// # Example
+/// # Examples
+///
+/// ## Action dialog with footer
 ///
 /// ```ignore
+/// use gpui::{div, px, prelude::*};
+/// use crate::components::{Modal, Button, ButtonVariant};
+///
 /// Modal::new("create-dialog", "Create New KILD")
 ///     .body(
 ///         div().flex_col().gap_4()
@@ -40,9 +45,26 @@ const DEFAULT_WIDTH: f32 = 400.0;
 ///             .child(Button::new("create", "Create").variant(ButtonVariant::Primary))
 ///     )
 /// ```
+///
+/// ## Informational dialog without footer
+///
+/// ```ignore
+/// Modal::new("info-dialog", "Information")
+///     .body(div().child("This is a read-only message."))
+/// ```
+///
+/// ## Custom width
+///
+/// ```ignore
+/// Modal::new("settings-dialog", "Settings")
+///     .width(px(600.0))
+///     .body(/* wide content */)
+///     .footer(/* buttons */)
+/// ```
 #[derive(IntoElement)]
 pub struct Modal {
-    id: ElementId,
+    /// Base ID used to generate unique element IDs for overlay and dialog box.
+    id: SharedString,
     title: SharedString,
     body: Option<AnyElement>,
     footer: Option<AnyElement>,
@@ -51,7 +73,11 @@ pub struct Modal {
 
 impl Modal {
     /// Create a new modal with the given ID and title.
-    pub fn new(id: impl Into<ElementId>, title: impl Into<SharedString>) -> Self {
+    ///
+    /// The ID is used as a base to generate unique element IDs:
+    /// - `{id}` for the overlay
+    /// - `{id}-box` for the dialog box
+    pub fn new(id: impl Into<SharedString>, title: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             title: title.into(),
@@ -84,7 +110,7 @@ impl RenderOnce for Modal {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         // Overlay: covers entire screen with semi-transparent background
         div()
-            .id(self.id.clone())
+            .id(ElementId::Name(self.id.clone()))
             .absolute()
             .inset_0()
             .bg(theme::overlay())
