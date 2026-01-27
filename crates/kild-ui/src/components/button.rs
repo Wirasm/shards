@@ -143,7 +143,6 @@ impl RenderOnce for Button {
         let hover_bg = self.variant.hover_color();
         let text = self.variant.text_color(self.disabled);
         let border = self.variant.border_color();
-        let disabled = self.disabled;
         let on_click = self.on_click;
 
         let mut button = div()
@@ -160,7 +159,7 @@ impl RenderOnce for Button {
         }
 
         // Apply hover and click only when not disabled
-        if !disabled {
+        if !self.disabled {
             button = button.hover(|style| style.bg(hover_bg)).cursor_pointer();
 
             if let Some(handler) = on_click {
