@@ -87,6 +87,20 @@ pub struct Session {
     pub note: Option<String>,
 }
 
+impl Session {
+    /// Returns true if the session's worktree path exists on disk.
+    ///
+    /// Sessions with missing worktrees are still valid session files
+    /// (they can be loaded and listed), but cannot be operated on
+    /// (open, restart, etc.) until the worktree issue is resolved.
+    ///
+    /// Use this to check worktree validity before operations or to
+    /// display orphaned status indicators in the UI.
+    pub fn is_worktree_valid(&self) -> bool {
+        self.worktree_path.exists()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionStatus {
     Active,
@@ -405,5 +419,66 @@ mod tests {
     fn test_create_session_request_new_has_no_project_path() {
         let request = CreateSessionRequest::new("test-branch".to_string(), None, None);
         assert!(request.project_path.is_none());
+    }
+
+    #[test]
+    fn test_is_worktree_valid_with_existing_path() {
+        use std::env;
+
+        let temp_dir = env::temp_dir().join("kild_test_worktree_valid");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let session = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: temp_dir.clone(),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: "test-command".to_string(),
+            last_activity: None,
+            note: None,
+        };
+
+        assert!(session.is_worktree_valid());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_worktree_valid_with_missing_path() {
+        let session = Session {
+            id: "test/orphaned".to_string(),
+            project_id: "test".to_string(),
+            branch: "orphaned".to_string(),
+            worktree_path: PathBuf::from("/nonexistent/path/that/does/not/exist"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Stopped,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: "test-command".to_string(),
+            last_activity: None,
+            note: None,
+        };
+
+        assert!(!session.is_worktree_valid());
     }
 }
