@@ -61,14 +61,11 @@ pub(crate) fn validate_session_structure(session: &Session) -> Result<(), Sessio
         });
     }
 
-    if !session.worktree_path.exists() {
-        return Err(SessionError::InvalidStructure {
-            field: format!(
-                "worktree path does not exist: {}",
-                session.worktree_path.display()
-            ),
-        });
-    }
+    // NOTE: We intentionally do NOT check if worktree_path.exists() here.
+    // Worktree existence is a runtime state, not a structural property.
+    // Sessions with missing worktrees are still valid session files - they
+    // just can't be operated on until the worktree issue is resolved.
+    // Operation-level validation (open_session, restart_session, etc.) handles this.
 
     Ok(())
 }
@@ -211,9 +208,12 @@ mod tests {
             SessionError::InvalidStructure { field } if field == "worktree path is empty"
         ));
 
-        // Invalid session - non-existing worktree path
+        // Session with non-existing worktree path should PASS validation.
+        // Worktree existence is checked at operation time (open, restart, etc.),
+        // not during structural validation. This allows sessions with missing
+        // worktrees to still appear in `kild list` for debugging/cleanup.
         let nonexistent_path = temp_dir.join("nonexistent");
-        let invalid_session3 = Session {
+        let session_missing_worktree = Session {
             id: "test/branch".to_string(),
             project_id: "test".to_string(),
             branch: "branch".to_string(),
@@ -233,12 +233,8 @@ mod tests {
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
         };
-        let result3 = validate_session_structure(&invalid_session3);
-        assert!(result3.is_err());
-        assert!(matches!(
-            result3.unwrap_err(),
-            SessionError::InvalidStructure { field } if field.contains("worktree path does not exist")
-        ));
+        // This should now pass - missing worktree is not a structural error
+        assert!(validate_session_structure(&session_missing_worktree).is_ok());
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
