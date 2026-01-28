@@ -122,7 +122,7 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `theme.rs` - Centralized color palette, typography, and spacing constants (Tallinn Night brand system)
 - `components/` - Reusable UI components (Button, StatusIndicator, Modal, TextInput with themed variants)
 - `projects.rs` - Project storage, validation, persistence to ~/.kild/projects.json
-- `state.rs` - Application state with project filtering and kild counts
+- `state.rs` - Type-safe state modules with encapsulated AppState facade (DialogState, ProjectManager, SessionStore, SelectionState, OperationErrors)
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
 - `views/` - GPUI components (main view with 3-column layout: sidebar, kild list, detail panel)
 - `watcher.rs` - File system watcher for instant UI updates on session changes
