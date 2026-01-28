@@ -58,6 +58,12 @@ pub enum SessionError {
 
     #[error("Configuration error: {message}")]
     ConfigError { message: String },
+
+    #[error("Failed to check PR status: {message}")]
+    PrCheckFailed { message: String },
+
+    #[error("Failed to delete remote branch '{branch}': {message}")]
+    RemoteBranchDeleteFailed { branch: String, message: String },
 }
 
 impl KildError for SessionError {
@@ -79,6 +85,8 @@ impl KildError for SessionError {
             SessionError::ProcessKillFailed { .. } => "PROCESS_KILL_FAILED",
             SessionError::ProcessAccessDenied { .. } => "PROCESS_ACCESS_DENIED",
             SessionError::ConfigError { .. } => "CONFIG_ERROR",
+            SessionError::PrCheckFailed { .. } => "PR_CHECK_FAILED",
+            SessionError::RemoteBranchDeleteFailed { .. } => "REMOTE_BRANCH_DELETE_FAILED",
         }
     }
 
@@ -95,6 +103,8 @@ impl KildError for SessionError {
                 | SessionError::PortRangeExhausted
                 | SessionError::PortAllocationFailed { .. }
                 | SessionError::ConfigError { .. }
+                | SessionError::PrCheckFailed { .. }
+                | SessionError::RemoteBranchDeleteFailed { .. }
         )
     }
 }

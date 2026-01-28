@@ -376,6 +376,138 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     Ok(())
 }
 
+/// Completes a kild by checking PR status, optionally deleting remote branch, and destroying the session.
+///
+/// # Arguments
+/// * `name` - Branch name or kild identifier
+/// * `force` - If true, bypass git safety checks
+///
+/// # Returns
+/// * `Ok(true)` - Completed and remote branch was deleted (PR was merged)
+/// * `Ok(false)` - Completed but remote branch not deleted (PR not merged yet, or no remote)
+///
+/// # Workflow Detection
+/// - If PR is merged: delete remote branch (since gh merge --delete-branch would have failed)
+/// - If PR not merged: just destroy, let user's subsequent merge handle remote
+pub fn complete_session(name: &str, force: bool) -> Result<bool, SessionError> {
+    info!(
+        event = "core.session.complete_started",
+        name = name,
+        force = force
+    );
+
+    let config = Config::new();
+
+    // 1. Find session by name to get branch info
+    let session =
+        operations::find_session_by_name(&config.sessions_dir(), name)?.ok_or_else(|| {
+            SessionError::NotFound {
+                name: name.to_string(),
+            }
+        })?;
+
+    let kild_branch = format!("kild_{}", name);
+
+    // 2. Check if PR was merged (determines if we need to delete remote)
+    let pr_merged = check_pr_merged(&session.worktree_path, &kild_branch);
+
+    info!(
+        event = "core.session.complete_pr_status",
+        branch = name,
+        pr_merged = pr_merged
+    );
+
+    // 3. If PR was merged, delete remote branch (it would be orphaned)
+    let remote_deleted = if pr_merged {
+        match delete_remote_branch(&session.worktree_path, &kild_branch) {
+            Ok(()) => {
+                info!(
+                    event = "core.session.complete_remote_deleted",
+                    branch = kild_branch
+                );
+                true
+            }
+            Err(e) => {
+                // Non-fatal: remote might already be deleted or not exist
+                warn!(
+                    event = "core.session.complete_remote_delete_failed",
+                    branch = kild_branch,
+                    error = %e
+                );
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    // 4. Destroy the session (reuse existing logic)
+    destroy_session(name, force)?;
+
+    info!(
+        event = "core.session.complete_completed",
+        name = name,
+        remote_deleted = remote_deleted
+    );
+
+    Ok(remote_deleted)
+}
+
+/// Check if there's a merged PR for the given branch using gh CLI.
+/// Returns false if gh is not available, PR doesn't exist, or PR is not merged.
+fn check_pr_merged(worktree_path: &std::path::Path, branch: &str) -> bool {
+    let output = std::process::Command::new("gh")
+        .current_dir(worktree_path)
+        .args(["pr", "view", branch, "--json", "state", "-q", ".state"])
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let state = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .to_uppercase();
+            state == "MERGED"
+        }
+        _ => false, // gh not available, no PR, or error - assume not merged
+    }
+}
+
+/// Delete a remote branch using git push.
+fn delete_remote_branch(worktree_path: &std::path::Path, branch: &str) -> Result<(), SessionError> {
+    info!(
+        event = "core.session.complete_remote_delete_started",
+        branch = branch
+    );
+
+    let output = std::process::Command::new("git")
+        .current_dir(worktree_path)
+        .args(["push", "origin", "--delete", branch])
+        .output()
+        .map_err(|e| SessionError::RemoteBranchDeleteFailed {
+            branch: branch.to_string(),
+            message: format!("Failed to execute git: {}", e),
+        })?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Check if branch doesn't exist (not an error)
+        if stderr.contains("remote ref does not exist") {
+            info!(
+                event = "core.session.complete_remote_already_deleted",
+                branch = branch
+            );
+            Ok(())
+        } else {
+            Err(SessionError::RemoteBranchDeleteFailed {
+                branch: branch.to_string(),
+                message: stderr.to_string(),
+            })
+        }
+    }
+}
+
 pub fn restart_session(
     name: &str,
     agent_override: Option<String>,

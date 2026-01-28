@@ -64,6 +64,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("list", sub_matches)) => handle_list_command(sub_matches),
         Some(("cd", sub_matches)) => handle_cd_command(sub_matches),
         Some(("destroy", sub_matches)) => handle_destroy_command(sub_matches),
+        Some(("complete", sub_matches)) => handle_complete_command(sub_matches),
         Some(("restart", sub_matches)) => handle_restart_command(sub_matches),
         Some(("open", sub_matches)) => handle_open_command(sub_matches),
         Some(("stop", sub_matches)) => handle_stop_command(sub_matches),
@@ -257,6 +258,57 @@ fn handle_destroy_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
 
             error!(
                 event = "cli.destroy_failed",
+                branch = branch,
+                error = %e
+            );
+
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
+fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = matches
+        .get_one::<String>("branch")
+        .ok_or("Branch argument is required")?;
+
+    if !is_valid_branch_name(branch) {
+        eprintln!("Invalid branch name: {}", branch);
+        error!(event = "cli.complete_invalid_branch", branch = branch);
+        return Err("Invalid branch name".into());
+    }
+
+    let force = matches.get_flag("force");
+
+    info!(
+        event = "cli.complete_started",
+        branch = branch,
+        force = force
+    );
+
+    match session_handler::complete_session(branch, force) {
+        Ok(remote_deleted) => {
+            println!("✅ KILD '{}' completed!", branch);
+            if remote_deleted {
+                println!("   Remote branch also deleted (PR was merged)");
+            } else {
+                println!("   Remote branch preserved (merge will delete it)");
+            }
+
+            info!(
+                event = "cli.complete_completed",
+                branch = branch,
+                remote_deleted = remote_deleted
+            );
+
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to complete kild '{}': {}", branch, e);
+
+            error!(
+                event = "cli.complete_failed",
                 branch = branch,
                 error = %e
             );
