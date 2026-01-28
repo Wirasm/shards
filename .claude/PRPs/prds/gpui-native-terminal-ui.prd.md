@@ -158,13 +158,13 @@ Build a native GPUI application as a **visual dashboard** for shard management. 
 | 7.6 | Bulk Operations | Open All / Stop All buttons | Bulk lifecycle operations | ✅ DONE |
 | 7.7 | Quick Actions | Per-row action buttons | Copy Path, Open Editor, Focus Terminal | ✅ DONE |
 | 8 | Projects | Project management, active project context | Switch projects, filter shards | ✅ DONE |
-| 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted components | TODO |
+| 9 | Theme & Components | Color palette + reusable UI components | Polished design, extracted components | ✅ DONE |
 | 9.1 | Theme Foundation | Color palette, typography, spacing | Theme constants accessible | ✅ DONE |
 | 9.2 | Button Component | All button variants | Reusable Button component | ✅ DONE |
 | 9.3 | StatusIndicator Component | Status dots and badges | Reusable StatusIndicator | ✅ DONE |
 | 9.4 | TextInput Component | Form input with focus states | Reusable TextInput | ✅ DONE |
 | 9.5 | Modal Component | Dialog structure | Reusable Modal | ✅ DONE |
-| 9.6 | Theme Integration | Apply theme to all views | Visual match to mockup | TODO |
+| 9.6 | Theme Integration | Apply theme to all views | Visual match to mockup | ✅ DONE |
 | 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse | TODO |
 
 ### Dependency Graph

@@ -14,8 +14,9 @@
 //!     .border_color(theme::ice())
 //! ```
 
-// Allow dead_code - these constants are defined ahead of usage in view components.
-// Remove this attribute once views are migrated to use the theme module.
+// Allow unused items - these are part of the complete brand system
+// and will be used as the UI expands. Better to keep the full palette
+// defined than to remove and re-add later.
 #![allow(dead_code)]
 
 use gpui::Rgba;

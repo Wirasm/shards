@@ -3,8 +3,8 @@
 //! Provides consistent status visualization with dots and badges.
 //! All colors come from the theme module (Tallinn Night brand).
 
-// Allow dead_code - this component is defined ahead of usage in view components.
-// Remove this attribute once views are migrated to use StatusIndicator (Phase 9.6).
+// Allow dead_code for StatusMode::Badge and badge() - these are part of
+// the complete component API and will be used in detail views later.
 #![allow(dead_code)]
 
 use gpui::{IntoElement, RenderOnce, Rgba, Window, div, prelude::*, px};
