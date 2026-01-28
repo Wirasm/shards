@@ -288,18 +288,26 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
     );
 
     match session_handler::complete_session(branch, force) {
-        Ok(remote_deleted) => {
+        Ok(result) => {
+            use kild_core::CompleteResult;
+
             println!("✅ KILD '{}' completed!", branch);
-            if remote_deleted {
-                println!("   Remote branch also deleted (PR was merged)");
-            } else {
-                println!("   Remote branch preserved (merge will delete it)");
+            match result {
+                CompleteResult::RemoteDeleted => {
+                    println!("   Remote branch deleted (PR was merged)");
+                }
+                CompleteResult::RemoteDeleteFailed => {
+                    println!("   Remote branch deletion failed (PR was merged, check logs)");
+                }
+                CompleteResult::PrNotMerged => {
+                    println!("   Remote branch preserved (merge will delete it)");
+                }
             }
 
             info!(
                 event = "cli.complete_completed",
                 branch = branch,
-                remote_deleted = remote_deleted
+                result = ?result
             );
 
             Ok(())
