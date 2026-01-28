@@ -10,12 +10,12 @@ use crate::state::AppState;
 use crate::theme;
 use crate::views::main_view::MainView;
 
-/// Width of the sidebar in pixels (from mockup).
+/// Width of the sidebar in pixels.
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 
 /// Data for rendering a project item in the sidebar.
 struct ProjectItemData {
-    idx: usize,
+    list_position: usize,
     path: PathBuf,
     name: String,
     first_char: String,
@@ -48,7 +48,7 @@ impl ProjectItemData {
             });
 
         Self {
-            idx,
+            list_position: idx,
             path,
             name,
             first_char,
@@ -138,7 +138,7 @@ pub fn render_sidebar(state: &AppState, cx: &mut Context<MainView>) -> impl Into
                 // Project list
                 .children(projects_for_list.into_iter().map(|data| {
                     let ProjectItemData {
-                        idx,
+                        list_position,
                         path,
                         name,
                         first_char,
@@ -147,7 +147,7 @@ pub fn render_sidebar(state: &AppState, cx: &mut Context<MainView>) -> impl Into
                     } = data;
 
                     div()
-                        .id(("sidebar-project", idx))
+                        .id(("sidebar-project", list_position))
                         .flex()
                         .items_center()
                         .gap(px(theme::SPACE_2))
@@ -256,7 +256,8 @@ fn render_radio_indicator(is_selected: bool) -> impl IntoElement {
     div().w(px(16.0)).text_color(color).child(symbol)
 }
 
-/// Padding adjustment when selected (accounts for 2px border).
+/// Padding adjustment when selected. Reduces left padding by 2px to account
+/// for the 2px left border, keeping text alignment consistent.
 const SELECTED_PADDING_ADJUSTMENT: f32 = 2.0;
 
 fn render_count_badge(count: usize) -> impl IntoElement {

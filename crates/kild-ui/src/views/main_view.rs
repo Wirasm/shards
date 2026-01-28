@@ -798,7 +798,7 @@ impl Render for MainView {
             .flex()
             .flex_col()
             .bg(theme::void())
-            // Header with title and action buttons (NO project dropdown)
+            // Header with title and action buttons
             .child(
                 div()
                     .px(px(theme::SPACE_4))
