@@ -9,6 +9,9 @@ Both systems use: `{layer}.{domain}`
 **Layers:**
 - `core` - Library logic (`crates/kild-core/`)
 - `cli` - User-facing commands (`crates/kild/`)
+- `ui` - GPUI native GUI (`crates/kild-ui/`)
+- `peek.core` - kild-peek core library (`crates/kild-peek-core/`)
+- `peek.cli` - kild-peek CLI (`crates/kild-peek/`)
 
 **Domains:**
 - `session` - Session lifecycle
@@ -20,6 +23,12 @@ Both systems use: `{layer}.{domain}`
 - `config` - Configuration system
 - `agents` - Agent backends
 - `files` - File operations
+- `projects` - Project management (UI)
+- `watcher` - File system watcher (UI)
+- `window` - Window enumeration (kild-peek)
+- `screenshot` - Screenshot capture (kild-peek)
+- `diff` - Image comparison (kild-peek)
+- `assert` - UI state assertions (kild-peek)
 
 ## In Practice
 
@@ -29,6 +38,9 @@ core.session.create_started
 core.session.create_completed
 core.terminal.spawn_failed
 cli.list_started
+ui.watcher.started
+ui.projects.add_completed
+peek.core.screenshot.capture_completed
 ```
 
 **Labels** use `{layer}.{domain}`:
@@ -36,6 +48,8 @@ cli.list_started
 core.session
 core.terminal
 cli
+ui.watcher
+peek.core.screenshot
 ```
 
 ## Why This Matters
@@ -45,6 +59,9 @@ Same grep pattern, both systems:
 ```bash
 # Find all session-related log entries
 grep 'core\.session' logs.json
+
+# Find all watcher-related log entries
+grep 'ui\.watcher' logs.json
 
 # Find all session-related issues
 gh issue list --label "core.session"

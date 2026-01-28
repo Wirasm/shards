@@ -123,6 +123,8 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `state.rs` - Application state with project filtering and kild counts
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
 - `views/` - GPUI components (main view with 3-column layout: sidebar, kild list, detail panel)
+- `watcher.rs` - File system watcher for instant UI updates on session changes
+- `refresh.rs` - Background refresh logic with hybrid file watching + slow poll fallback
 
 **Key modules in kild-peek-core:**
 - `window/` - Window and monitor enumeration via macOS APIs
@@ -164,7 +166,7 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
-**Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `window`, `screenshot`, `diff`, `assert`
+**Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `watcher`, `window`, `screenshot`, `diff`, `assert`
 
 **State suffixes:** `_started`, `_completed`, `_failed`, `_skipped`
 
@@ -189,6 +191,11 @@ info!(event = "core.git.branch.create_completed", branch = branch);
 // Debug level for internal operations
 debug!(event = "core.pid_file.read_attempt", attempt = attempt, path = %pid_file.display());
 debug!(event = "core.terminal.applescript_executing", terminal = terminal_name);
+
+// UI layer - watcher domain for file system events
+info!(event = "ui.watcher.started", path = %sessions_dir.display());
+warn!(event = "ui.watcher.create_failed", error = %e, "File watcher unavailable");
+debug!(event = "ui.watcher.event_detected", kind = ?event.kind, paths = ?event.paths);
 
 // Structured fields - use Display (%e) for errors, Debug (?val) for complex types
 error!(event = "core.session.destroy_kill_failed", pid = pid, error = %e);
@@ -231,6 +238,7 @@ grep 'core\.session\.'  # Session events
 grep 'core\.terminal\.' # Terminal events
 grep 'core\.git\.'      # Git events
 grep 'ui\.projects\.'   # Project management events
+grep 'ui\.watcher\.'    # File watcher events
 grep 'peek\.core\.window\.'     # Window enumeration events
 grep 'peek\.core\.screenshot\.' # Screenshot capture events
 
