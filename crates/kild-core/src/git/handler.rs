@@ -199,10 +199,11 @@ pub fn create_worktree(
     }
 
     // Create worktree - use smart naming based on current branch
+    // Sanitize branch name for worktree name (git worktree names cannot contain /)
     let worktree_name = if use_current {
-        validated_branch.clone()
+        operations::sanitize_for_path(&validated_branch)
     } else {
-        format!("kild_{}", validated_branch)
+        format!("kild_{}", operations::sanitize_for_path(&validated_branch))
     };
     repo.worktree(&worktree_name, &worktree_path, None)
         .map_err(|e| GitError::Git2Error { source: e })?;

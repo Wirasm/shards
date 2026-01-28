@@ -4,8 +4,20 @@ use git2::Repository;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
+/// Sanitize a string for safe use in filesystem paths.
+///
+/// Replaces `/` with `-` to prevent nested directory creation
+/// when branch names like `feature/foo` are used.
+pub fn sanitize_for_path(s: &str) -> String {
+    s.replace('/', "-")
+}
+
 pub fn calculate_worktree_path(base_dir: &Path, project_name: &str, branch: &str) -> PathBuf {
-    base_dir.join("worktrees").join(project_name).join(branch)
+    let safe_branch = sanitize_for_path(branch);
+    base_dir
+        .join("worktrees")
+        .join(project_name)
+        .join(safe_branch)
 }
 
 pub fn derive_project_name_from_path(repo_path: &Path) -> String {
@@ -131,6 +143,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_sanitize_for_path() {
+        assert_eq!(sanitize_for_path("feature/foo"), "feature-foo");
+        assert_eq!(sanitize_for_path("bugfix/auth/login"), "bugfix-auth-login");
+        assert_eq!(sanitize_for_path("simple-branch"), "simple-branch");
+        assert_eq!(sanitize_for_path("no_slashes_here"), "no_slashes_here");
+    }
+
+    #[test]
     fn test_calculate_worktree_path() {
         let base = Path::new("/home/user/.shards");
         let path = calculate_worktree_path(base, "my-project", "feature-branch");
@@ -138,6 +158,32 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from("/home/user/.shards/worktrees/my-project/feature-branch")
+        );
+    }
+
+    #[test]
+    fn test_calculate_worktree_path_with_slashes() {
+        let base = Path::new("/home/user/.kild");
+
+        // Branch with single slash
+        let path = calculate_worktree_path(base, "my-project", "feature/auth");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/user/.kild/worktrees/my-project/feature-auth")
+        );
+
+        // Branch with multiple slashes
+        let path = calculate_worktree_path(base, "my-project", "feature/auth/oauth");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/user/.kild/worktrees/my-project/feature-auth-oauth")
+        );
+
+        // Branch without slashes (unchanged behavior)
+        let path = calculate_worktree_path(base, "my-project", "simple-branch");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/user/.kild/worktrees/my-project/simple-branch")
         );
     }
 
