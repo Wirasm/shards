@@ -144,9 +144,13 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                     [&open_error, &stop_error, &editor_error, &focus_error]
                                         .iter()
                                         .find_map(|err| {
-                                            err.as_ref()
-                                                .filter(|e| e.branch == branch)
-                                                .map(|e| e.message.clone())
+                                            err.as_ref().and_then(|e| {
+                                                if e.branch == branch {
+                                                    Some(e.message.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            })
                                         });
 
                                 // Show Open button when stopped, Stop button when running

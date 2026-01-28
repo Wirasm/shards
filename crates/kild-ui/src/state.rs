@@ -89,9 +89,8 @@ fn check_git_status(worktree_path: &std::path::Path) -> GitStatus {
 
 impl KildDisplay {
     pub fn from_session(session: Session) -> Self {
-        let status = match session.process_id {
-            None => ProcessStatus::Stopped,
-            Some(pid) => match kild_core::process::is_process_running(pid) {
+        let status = if let Some(pid) = session.process_id {
+            match kild_core::process::is_process_running(pid) {
                 Ok(true) => ProcessStatus::Running,
                 Ok(false) => ProcessStatus::Stopped,
                 Err(e) => {
@@ -103,7 +102,9 @@ impl KildDisplay {
                     );
                     ProcessStatus::Unknown
                 }
-            },
+            }
+        } else {
+            ProcessStatus::Stopped
         };
 
         let git_status = if session.worktree_path.exists() {
@@ -414,15 +415,15 @@ impl AppState {
     /// Uses path-based hashing that matches kild-core's `generate_project_id`.
     /// If no active project is set, returns all displays (unfiltered).
     pub fn filtered_displays(&self) -> Vec<&KildDisplay> {
-        let Some(active_id) = self.active_project_id() else {
+        if let Some(active_id) = self.active_project_id() {
+            self.displays
+                .iter()
+                .filter(|d| d.session.project_id == active_id)
+                .collect()
+        } else {
             // No active project - show all kilds
-            return self.displays.iter().collect();
-        };
-
-        self.displays
-            .iter()
-            .filter(|d| d.session.project_id == active_id)
-            .collect()
+            self.displays.iter().collect()
+        }
     }
 
     /// Count kilds with Stopped status.

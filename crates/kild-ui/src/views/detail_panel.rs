@@ -29,33 +29,18 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
     let worktree_path = session.worktree_path.display().to_string();
     let created_at = session.created_at.clone();
 
-    // Map process status to display status
-    let status = match kild.status {
-        ProcessStatus::Running => Status::Active,
-        ProcessStatus::Stopped => Status::Stopped,
-        ProcessStatus::Unknown => Status::Crashed,
-    };
-    let status_text = match kild.status {
-        ProcessStatus::Running => "Running",
-        ProcessStatus::Stopped => "Stopped",
-        ProcessStatus::Unknown => "Unknown",
-    };
-    let status_color = match kild.status {
-        ProcessStatus::Running => theme::aurora(),
-        ProcessStatus::Stopped => theme::copper(),
-        ProcessStatus::Unknown => theme::ember(),
+    // Map process status to display values
+    let (status, status_text, status_color) = match kild.status {
+        ProcessStatus::Running => (Status::Active, "Running", theme::aurora()),
+        ProcessStatus::Stopped => (Status::Stopped, "Stopped", theme::copper()),
+        ProcessStatus::Unknown => (Status::Crashed, "Unknown", theme::ember()),
     };
 
     // Git status info
-    let git_status_text = match kild.git_status {
-        GitStatus::Clean => "Clean",
-        GitStatus::Dirty => "Uncommitted",
-        GitStatus::Unknown => "Unknown",
-    };
-    let git_status_color = match kild.git_status {
-        GitStatus::Clean => theme::aurora(),
-        GitStatus::Dirty => theme::copper(),
-        GitStatus::Unknown => theme::text_muted(),
+    let (git_status_text, git_status_color) = match kild.git_status {
+        GitStatus::Clean => ("Clean", theme::aurora()),
+        GitStatus::Dirty => ("Uncommitted", theme::copper()),
+        GitStatus::Unknown => ("Unknown", theme::text_muted()),
     };
     let diff_stats_display = kild.diff_stats.as_ref().map(|s| {
         format!(
