@@ -14,6 +14,7 @@
 use crate::agents;
 use crate::config::types::{AgentConfig, HealthConfig, KildConfig, TerminalConfig};
 use crate::config::validation::validate_config;
+use crate::files::types::IncludeConfig;
 use std::fs;
 use std::path::PathBuf;
 
@@ -82,6 +83,35 @@ fn load_config_file(path: &PathBuf) -> Result<KildConfig, Box<dyn std::error::Er
     Ok(config)
 }
 
+/// Merge include pattern configurations.
+///
+/// When both configs have patterns, combines and deduplicates them.
+/// Override config wins for enabled and max_file_size settings.
+fn merge_include_patterns(
+    base: Option<IncludeConfig>,
+    override_config: Option<IncludeConfig>,
+) -> Option<IncludeConfig> {
+    match (base, override_config) {
+        (Some(base_config), Some(override_cfg)) => {
+            // Both configs present - merge patterns and use override settings
+            let mut merged_patterns = base_config.patterns;
+            for pattern in override_cfg.patterns {
+                if !merged_patterns.contains(&pattern) {
+                    merged_patterns.push(pattern);
+                }
+            }
+            Some(IncludeConfig {
+                patterns: merged_patterns,
+                enabled: override_cfg.enabled,
+                max_file_size: override_cfg.max_file_size.or(base_config.max_file_size),
+            })
+        }
+        (None, Some(override_cfg)) => Some(override_cfg),
+        (Some(base_config), None) => Some(base_config),
+        (None, None) => None,
+    }
+}
+
 /// Merge two configurations, with override_config taking precedence.
 ///
 /// For optional fields, override values replace base values only if present.
@@ -114,29 +144,10 @@ pub fn merge_configs(base: KildConfig, override_config: KildConfig) -> KildConfi
             }
             merged
         },
-        include_patterns: {
-            use crate::files::types::IncludeConfig;
-            match (base.include_patterns, override_config.include_patterns) {
-                (None, None) => None,
-                (Some(base_cfg), None) => Some(base_cfg),
-                (None, Some(override_cfg)) => Some(override_cfg),
-                (Some(base_cfg), Some(override_cfg)) => {
-                    // Merge patterns: combine and deduplicate
-                    let mut merged_patterns = base_cfg.patterns;
-                    for pattern in override_cfg.patterns {
-                        if !merged_patterns.contains(&pattern) {
-                            merged_patterns.push(pattern);
-                        }
-                    }
-                    Some(IncludeConfig {
-                        patterns: merged_patterns,
-                        // Override config wins for enabled/max_file_size
-                        enabled: override_cfg.enabled,
-                        max_file_size: override_cfg.max_file_size.or(base_cfg.max_file_size),
-                    })
-                }
-            }
-        },
+        include_patterns: merge_include_patterns(
+            base.include_patterns,
+            override_config.include_patterns,
+        ),
         health: HealthConfig {
             idle_threshold_minutes: override_config
                 .health
