@@ -120,19 +120,36 @@ pub fn blade_bright() -> Rgba {
 // GLOW EFFECTS (colors with alpha for shadows/glows)
 // =============================================================================
 
+/// Standard glow effect alpha (15% opacity).
+///
+/// Used consistently for all glow effects (status indicators, danger hover, etc.)
+pub const GLOW_ALPHA: f32 = 0.15;
+
 /// Create a color with alpha for glow effects.
 ///
 /// Alpha is clamped to the valid range 0.0-1.0.
 ///
 /// # Example
 /// ```ignore
-/// // For glow effects, use 0.15 alpha:
-/// let ice_glow = with_alpha(ice(), 0.15);
+/// // For glow effects, use GLOW_ALPHA:
+/// let ice_glow = with_alpha(ice(), GLOW_ALPHA);
 /// ```
 pub fn with_alpha(color: Rgba, alpha: f32) -> Rgba {
     Rgba {
         a: alpha.clamp(0.0, 1.0),
         ..color
+    }
+}
+
+/// Fully transparent color (alpha = 0.0).
+///
+/// Use for variants that should appear borderless or backgroundless.
+pub fn transparent() -> Rgba {
+    Rgba {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.0,
     }
 }
 
@@ -169,6 +186,19 @@ pub const SPACE_6: f32 = 24.0;
 pub const RADIUS_SM: f32 = 4.0;
 pub const RADIUS_MD: f32 = 6.0;
 pub const RADIUS_LG: f32 = 8.0;
+
+// =============================================================================
+// COMPONENT SIZES
+// =============================================================================
+
+/// Status indicator dot size (simple dot mode).
+pub const STATUS_DOT_SIZE: f32 = 8.0;
+
+/// Status indicator glow container size (wraps the dot for glow effect).
+pub const STATUS_GLOW_SIZE: f32 = 16.0;
+
+/// Status indicator badge dot size (smaller dot inside badge).
+pub const STATUS_BADGE_DOT_SIZE: f32 = 6.0;
 
 // =============================================================================
 // OVERLAY

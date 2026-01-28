@@ -49,8 +49,8 @@ pub fn render_project_selector(state: &AppState, cx: &mut Context<MainView>) -> 
     let active_name = match active_project {
         Some(path) => projects
             .iter()
-            .find(|p| &p.path == path)
-            .map(|p| p.name.clone())
+            .find(|p| p.path() == path)
+            .map(|p| p.name().to_string())
             .unwrap_or_else(|| "Select Project".to_string()),
         None => "All Projects".to_string(),
     };
@@ -167,9 +167,9 @@ pub fn render_project_selector(state: &AppState, cx: &mut Context<MainView>) -> 
                             .iter()
                             .enumerate()
                             .map(|(idx, project)| {
-                                let path = project.path.clone();
-                                let is_active = active_for_dropdown.as_ref() == Some(&project.path);
-                                let name = project.name.clone();
+                                let path = project.path().to_path_buf();
+                                let is_active = active_for_dropdown.as_ref() == Some(&path);
+                                let name = project.name().to_string();
 
                                 div()
                                     .id(("project-item", idx))

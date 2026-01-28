@@ -35,13 +35,15 @@ impl Status {
         }
     }
 
-    /// Get the glow/background color for this status (15% alpha).
+    /// Get the glow/background color for this status (GLOW_ALPHA opacity).
     ///
     /// Returns `None` for statuses that shouldn't have a glow effect (Stopped).
     /// This enforces the "Stopped has no glow" invariant at the type level.
     pub fn glow_color(&self) -> Option<Rgba> {
         match self {
-            Status::Active | Status::Crashed => Some(theme::with_alpha(self.color(), 0.15)),
+            Status::Active | Status::Crashed => {
+                Some(theme::with_alpha(self.color(), theme::GLOW_ALPHA))
+            }
             Status::Stopped => None,
         }
     }
@@ -112,15 +114,18 @@ impl RenderOnce for StatusIndicator {
 
         match self.mode {
             StatusMode::Dot => {
-                // 8px circle with optional glow
-                let dot = div().size(px(8.0)).rounded_full().bg(color);
+                // Dot circle with optional glow
+                let dot = div()
+                    .size(px(theme::STATUS_DOT_SIZE))
+                    .rounded_full()
+                    .bg(color);
 
                 // Add glow effect via larger background container
                 // GPUI doesn't have box-shadow, so we simulate with a background element
                 if let Some(glow_color) = glow {
                     // For glow, wrap in a container with glow background
                     div()
-                        .size(px(16.0))
+                        .size(px(theme::STATUS_GLOW_SIZE))
                         .rounded_full()
                         .bg(glow_color)
                         .flex()
@@ -134,8 +139,8 @@ impl RenderOnce for StatusIndicator {
             }
             StatusMode::Badge => {
                 // Pill shape: background glow + dot + text
-                // For badges without glow, use transparent background (alpha = 0.0)
-                let bg_color = glow.unwrap_or_default();
+                // For badges without glow, use transparent background
+                let bg_color = glow.unwrap_or_else(theme::transparent);
                 div()
                     .flex()
                     .items_center()
@@ -145,8 +150,11 @@ impl RenderOnce for StatusIndicator {
                     .bg(bg_color)
                     .rounded(px(theme::RADIUS_SM))
                     .child(
-                        // Small dot inside badge (6px for visual balance)
-                        div().size(px(6.0)).rounded_full().bg(color),
+                        // Small dot inside badge
+                        div()
+                            .size(px(theme::STATUS_BADGE_DOT_SIZE))
+                            .rounded_full()
+                            .bg(color),
                     )
                     .child(
                         div()

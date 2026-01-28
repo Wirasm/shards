@@ -526,7 +526,7 @@ impl MainView {
                 tracing::info!(
                     event = "ui.add_project.succeeded",
                     path = %path.display(),
-                    name = %project.name
+                    name = %project.name()
                 );
                 // Update local state with new project
                 self.state.projects.push(project);
@@ -601,9 +601,9 @@ impl MainView {
         }
 
         // Update local state
-        self.state.projects.retain(|p| p.path != path);
+        self.state.projects.retain(|p| p.path() != path);
         if self.state.active_project.as_ref() == Some(&path) {
-            self.state.active_project = self.state.projects.first().map(|p| p.path.clone());
+            self.state.active_project = self.state.projects.first().map(|p| p.path().to_path_buf());
         }
         self.state.show_project_dropdown = false;
         cx.notify();
