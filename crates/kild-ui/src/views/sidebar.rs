@@ -27,11 +27,11 @@ impl ProjectItemData {
     fn from_project(
         idx: usize,
         project: &crate::projects::Project,
-        active_project: &Option<PathBuf>,
+        active_path: Option<&std::path::Path>,
         state: &AppState,
     ) -> Self {
         let path = project.path().to_path_buf();
-        let is_selected = active_project.as_ref() == Some(&path);
+        let is_selected = active_path == Some(project.path());
         let count = state.kild_count_for_project(project.path());
         let name = project.name().to_string();
         let first_char = name
@@ -60,19 +60,18 @@ impl ProjectItemData {
 
 /// Render the project sidebar.
 pub fn render_sidebar(state: &AppState, cx: &mut Context<MainView>) -> impl IntoElement {
-    let projects = &state.projects;
-    let active_project = &state.active_project;
+    let active_path = state.active_project_path();
     let total_count = state.total_kild_count();
 
     // Prepare project data for rendering
-    let projects_for_list: Vec<ProjectItemData> = projects
-        .iter()
+    let projects_for_list: Vec<ProjectItemData> = state
+        .projects_iter()
         .enumerate()
-        .map(|(idx, project)| ProjectItemData::from_project(idx, project, active_project, state))
+        .map(|(idx, project)| ProjectItemData::from_project(idx, project, active_path, state))
         .collect();
 
-    let is_all_selected = active_project.is_none();
-    let active_for_footer = active_project.clone();
+    let is_all_selected = active_path.is_none();
+    let active_for_footer = active_path.map(|p| p.to_path_buf());
 
     div()
         .w(px(SIDEBAR_WIDTH))

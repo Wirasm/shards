@@ -2,12 +2,95 @@
 //!
 //! Centralized state management for the GUI, including kild list,
 //! create dialog, and form state.
+//!
+//! ## State Modules
+//!
+//! AppState is composed of several specialized modules that encapsulate related state:
+//! - `DialogState`: Mutually exclusive dialog states (create, confirm, add project)
+//! - More modules to be added in future refactoring phases
 
 use kild_core::Session;
 use kild_core::git::{operations::get_diff_stats, types::DiffStats};
 use std::path::PathBuf;
 
 use crate::projects::Project;
+
+// =============================================================================
+// Dialog State
+// =============================================================================
+
+/// Dialog state for the application.
+///
+/// Only one dialog can be open at a time. This enum enforces mutual exclusion
+/// at compile-time, preventing impossible states like having both the create
+/// and confirm dialogs open simultaneously.
+#[derive(Clone, Debug, Default)]
+pub enum DialogState {
+    /// No dialog is open.
+    #[default]
+    None,
+    /// Create kild dialog is open.
+    Create {
+        form: CreateFormState,
+        error: Option<String>,
+    },
+    /// Confirm destroy dialog is open.
+    Confirm {
+        /// Branch being destroyed.
+        branch: String,
+        error: Option<String>,
+    },
+    /// Add project dialog is open.
+    AddProject {
+        form: AddProjectFormState,
+        error: Option<String>,
+    },
+}
+
+impl DialogState {
+    /// Returns true if the create dialog is open.
+    pub fn is_create(&self) -> bool {
+        matches!(self, DialogState::Create { .. })
+    }
+
+    /// Returns true if the confirm dialog is open.
+    pub fn is_confirm(&self) -> bool {
+        matches!(self, DialogState::Confirm { .. })
+    }
+
+    /// Returns true if the add project dialog is open.
+    pub fn is_add_project(&self) -> bool {
+        matches!(self, DialogState::AddProject { .. })
+    }
+
+    /// Open the create dialog with default form state.
+    pub fn open_create() -> Self {
+        DialogState::Create {
+            form: CreateFormState::default(),
+            error: None,
+        }
+    }
+
+    /// Open the confirm dialog for destroying a branch.
+    pub fn open_confirm(branch: String) -> Self {
+        DialogState::Confirm {
+            branch,
+            error: None,
+        }
+    }
+
+    /// Open the add project dialog with default form state.
+    pub fn open_add_project() -> Self {
+        DialogState::AddProject {
+            form: AddProjectFormState::default(),
+            error: None,
+        }
+    }
+}
+
+// =============================================================================
+// Process Status
+// =============================================================================
 
 /// Process status for a kild, distinguishing between running, stopped, and unknown states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +109,450 @@ pub struct OperationError {
     pub branch: String,
     pub message: String,
 }
+
+// =============================================================================
+// Project Manager
+// =============================================================================
+
+/// Error type for project operations.
+#[derive(Debug, Clone)]
+pub enum ProjectError {
+    /// Project not found in the list.
+    NotFound,
+    /// Project already exists in the list.
+    AlreadyExists,
+}
+
+impl std::fmt::Display for ProjectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectError::NotFound => write!(f, "Project not found"),
+            ProjectError::AlreadyExists => write!(f, "Project already exists"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectError {}
+
+/// Encapsulates project list with enforced invariants.
+///
+/// Key invariant: `active_index` always points to a valid index in `projects`,
+/// or is `None` (meaning "all projects" view). This invariant is maintained
+/// automatically when projects are added or removed.
+#[derive(Clone, Debug, Default)]
+pub struct ProjectManager {
+    /// List of registered projects (private to enforce invariants).
+    projects: Vec<Project>,
+    /// Index of the active project, or None for "all projects" view.
+    active_index: Option<usize>,
+}
+
+impl ProjectManager {
+    /// Create a new empty project manager.
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a project manager from existing data.
+    ///
+    /// If `active_path` doesn't match any project, sets active_index to None.
+    pub fn from_data(projects: Vec<Project>, active_path: Option<PathBuf>) -> Self {
+        let active_index = active_path
+            .as_ref()
+            .and_then(|path| projects.iter().position(|p| p.path() == path));
+
+        Self {
+            projects,
+            active_index,
+        }
+    }
+
+    /// Select a project by path.
+    ///
+    /// # Errors
+    /// Returns `ProjectError::NotFound` if no project matches the path.
+    pub fn select(&mut self, path: &std::path::Path) -> Result<(), ProjectError> {
+        let index = self
+            .projects
+            .iter()
+            .position(|p| p.path() == path)
+            .ok_or(ProjectError::NotFound)?;
+        self.active_index = Some(index);
+        Ok(())
+    }
+
+    /// Select "all projects" view (clears active project selection).
+    pub fn select_all(&mut self) {
+        self.active_index = None;
+    }
+
+    /// Add a project to the list.
+    ///
+    /// If this is the first project added, it becomes active automatically.
+    ///
+    /// # Errors
+    /// Returns `ProjectError::AlreadyExists` if a project with the same path exists.
+    pub fn add(&mut self, project: Project) -> Result<(), ProjectError> {
+        if self.projects.iter().any(|p| p.path() == project.path()) {
+            return Err(ProjectError::AlreadyExists);
+        }
+
+        self.projects.push(project);
+
+        // First project becomes active automatically
+        if self.projects.len() == 1 {
+            self.active_index = Some(0);
+        }
+
+        Ok(())
+    }
+
+    /// Remove a project by path.
+    ///
+    /// Automatically adjusts `active_index` to maintain invariant:
+    /// - If removed project was active: selects first project, or None if empty
+    /// - If removed project was before active: decrements active_index
+    ///
+    /// # Errors
+    /// Returns `ProjectError::NotFound` if no project matches the path.
+    pub fn remove(&mut self, path: &std::path::Path) -> Result<Project, ProjectError> {
+        let index = self
+            .projects
+            .iter()
+            .position(|p| p.path() == path)
+            .ok_or(ProjectError::NotFound)?;
+
+        // Adjust active_index before removal
+        match self.active_index {
+            Some(active) if active == index => {
+                // Removed project was active - select first remaining, or None
+                self.active_index = if self.projects.len() > 1 {
+                    Some(0)
+                } else {
+                    None
+                };
+            }
+            Some(active) if active > index => {
+                // Active was after removed - decrement to maintain reference
+                self.active_index = Some(active - 1);
+            }
+            _ => {
+                // No change needed
+            }
+        }
+
+        Ok(self.projects.remove(index))
+    }
+
+    /// Get the active project, if any.
+    pub fn active(&self) -> Option<&Project> {
+        self.active_index.map(|i| &self.projects[i])
+    }
+
+    /// Get the active project's path, if any.
+    pub fn active_path(&self) -> Option<&std::path::Path> {
+        self.active().map(|p| p.path())
+    }
+
+    /// Iterate over all projects.
+    pub fn iter(&self) -> impl Iterator<Item = &Project> {
+        self.projects.iter()
+    }
+
+    /// Check if the project list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.projects.is_empty()
+    }
+
+    /// Get the number of projects.
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.projects.len()
+    }
+}
+
+// =============================================================================
+// Operation Errors
+// =============================================================================
+
+/// Unified error tracking for kild operations.
+///
+/// Consolidates per-branch errors (open, stop, editor, focus) and bulk operation
+/// errors into a single struct with a consistent API.
+#[derive(Clone, Debug, Default)]
+pub struct OperationErrors {
+    /// Per-branch errors (keyed by branch name).
+    by_branch: std::collections::HashMap<String, OperationError>,
+    /// Bulk operation errors (e.g., "open all" failures).
+    bulk: Vec<OperationError>,
+}
+
+impl OperationErrors {
+    /// Create a new empty error collection.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set an error for a specific branch (replaces any existing error).
+    pub fn set(&mut self, branch: &str, error: OperationError) {
+        self.by_branch.insert(branch.to_string(), error);
+    }
+
+    /// Get the error for a specific branch, if any.
+    pub fn get(&self, branch: &str) -> Option<&OperationError> {
+        self.by_branch.get(branch)
+    }
+
+    /// Clear the error for a specific branch.
+    pub fn clear(&mut self, branch: &str) {
+        self.by_branch.remove(branch);
+    }
+
+    /// Set bulk errors (replaces existing).
+    pub fn set_bulk(&mut self, errors: Vec<OperationError>) {
+        self.bulk = errors;
+    }
+
+    /// Get bulk operation errors.
+    pub fn bulk_errors(&self) -> &[OperationError] {
+        &self.bulk
+    }
+
+    /// Check if there are any bulk errors.
+    pub fn has_bulk_errors(&self) -> bool {
+        !self.bulk.is_empty()
+    }
+
+    /// Clear all bulk operation errors.
+    pub fn clear_bulk(&mut self) {
+        self.bulk.clear();
+    }
+}
+
+// =============================================================================
+// Selection State
+// =============================================================================
+
+/// Encapsulates kild selection state.
+///
+/// Provides a clean API for selecting/deselecting kilds and checking
+/// if a selection is still valid after list updates.
+#[derive(Clone, Debug, Default)]
+pub struct SelectionState {
+    /// ID of the currently selected kild, or None if nothing selected.
+    selected_id: Option<String>,
+}
+
+impl SelectionState {
+    /// Create a new empty selection state.
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select a kild by ID.
+    pub fn select(&mut self, id: String) {
+        self.selected_id = Some(id);
+    }
+
+    /// Clear the selection.
+    pub fn clear(&mut self) {
+        self.selected_id = None;
+    }
+
+    /// Get the selected kild ID, if any.
+    pub fn id(&self) -> Option<&str> {
+        self.selected_id.as_deref()
+    }
+
+    /// Check if a kild is selected.
+    pub fn has_selection(&self) -> bool {
+        self.selected_id.is_some()
+    }
+}
+
+// =============================================================================
+// Session Store
+// =============================================================================
+
+/// Encapsulates session display data with refresh tracking.
+///
+/// Provides a clean API for managing kild displays, filtering by project,
+/// and tracking refresh timestamps. Encapsulates:
+/// - `displays`: The list of KildDisplay items
+/// - `load_error`: Error from last refresh attempt
+/// - `last_refresh`: Timestamp of last successful refresh
+pub struct SessionStore {
+    /// List of kild displays (private to enforce invariants).
+    displays: Vec<KildDisplay>,
+    /// Error from last refresh attempt, if any.
+    load_error: Option<String>,
+    /// Timestamp of last successful status refresh.
+    last_refresh: std::time::Instant,
+}
+
+impl SessionStore {
+    /// Create a new session store by loading sessions from disk.
+    pub fn new() -> Self {
+        let (displays, load_error) = crate::actions::refresh_sessions();
+        Self {
+            displays,
+            load_error,
+            last_refresh: std::time::Instant::now(),
+        }
+    }
+
+    /// Create a session store with provided data (for testing).
+    #[cfg(test)]
+    pub fn from_data(displays: Vec<KildDisplay>, load_error: Option<String>) -> Self {
+        Self {
+            displays,
+            load_error,
+            last_refresh: std::time::Instant::now(),
+        }
+    }
+
+    /// Set displays directly (for testing).
+    #[cfg(test)]
+    pub fn set_displays(&mut self, displays: Vec<KildDisplay>) {
+        self.displays = displays;
+    }
+
+    /// Get mutable access to displays (for testing status updates).
+    #[cfg(test)]
+    pub fn displays_mut(&mut self) -> &mut Vec<KildDisplay> {
+        &mut self.displays
+    }
+
+    /// Refresh sessions from disk.
+    pub fn refresh(&mut self) {
+        let (displays, load_error) = crate::actions::refresh_sessions();
+        self.displays = displays;
+        self.load_error = load_error;
+        self.last_refresh = std::time::Instant::now();
+    }
+
+    /// Update only the process status of existing kilds without reloading from disk.
+    ///
+    /// This is faster than `refresh()` for status polling because it:
+    /// - Doesn't reload session files from disk (unless count mismatch detected)
+    /// - Only checks if tracked processes are still running
+    /// - Preserves the existing kild list structure
+    ///
+    /// If the session count on disk differs from the in-memory count (indicating
+    /// external create/destroy operations), triggers a full refresh instead.
+    ///
+    /// Note: This does NOT update git status or diff stats. Use `refresh()`
+    /// for a full refresh that includes git information.
+    pub fn update_statuses_only(&mut self) {
+        // Check if session count changed (external create/destroy).
+        let disk_count = count_session_files();
+
+        match disk_count {
+            Some(count) if count != self.displays.len() => {
+                tracing::info!(
+                    event = "ui.auto_refresh.session_count_mismatch",
+                    disk_count = count,
+                    memory_count = self.displays.len(),
+                    action = "triggering full refresh"
+                );
+                self.refresh();
+                return;
+            }
+            None => {
+                tracing::debug!(
+                    event = "ui.auto_refresh.count_check_skipped",
+                    reason = "cannot read sessions directory"
+                );
+            }
+            Some(_) => {
+                // Count matches - continue to status update
+            }
+        }
+
+        // No count change (or count unavailable) - just update process statuses
+        for kild_display in &mut self.displays {
+            kild_display.status = determine_process_status(&kild_display.session);
+        }
+        self.last_refresh = std::time::Instant::now();
+    }
+
+    /// Get all displays.
+    pub fn displays(&self) -> &[KildDisplay] {
+        &self.displays
+    }
+
+    /// Get displays filtered by project ID.
+    ///
+    /// Returns all displays where `session.project_id` matches the given ID.
+    /// If `project_id` is `None`, returns all displays (unfiltered).
+    pub fn filtered_by_project(&self, project_id: Option<&str>) -> Vec<&KildDisplay> {
+        if let Some(id) = project_id {
+            self.displays
+                .iter()
+                .filter(|d| d.session.project_id == id)
+                .collect()
+        } else {
+            self.displays.iter().collect()
+        }
+    }
+
+    /// Get the load error from the last refresh attempt, if any.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
+    }
+
+    /// Get the timestamp of the last successful refresh.
+    #[allow(dead_code)]
+    pub fn last_refresh(&self) -> std::time::Instant {
+        self.last_refresh
+    }
+
+    /// Count kilds with Stopped status.
+    pub fn stopped_count(&self) -> usize {
+        self.displays
+            .iter()
+            .filter(|d| d.status == ProcessStatus::Stopped)
+            .count()
+    }
+
+    /// Count kilds with Running status.
+    pub fn running_count(&self) -> usize {
+        self.displays
+            .iter()
+            .filter(|d| d.status == ProcessStatus::Running)
+            .count()
+    }
+
+    /// Count kilds for a specific project (by project ID).
+    pub fn kild_count_for_project(&self, project_id: &str) -> usize {
+        self.displays
+            .iter()
+            .filter(|d| d.session.project_id == project_id)
+            .count()
+    }
+
+    /// Count total kilds across all projects.
+    pub fn total_count(&self) -> usize {
+        self.displays.len()
+    }
+
+    /// Check if there are no displays.
+    pub fn is_empty(&self) -> bool {
+        self.displays.is_empty()
+    }
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// Git Status
+// =============================================================================
 
 /// Git status for a worktree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,52 +793,30 @@ pub struct AddProjectFormState {
 }
 
 /// Main application state.
+///
+/// All fields are private - access state through the facade methods below.
+/// This ensures all state mutations go through controlled methods that
+/// maintain invariants and provide a consistent API.
 pub struct AppState {
-    pub displays: Vec<KildDisplay>,
-    pub load_error: Option<String>,
-    pub show_create_dialog: bool,
-    pub create_form: CreateFormState,
-    pub create_error: Option<String>,
+    /// Session display data with refresh tracking.
+    sessions: SessionStore,
 
-    // Confirm dialog state
-    pub show_confirm_dialog: bool,
-    pub confirm_target_branch: Option<String>,
-    pub confirm_error: Option<String>,
+    /// Current dialog state (mutually exclusive - only one dialog can be open).
+    dialog: DialogState,
 
-    // Open error state (shown inline per-row)
-    pub open_error: Option<OperationError>,
+    /// Operation errors (per-branch and bulk).
+    errors: OperationErrors,
 
-    // Stop error state (shown inline per-row)
-    pub stop_error: Option<OperationError>,
+    /// Kild selection state (for detail panel).
+    selection: SelectionState,
 
-    // Bulk operation errors (shown as banner)
-    pub bulk_errors: Vec<OperationError>,
-
-    // Editor error state (shown inline per-row)
-    pub editor_error: Option<OperationError>,
-
-    // Focus terminal error state (shown inline per-row)
-    pub focus_error: Option<OperationError>,
-
-    /// ID of the currently selected kild (for detail panel)
-    pub selected_kild_id: Option<String>,
-
-    /// Timestamp of last successful status refresh
-    pub last_refresh: std::time::Instant,
-
-    // Project management state
-    pub projects: Vec<Project>,
-    pub active_project: Option<PathBuf>,
-    pub show_add_project_dialog: bool,
-    pub add_project_form: AddProjectFormState,
-    pub add_project_error: Option<String>,
+    /// Project management with enforced invariants.
+    projects: ProjectManager,
 }
 
 impl AppState {
     /// Create new application state, loading sessions from disk.
     pub fn new() -> Self {
-        let (displays, load_error) = crate::actions::refresh_sessions();
-
         // Migrate projects to canonical paths (fixes case mismatch on macOS)
         if let Err(e) = crate::projects::migrate_projects_to_canonical() {
             tracing::warn!(
@@ -323,37 +828,20 @@ impl AppState {
 
         // Load projects from disk (after migration)
         let projects_data = crate::projects::load_projects();
+        let projects = ProjectManager::from_data(projects_data.projects, projects_data.active);
 
         Self {
-            displays,
-            load_error,
-            show_create_dialog: false,
-            create_form: CreateFormState::default(),
-            create_error: None,
-            show_confirm_dialog: false,
-            confirm_target_branch: None,
-            confirm_error: None,
-            open_error: None,
-            stop_error: None,
-            bulk_errors: Vec::new(),
-            editor_error: None,
-            focus_error: None,
-            selected_kild_id: None,
-            last_refresh: std::time::Instant::now(),
-            projects: projects_data.projects,
-            active_project: projects_data.active,
-            show_add_project_dialog: false,
-            add_project_form: AddProjectFormState::default(),
-            add_project_error: None,
+            sessions: SessionStore::new(),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects,
         }
     }
 
     /// Refresh sessions from disk.
     pub fn refresh_sessions(&mut self) {
-        let (displays, load_error) = crate::actions::refresh_sessions();
-        self.displays = displays;
-        self.load_error = load_error;
-        self.last_refresh = std::time::Instant::now();
+        self.sessions.refresh();
     }
 
     /// Update only the process status of existing kilds without reloading from disk.
@@ -369,91 +857,60 @@ impl AppState {
     /// Note: This does NOT update git status or diff stats. Use `refresh_sessions()`
     /// for a full refresh that includes git information.
     pub fn update_statuses_only(&mut self) {
-        // Check if session count changed (external create/destroy).
-        // This is a best-effort check - race conditions are possible (e.g., session
-        // added and removed in the same cycle) but will be caught on the next refresh.
-        let disk_count = count_session_files();
+        self.sessions.update_statuses_only();
+    }
 
-        match disk_count {
-            Some(count) if count != self.displays.len() => {
-                tracing::info!(
-                    event = "ui.auto_refresh.session_count_mismatch",
-                    disk_count = count,
-                    memory_count = self.displays.len(),
-                    action = "triggering full refresh"
+    /// Close any open dialog.
+    pub fn close_dialog(&mut self) {
+        self.dialog = DialogState::None;
+    }
+
+    /// Open the create dialog.
+    pub fn open_create_dialog(&mut self) {
+        self.dialog = DialogState::open_create();
+    }
+
+    /// Open the confirm dialog for a specific branch.
+    pub fn open_confirm_dialog(&mut self, branch: String) {
+        self.dialog = DialogState::open_confirm(branch);
+    }
+
+    /// Open the add project dialog.
+    pub fn open_add_project_dialog(&mut self) {
+        self.dialog = DialogState::open_add_project();
+    }
+
+    /// Set error message in the current dialog.
+    /// No-op if no dialog is open.
+    pub fn set_dialog_error(&mut self, error: String) {
+        match &mut self.dialog {
+            DialogState::None => {
+                tracing::warn!(
+                    event = "ui.state.set_dialog_error_no_dialog",
+                    "Attempted to set dialog error but no dialog is open"
                 );
-                self.refresh_sessions();
-                return;
             }
-            None => {
-                // Cannot determine count - skip mismatch check and just update statuses.
-                // This is a non-critical degradation (directory read failure).
-                tracing::debug!(
-                    event = "ui.auto_refresh.count_check_skipped",
-                    reason = "cannot read sessions directory"
-                );
-            }
-            Some(_) => {
-                // Count matches - continue to status update
-            }
+            DialogState::Create { error: e, .. } => *e = Some(error),
+            DialogState::Confirm { error: e, .. } => *e = Some(error),
+            DialogState::AddProject { error: e, .. } => *e = Some(error),
         }
-
-        // No count change (or count unavailable) - just update process statuses
-        for kild_display in &mut self.displays {
-            kild_display.status = determine_process_status(&kild_display.session);
-        }
-        self.last_refresh = std::time::Instant::now();
     }
 
-    /// Reset the create form to default state.
-    pub fn reset_create_form(&mut self) {
-        self.create_form = CreateFormState::default();
-        self.create_error = None;
+    /// Clear the error for a specific branch.
+    pub fn clear_error(&mut self, branch: &str) {
+        self.errors.clear(branch);
     }
 
-    /// Reset the confirm dialog to default state.
-    pub fn reset_confirm_dialog(&mut self) {
-        self.show_confirm_dialog = false;
-        self.confirm_target_branch = None;
-        self.confirm_error = None;
-    }
-
-    /// Clear any open error.
-    pub fn clear_open_error(&mut self) {
-        self.open_error = None;
-    }
-
-    /// Clear any stop error.
-    pub fn clear_stop_error(&mut self) {
-        self.stop_error = None;
-    }
-
-    /// Clear any bulk operation errors.
+    /// Clear all bulk operation errors.
     pub fn clear_bulk_errors(&mut self) {
-        self.bulk_errors.clear();
-    }
-
-    /// Clear any editor error.
-    pub fn clear_editor_error(&mut self) {
-        self.editor_error = None;
-    }
-
-    /// Clear any focus terminal error.
-    pub fn clear_focus_error(&mut self) {
-        self.focus_error = None;
-    }
-
-    /// Reset the add project form to default state.
-    pub fn reset_add_project_form(&mut self) {
-        self.add_project_form = AddProjectFormState::default();
-        self.add_project_error = None;
+        self.errors.clear_bulk();
     }
 
     /// Get the project ID for the active project.
     pub fn active_project_id(&self) -> Option<String> {
-        self.active_project
-            .as_ref()
-            .map(|p| crate::projects::derive_project_id(p))
+        self.projects
+            .active_path()
+            .map(crate::projects::derive_project_id)
     }
 
     /// Get displays filtered by active project.
@@ -462,45 +919,29 @@ impl AppState {
     /// Uses path-based hashing that matches kild-core's `generate_project_id`.
     /// If no active project is set, returns all displays (unfiltered).
     pub fn filtered_displays(&self) -> Vec<&KildDisplay> {
-        if let Some(active_id) = self.active_project_id() {
-            self.displays
-                .iter()
-                .filter(|d| d.session.project_id == active_id)
-                .collect()
-        } else {
-            // No active project - show all kilds
-            self.displays.iter().collect()
-        }
+        self.sessions
+            .filtered_by_project(self.active_project_id().as_deref())
     }
 
     /// Count kilds with Stopped status.
     pub fn stopped_count(&self) -> usize {
-        self.displays
-            .iter()
-            .filter(|d| d.status == ProcessStatus::Stopped)
-            .count()
+        self.sessions.stopped_count()
     }
 
     /// Count kilds with Running status.
     pub fn running_count(&self) -> usize {
-        self.displays
-            .iter()
-            .filter(|d| d.status == ProcessStatus::Running)
-            .count()
+        self.sessions.running_count()
     }
 
     /// Count kilds for a specific project (by project path).
     pub fn kild_count_for_project(&self, project_path: &std::path::Path) -> usize {
         let project_id = crate::projects::derive_project_id(project_path);
-        self.displays
-            .iter()
-            .filter(|d| d.session.project_id == project_id)
-            .count()
+        self.sessions.kild_count_for_project(&project_id)
     }
 
     /// Count total kilds across all projects.
     pub fn total_kild_count(&self) -> usize {
-        self.displays.len()
+        self.sessions.total_count()
     }
 
     /// Get the selected kild display, if any.
@@ -508,9 +949,9 @@ impl AppState {
     /// Returns `None` if no kild is selected or if the selected kild no longer
     /// exists in the current display list (e.g., after being destroyed externally).
     pub fn selected_kild(&self) -> Option<&KildDisplay> {
-        let id = self.selected_kild_id.as_ref()?;
+        let id = self.selection.id()?;
 
-        match self.displays.iter().find(|d| d.session.id == *id) {
+        match self.sessions.displays().iter().find(|d| d.session.id == id) {
             Some(kild) => Some(kild),
             None => {
                 tracing::debug!(
@@ -525,7 +966,176 @@ impl AppState {
 
     /// Clear selection (e.g., when kild is destroyed).
     pub fn clear_selection(&mut self) {
-        self.selected_kild_id = None;
+        self.selection.clear();
+    }
+
+    // =========================================================================
+    // Dialog facade methods
+    // =========================================================================
+
+    /// Get read-only reference to dialog state.
+    ///
+    /// Use this for pattern matching and reading dialog data.
+    pub fn dialog(&self) -> &DialogState {
+        &self.dialog
+    }
+
+    /// Get mutable reference to dialog state.
+    ///
+    /// Use this for direct form field mutation in keyboard handlers.
+    pub fn dialog_mut(&mut self) -> &mut DialogState {
+        &mut self.dialog
+    }
+
+    // =========================================================================
+    // Error facade methods
+    // =========================================================================
+
+    /// Set an error for a specific branch.
+    pub fn set_error(&mut self, branch: &str, error: OperationError) {
+        self.errors.set(branch, error);
+    }
+
+    /// Get the error for a specific branch, if any.
+    #[allow(dead_code)]
+    pub fn get_error(&self, branch: &str) -> Option<&OperationError> {
+        self.errors.get(branch)
+    }
+
+    /// Set bulk errors (replaces existing).
+    pub fn set_bulk_errors(&mut self, errors: Vec<OperationError>) {
+        self.errors.set_bulk(errors);
+    }
+
+    /// Get bulk operation errors.
+    pub fn bulk_errors(&self) -> &[OperationError] {
+        self.errors.bulk_errors()
+    }
+
+    /// Check if there are any bulk errors.
+    pub fn has_bulk_errors(&self) -> bool {
+        self.errors.has_bulk_errors()
+    }
+
+    /// Clone the operation errors (for capturing in closures).
+    pub fn errors_clone(&self) -> OperationErrors {
+        self.errors.clone()
+    }
+
+    // =========================================================================
+    // Selection facade methods
+    // =========================================================================
+
+    /// Select a kild by ID.
+    pub fn select_kild(&mut self, id: String) {
+        self.selection.select(id);
+    }
+
+    /// Get the selected kild ID, if any.
+    pub fn selected_id(&self) -> Option<&str> {
+        self.selection.id()
+    }
+
+    /// Check if a kild is selected.
+    pub fn has_selection(&self) -> bool {
+        self.selection.has_selection()
+    }
+
+    // =========================================================================
+    // Project facade methods
+    // =========================================================================
+
+    /// Select a project by path.
+    pub fn select_project(&mut self, path: &std::path::Path) -> Result<(), ProjectError> {
+        self.projects.select(path)
+    }
+
+    /// Select "all projects" view (clears active project selection).
+    pub fn select_all_projects(&mut self) {
+        self.projects.select_all();
+    }
+
+    /// Add a project to the list.
+    pub fn add_project(&mut self, project: Project) -> Result<(), ProjectError> {
+        self.projects.add(project)
+    }
+
+    /// Remove a project by path.
+    pub fn remove_project(&mut self, path: &std::path::Path) -> Result<Project, ProjectError> {
+        self.projects.remove(path)
+    }
+
+    /// Get the active project, if any.
+    pub fn active_project(&self) -> Option<&Project> {
+        self.projects.active()
+    }
+
+    /// Get the active project's path, if any.
+    pub fn active_project_path(&self) -> Option<&std::path::Path> {
+        self.projects.active_path()
+    }
+
+    /// Iterate over all projects.
+    pub fn projects_iter(&self) -> impl Iterator<Item = &Project> {
+        self.projects.iter()
+    }
+
+    /// Check if the project list is empty.
+    pub fn projects_is_empty(&self) -> bool {
+        self.projects.is_empty()
+    }
+
+    // =========================================================================
+    // Session facade methods
+    // =========================================================================
+
+    /// Get all session displays.
+    pub fn displays(&self) -> &[KildDisplay] {
+        self.sessions.displays()
+    }
+
+    /// Get the load error from the last refresh attempt, if any.
+    pub fn load_error(&self) -> Option<&str> {
+        self.sessions.load_error()
+    }
+
+    /// Check if there are no session displays.
+    pub fn sessions_is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+
+    // =========================================================================
+    // Test-only methods
+    // =========================================================================
+
+    /// Create an AppState for testing with empty state.
+    #[cfg(test)]
+    pub fn test_new() -> Self {
+        Self {
+            sessions: SessionStore::from_data(Vec::new(), None),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects: ProjectManager::new(),
+        }
+    }
+
+    /// Create an AppState for testing with provided displays.
+    #[cfg(test)]
+    pub fn test_with_displays(displays: Vec<KildDisplay>) -> Self {
+        Self {
+            sessions: SessionStore::from_data(displays, None),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects: ProjectManager::new(),
+        }
+    }
+
+    /// Set the dialog state directly (for testing).
+    #[cfg(test)]
+    pub fn set_dialog(&mut self, dialog: DialogState) {
+        self.dialog = dialog;
     }
 }
 
@@ -581,71 +1191,141 @@ fn count_session_files_in_dir(sessions_dir: &std::path::Path) -> Option<usize> {
 mod tests {
     use super::*;
 
-    /// Create a minimal AppState for testing.
-    fn make_test_state() -> AppState {
-        AppState {
-            displays: Vec::new(),
-            load_error: None,
-            show_create_dialog: false,
-            create_form: CreateFormState::default(),
-            create_error: None,
-            show_confirm_dialog: false,
-            confirm_target_branch: None,
-            confirm_error: None,
-            open_error: None,
-            stop_error: None,
-            bulk_errors: Vec::new(),
-            editor_error: None,
-            focus_error: None,
-            selected_kild_id: None,
-            last_refresh: std::time::Instant::now(),
-            projects: Vec::new(),
-            active_project: None,
-            show_add_project_dialog: false,
-            add_project_form: AddProjectFormState::default(),
-            add_project_error: None,
+    #[test]
+    fn test_close_dialog_clears_confirm_state() {
+        let mut state = AppState::test_new();
+        state.set_dialog(DialogState::Confirm {
+            branch: "feature-branch".to_string(),
+            error: Some("Some error".to_string()),
+        });
+
+        state.close_dialog();
+
+        assert!(matches!(state.dialog(), DialogState::None));
+    }
+
+    #[test]
+    fn test_dialog_state_mutual_exclusion() {
+        // DialogState enum enforces mutual exclusion at compile-time.
+        // This test documents the invariant.
+        let create = DialogState::open_create();
+        assert!(create.is_create());
+        assert!(!create.is_confirm());
+        assert!(!create.is_add_project());
+
+        let confirm = DialogState::open_confirm("test-branch".to_string());
+        assert!(!confirm.is_create());
+        assert!(confirm.is_confirm());
+        assert!(!confirm.is_add_project());
+
+        let add_project = DialogState::open_add_project();
+        assert!(!add_project.is_create());
+        assert!(!add_project.is_confirm());
+        assert!(add_project.is_add_project());
+
+        let none = DialogState::None;
+        assert!(!none.is_create());
+        assert!(!none.is_confirm());
+        assert!(!none.is_add_project());
+    }
+
+    #[test]
+    fn test_set_dialog_error_sets_error_on_create() {
+        let mut state = AppState::test_new();
+        state.set_dialog(DialogState::open_create());
+
+        state.set_dialog_error("Test error".to_string());
+
+        if let DialogState::Create { error, .. } = state.dialog() {
+            assert_eq!(error.as_deref(), Some("Test error"));
+        } else {
+            panic!("Expected Create dialog");
         }
     }
 
     #[test]
-    fn test_reset_confirm_dialog_clears_all_fields() {
-        // Create state with confirm dialog open and an error
-        let mut state = make_test_state();
-        state.show_confirm_dialog = true;
-        state.confirm_target_branch = Some("feature-branch".to_string());
-        state.confirm_error = Some("Some error".to_string());
+    fn test_set_dialog_error_sets_error_on_confirm() {
+        let mut state = AppState::test_new();
+        state.open_confirm_dialog("test-branch".to_string());
 
-        state.reset_confirm_dialog();
+        state.set_dialog_error("Destroy failed".to_string());
 
-        assert!(!state.show_confirm_dialog);
-        assert!(state.confirm_target_branch.is_none());
-        assert!(state.confirm_error.is_none());
+        if let DialogState::Confirm { error, .. } = state.dialog() {
+            assert_eq!(error.as_deref(), Some("Destroy failed"));
+        } else {
+            panic!("Expected Confirm dialog");
+        }
     }
 
     #[test]
-    fn test_clear_open_error() {
-        let mut state = make_test_state();
-        state.open_error = Some(OperationError {
-            branch: "branch".to_string(),
-            message: "error".to_string(),
-        });
+    fn test_operation_errors_set_and_get() {
+        let mut errors = OperationErrors::new();
 
-        state.clear_open_error();
+        errors.set(
+            "branch-1",
+            OperationError {
+                branch: "branch-1".to_string(),
+                message: "error 1".to_string(),
+            },
+        );
 
-        assert!(state.open_error.is_none());
+        assert!(errors.get("branch-1").is_some());
+        assert_eq!(errors.get("branch-1").unwrap().message, "error 1");
+        assert!(errors.get("branch-2").is_none());
     }
 
     #[test]
-    fn test_clear_stop_error() {
-        let mut state = make_test_state();
-        state.stop_error = Some(OperationError {
-            branch: "branch".to_string(),
-            message: "error".to_string(),
-        });
+    fn test_operation_errors_clear() {
+        let mut errors = OperationErrors::new();
 
-        state.clear_stop_error();
+        errors.set(
+            "branch-1",
+            OperationError {
+                branch: "branch-1".to_string(),
+                message: "error 1".to_string(),
+            },
+        );
+        errors.clear("branch-1");
 
-        assert!(state.stop_error.is_none());
+        assert!(errors.get("branch-1").is_none());
+    }
+
+    #[test]
+    fn test_operation_errors_bulk() {
+        let mut errors = OperationErrors::new();
+
+        errors.set_bulk(vec![
+            OperationError {
+                branch: "branch-1".to_string(),
+                message: "error 1".to_string(),
+            },
+            OperationError {
+                branch: "branch-2".to_string(),
+                message: "error 2".to_string(),
+            },
+        ]);
+
+        assert!(errors.has_bulk_errors());
+        assert_eq!(errors.bulk_errors().len(), 2);
+
+        errors.clear_bulk();
+        assert!(!errors.has_bulk_errors());
+    }
+
+    #[test]
+    fn test_clear_error() {
+        let mut state = AppState::test_new();
+        state.set_error(
+            "branch",
+            OperationError {
+                branch: "branch".to_string(),
+                message: "error".to_string(),
+            },
+        );
+
+        state.clear_error("branch");
+
+        assert!(state.get_error("branch").is_none());
     }
 
     #[test]
@@ -1104,8 +1784,7 @@ mod tests {
     #[test]
     fn test_update_statuses_only_updates_last_refresh() {
         let initial_time = std::time::Instant::now();
-        let mut state = make_test_state();
-        state.last_refresh = initial_time;
+        let mut state = AppState::test_new();
 
         // Small delay to ensure time difference
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1113,7 +1792,7 @@ mod tests {
         state.update_statuses_only();
 
         // last_refresh should be updated to a later time
-        assert!(state.last_refresh > initial_time);
+        assert!(state.sessions.last_refresh() > initial_time);
     }
 
     #[test]
@@ -1187,8 +1866,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: session_with_dead_pid,
                 status: ProcessStatus::Running, // Start as Running (incorrect)
@@ -1207,9 +1886,9 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
+        ]);
 
-        let original_len = state.displays.len();
+        let original_len = state.sessions.displays().len();
         state.update_statuses_only();
 
         // Note: update_statuses_only() may trigger a full refresh if the session count
@@ -1218,7 +1897,7 @@ mod tests {
         //
         // If the display count changed, a refresh was triggered and we can't test
         // the status update logic directly. Skip the assertions in that case.
-        if state.displays.len() != original_len {
+        if state.sessions.displays().len() != original_len {
             // Refresh was triggered due to count mismatch - this is expected behavior
             // when running tests in an environment with actual session files.
             return;
@@ -1226,21 +1905,21 @@ mod tests {
 
         // Non-existent PID should be marked Stopped
         assert_eq!(
-            state.displays[0].status,
+            state.sessions.displays()[0].status,
             ProcessStatus::Stopped,
             "Non-existent PID should be marked Stopped"
         );
 
         // Current process PID should be marked Running
         assert_eq!(
-            state.displays[1].status,
+            state.sessions.displays()[1].status,
             ProcessStatus::Running,
             "Current process PID should be marked Running"
         );
 
         // No PID should remain Stopped (not checked, so unchanged)
         assert_eq!(
-            state.displays[2].status,
+            state.sessions.displays()[2].status,
             ProcessStatus::Stopped,
             "Session with no PID should remain Stopped"
         );
@@ -1248,7 +1927,7 @@ mod tests {
 
     #[test]
     fn test_stopped_count_empty() {
-        let state = make_test_state();
+        let state = AppState::test_new();
 
         assert_eq!(state.stopped_count(), 0);
         assert_eq!(state.running_count(), 0);
@@ -1280,8 +1959,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: make_session("1", "branch-1"),
                 status: ProcessStatus::Stopped,
@@ -1312,7 +1991,7 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
+        ]);
 
         assert_eq!(state.stopped_count(), 2, "Should count 2 stopped kilds");
         assert_eq!(state.running_count(), 2, "Should count 2 running kilds");
@@ -1321,28 +2000,36 @@ mod tests {
     // --- Project-related tests ---
 
     #[test]
-    fn test_reset_add_project_form() {
-        let mut state = make_test_state();
-        state.add_project_form.path = "/some/path".to_string();
-        state.add_project_form.name = "test".to_string();
-        state.add_project_error = Some("Error".to_string());
+    fn test_close_dialog_clears_add_project_state() {
+        let mut state = AppState::test_new();
+        state.dialog = DialogState::AddProject {
+            form: AddProjectFormState {
+                path: "/some/path".to_string(),
+                name: "test".to_string(),
+                focused_field: AddProjectDialogField::Path,
+            },
+            error: Some("Error".to_string()),
+        };
 
-        state.reset_add_project_form();
+        state.close_dialog();
 
-        assert!(state.add_project_form.path.is_empty());
-        assert!(state.add_project_form.name.is_empty());
-        assert!(state.add_project_error.is_none());
+        assert!(matches!(state.dialog, DialogState::None));
     }
 
     #[test]
     fn test_active_project_id() {
-        let mut state = make_test_state();
+        let mut state = AppState::test_new();
 
         // No active project
         assert!(state.active_project_id().is_none());
 
         // With active project - should return a hash, not directory name
-        state.active_project = Some(PathBuf::from("/Users/test/Projects/my-project"));
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/Users/test/Projects/my-project"),
+            "My Project".to_string(),
+        );
+        state.projects.add(project).unwrap();
+        // First project is automatically selected
         let project_id = state.active_project_id();
         assert!(project_id.is_some());
         // Should be a hex hash, not the directory name
@@ -1376,8 +2063,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: make_session("1", "project-a"),
                 status: ProcessStatus::Stopped,
@@ -1390,7 +2077,7 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
+        ]);
 
         // No active project - should return all
         let filtered = state.filtered_displays();
@@ -1427,8 +2114,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: make_session("1", &project_id_a),
                 status: ProcessStatus::Stopped,
@@ -1447,10 +2134,14 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
+        ]);
 
         // Active project set - should filter
-        state.active_project = Some(project_path);
+        // Add project and select it
+        let project =
+            crate::projects::Project::new_unchecked(project_path.clone(), "Project A".to_string());
+        state.projects.add(project).unwrap();
+        // First project is auto-selected, so this should filter
         let filtered = state.filtered_displays();
         assert_eq!(filtered.len(), 2);
         assert!(
@@ -1485,16 +2176,20 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![KildDisplay {
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![KildDisplay {
             session: make_session("1", "other-project-hash"),
             status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
             diff_stats: None,
-        }];
+        }]);
 
         // Active project set to a different path - should return empty
-        state.active_project = Some(PathBuf::from("/different/project/path"));
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/different/project/path"),
+            "Different Project".to_string(),
+        );
+        state.projects.add(project).unwrap();
         let filtered = state.filtered_displays();
         assert!(
             filtered.is_empty(),
@@ -1527,23 +2222,23 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![KildDisplay {
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![KildDisplay {
             session: make_session("test-id"),
             status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
             diff_stats: None,
-        }];
-        state.selected_kild_id = Some("test-id".to_string());
+        }]);
+        state.selection.select("test-id".to_string());
 
         // Verify selection works initially
         assert!(state.selected_kild().is_some());
 
         // Simulate refresh that removes the kild (e.g., destroyed via CLI)
-        state.displays.clear();
+        state.sessions.set_displays(vec![]);
 
         // Selection ID still set, but selected_kild() should return None gracefully
-        assert!(state.selected_kild_id.is_some());
+        assert!(state.selection.has_selection());
         assert!(
             state.selected_kild().is_none(),
             "Should return None when selected kild no longer exists"
@@ -1575,25 +2270,25 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![KildDisplay {
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![KildDisplay {
             session: make_session("test-id"),
             status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
             diff_stats: None,
-        }];
-        state.selected_kild_id = Some("test-id".to_string());
+        }]);
+        state.selection.select("test-id".to_string());
 
         // Verify initial selection
         assert!(state.selected_kild().is_some());
 
         // Simulate refresh that keeps the same kild (new display list with same ID)
-        state.displays = vec![KildDisplay {
+        state.sessions.set_displays(vec![KildDisplay {
             session: make_session("test-id"),
             status: ProcessStatus::Running, // Status may change
             git_status: GitStatus::Dirty,   // Git status may change
             diff_stats: None,
-        }];
+        }]);
 
         // Selection should persist
         let selected = state.selected_kild();
@@ -1602,17 +2297,17 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_selection_clears_selected_kild_id() {
-        let mut state = make_test_state();
-        state.selected_kild_id = Some("test-id".to_string());
+    fn test_clear_selection_clears_selection() {
+        let mut state = AppState::test_new();
+        state.selection.select("test-id".to_string());
 
-        assert!(state.selected_kild_id.is_some());
+        assert!(state.selection.has_selection());
 
         state.clear_selection();
 
         assert!(
-            state.selected_kild_id.is_none(),
-            "clear_selection should set selected_kild_id to None"
+            !state.selection.has_selection(),
+            "clear_selection should clear the selection"
         );
     }
 
@@ -1641,8 +2336,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: make_session("id-1", "branch-1"),
                 status: ProcessStatus::Stopped,
@@ -1655,8 +2350,8 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
-        state.selected_kild_id = Some("id-1".to_string());
+        ]);
+        state.selection.select("id-1".to_string());
 
         // Simulate destroy of selected kild - the destroy handler logic:
         // if selected_kild().session.branch == destroyed_branch { clear_selection() }
@@ -1667,12 +2362,13 @@ mod tests {
             }
         }
         state
-            .displays
+            .sessions
+            .displays_mut()
             .retain(|d| d.session.branch != destroyed_branch);
 
         // Selection should be cleared
         assert!(
-            state.selected_kild_id.is_none(),
+            !state.selection.has_selection(),
             "Selection should be cleared when selected kild is destroyed"
         );
     }
@@ -1702,8 +2398,8 @@ mod tests {
             note: None,
         };
 
-        let mut state = make_test_state();
-        state.displays = vec![
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
             KildDisplay {
                 session: make_session("id-1", "branch-1"),
                 status: ProcessStatus::Stopped,
@@ -1716,8 +2412,8 @@ mod tests {
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-        ];
-        state.selected_kild_id = Some("id-1".to_string());
+        ]);
+        state.selection.select("id-1".to_string());
 
         // Destroy branch-2 (not selected)
         let destroyed_branch = "branch-2";
@@ -1727,13 +2423,14 @@ mod tests {
             }
         }
         state
-            .displays
+            .sessions
+            .displays_mut()
             .retain(|d| d.session.branch != destroyed_branch);
 
         // Selection of branch-1 should persist
         assert_eq!(
-            state.selected_kild_id,
-            Some("id-1".to_string()),
+            state.selection.id(),
+            Some("id-1"),
             "Selection should persist when a different kild is destroyed"
         );
         assert!(state.selected_kild().is_some());
@@ -1862,5 +2559,292 @@ mod tests {
             count, None,
             "Should return None when directory cannot be read"
         );
+    }
+
+    // --- ProjectManager tests ---
+
+    #[test]
+    fn test_project_manager_new_is_empty() {
+        let pm = ProjectManager::new();
+        assert!(pm.is_empty());
+        assert_eq!(pm.len(), 0);
+        assert!(pm.active().is_none());
+        assert!(pm.active_path().is_none());
+    }
+
+    #[test]
+    fn test_project_manager_add_first_project_becomes_active() {
+        let mut pm = ProjectManager::new();
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Test Project".to_string(),
+        );
+
+        pm.add(project).unwrap();
+
+        assert!(!pm.is_empty());
+        assert_eq!(pm.len(), 1);
+        assert!(pm.active().is_some());
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_add_duplicate_returns_error() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Test Project".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Same Path".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        let result = pm.add(project2);
+
+        assert!(matches!(result, Err(ProjectError::AlreadyExists)));
+    }
+
+    #[test]
+    fn test_project_manager_select_all_clears_active() {
+        let mut pm = ProjectManager::new();
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Test Project".to_string(),
+        );
+
+        pm.add(project).unwrap();
+        assert!(pm.active().is_some());
+
+        pm.select_all();
+        assert!(pm.active().is_none());
+    }
+
+    #[test]
+    fn test_project_manager_select_valid_path() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-b"),
+            "Project B".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        pm.add(project2).unwrap();
+
+        // First project is active by default
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-a"))
+        );
+
+        // Select second project
+        pm.select(std::path::Path::new("/path/to/project-b"))
+            .unwrap();
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-b"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_select_invalid_path_returns_error() {
+        let mut pm = ProjectManager::new();
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Test Project".to_string(),
+        );
+
+        pm.add(project).unwrap();
+
+        let result = pm.select(std::path::Path::new("/nonexistent/path"));
+        assert!(matches!(result, Err(ProjectError::NotFound)));
+    }
+
+    #[test]
+    fn test_project_manager_remove_active_selects_first() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-b"),
+            "Project B".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        pm.add(project2).unwrap();
+
+        // First project is active
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-a"))
+        );
+
+        // Remove active project
+        pm.remove(std::path::Path::new("/path/to/project-a"))
+            .unwrap();
+
+        // Active should now be the remaining project (which becomes first)
+        assert_eq!(pm.len(), 1);
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-b"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_remove_non_active_preserves_selection() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-b"),
+            "Project B".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        pm.add(project2).unwrap();
+
+        // First project is active
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-a"))
+        );
+
+        // Remove non-active project
+        pm.remove(std::path::Path::new("/path/to/project-b"))
+            .unwrap();
+
+        // Active should still be the first project
+        assert_eq!(pm.len(), 1);
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-a"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_remove_last_clears_active() {
+        let mut pm = ProjectManager::new();
+        let project = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project"),
+            "Test Project".to_string(),
+        );
+
+        pm.add(project).unwrap();
+        pm.remove(std::path::Path::new("/path/to/project")).unwrap();
+
+        assert!(pm.is_empty());
+        assert!(pm.active().is_none());
+    }
+
+    #[test]
+    fn test_project_manager_remove_before_active_adjusts_index() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-b"),
+            "Project B".to_string(),
+        );
+        let project3 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-c"),
+            "Project C".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        pm.add(project2).unwrap();
+        pm.add(project3).unwrap();
+
+        // Select project-c (index 2)
+        pm.select(std::path::Path::new("/path/to/project-c"))
+            .unwrap();
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-c"))
+        );
+
+        // Remove project-a (index 0, before active)
+        pm.remove(std::path::Path::new("/path/to/project-a"))
+            .unwrap();
+
+        // Active should still be project-c (now at index 1)
+        assert_eq!(pm.len(), 2);
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-c"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_from_data_with_valid_active() {
+        let projects = vec![
+            crate::projects::Project::new_unchecked(
+                PathBuf::from("/path/to/project-a"),
+                "Project A".to_string(),
+            ),
+            crate::projects::Project::new_unchecked(
+                PathBuf::from("/path/to/project-b"),
+                "Project B".to_string(),
+            ),
+        ];
+
+        let pm = ProjectManager::from_data(projects, Some(PathBuf::from("/path/to/project-b")));
+
+        assert_eq!(pm.len(), 2);
+        assert_eq!(
+            pm.active_path(),
+            Some(std::path::Path::new("/path/to/project-b"))
+        );
+    }
+
+    #[test]
+    fn test_project_manager_from_data_with_invalid_active() {
+        let projects = vec![crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        )];
+
+        let pm = ProjectManager::from_data(projects, Some(PathBuf::from("/nonexistent/path")));
+
+        assert_eq!(pm.len(), 1);
+        assert!(
+            pm.active().is_none(),
+            "Invalid active path should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_project_manager_iter() {
+        let mut pm = ProjectManager::new();
+        let project1 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-a"),
+            "Project A".to_string(),
+        );
+        let project2 = crate::projects::Project::new_unchecked(
+            PathBuf::from("/path/to/project-b"),
+            "Project B".to_string(),
+        );
+
+        pm.add(project1).unwrap();
+        pm.add(project2).unwrap();
+
+        let paths: Vec<_> = pm.iter().map(|p| p.path()).collect();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], std::path::Path::new("/path/to/project-a"));
+        assert_eq!(paths[1], std::path::Path::new("/path/to/project-b"));
     }
 }

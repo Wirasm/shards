@@ -5,7 +5,7 @@
 use gpui::{Context, IntoElement, div, prelude::*, px};
 
 use crate::components::{Button, ButtonVariant, Modal, TextInput};
-use crate::state::{AddProjectDialogField, AppState};
+use crate::state::{AddProjectDialogField, AddProjectFormState, DialogState};
 use crate::theme;
 use crate::views::MainView;
 
@@ -18,11 +18,30 @@ use crate::views::MainView;
 /// - Name input (optional)
 /// - Cancel/Add buttons
 /// - Error message display
-pub fn render_add_project_dialog(state: &AppState, cx: &mut Context<MainView>) -> impl IntoElement {
-    let path = state.add_project_form.path.clone();
-    let name = state.add_project_form.name.clone();
-    let focused_field = state.add_project_form.focused_field.clone();
-    let add_project_error = state.add_project_error.clone();
+///
+/// # Panics
+/// Panics if called when the dialog state is not `DialogState::AddProject`.
+pub fn render_add_project_dialog(
+    dialog: &DialogState,
+    cx: &mut Context<MainView>,
+) -> impl IntoElement {
+    let (form, add_project_error) = match dialog {
+        DialogState::AddProject { form, error } => (form, error.clone()),
+        _ => {
+            tracing::error!(
+                event = "ui.add_project_dialog.invalid_state",
+                "render_add_project_dialog called with non-AddProject dialog state"
+            );
+            (
+                &AddProjectFormState::default(),
+                Some("Internal error: invalid dialog state".to_string()),
+            )
+        }
+    };
+
+    let path = form.path.clone();
+    let name = form.name.clone();
+    let focused_field = form.focused_field.clone();
 
     Modal::new("add-project-dialog", "Add Project")
         .width(px(450.0))
