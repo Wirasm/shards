@@ -20,6 +20,11 @@ pub use components::{Button, ButtonVariant};
 use views::MainView;
 
 fn main() {
+    // Initialize tracing for debug output
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(

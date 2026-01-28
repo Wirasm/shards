@@ -122,7 +122,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
             let focus_error = state.focus_error.clone();
             let selected_kild_id = state.selected_kild_id.clone();
 
-            div().flex_1().child(
+            div().flex_1().h_full().child(
                 uniform_list(
                     "kild-list",
                     item_count,
