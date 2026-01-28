@@ -347,6 +347,7 @@ pub fn set_active_project(path: Option<PathBuf>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::projects::test_helpers::{PROJECTS_FILE_ENV_LOCK, ProjectsFileEnvGuard};
     use crate::state::{GitStatus, KildDisplay, ProcessStatus};
     use kild_core::Session;
     use kild_core::sessions::types::SessionStatus;
@@ -585,11 +586,11 @@ mod tests {
     use std::sync::Mutex;
 
     // Mutex to ensure editor selection tests don't interfere with each other
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static EDITOR_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Helper to restore environment variable after test
     fn restore_env_var(key: &str, original: Option<String>) {
-        // SAFETY: We hold ENV_LOCK to prevent concurrent access to env vars
+        // SAFETY: Caller holds appropriate lock to prevent concurrent access
         unsafe {
             match original {
                 Some(v) => std::env::set_var(key, v),
@@ -600,11 +601,11 @@ mod tests {
 
     #[test]
     fn test_select_editor_uses_env_when_set() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _lock = EDITOR_ENV_LOCK.lock().unwrap();
 
         let original = std::env::var("EDITOR").ok();
 
-        // SAFETY: We hold ENV_LOCK to prevent concurrent access to env vars
+        // SAFETY: We hold EDITOR_ENV_LOCK to prevent concurrent access
         unsafe {
             std::env::set_var("EDITOR", "nvim");
         }
@@ -616,11 +617,11 @@ mod tests {
 
     #[test]
     fn test_select_editor_defaults_to_zed() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _lock = EDITOR_ENV_LOCK.lock().unwrap();
 
         let original = std::env::var("EDITOR").ok();
 
-        // SAFETY: We hold ENV_LOCK to prevent concurrent access to env vars
+        // SAFETY: We hold EDITOR_ENV_LOCK to prevent concurrent access
         unsafe {
             std::env::remove_var("EDITOR");
         }
@@ -687,11 +688,12 @@ mod tests {
     fn test_add_project_uses_provided_name() {
         use tempfile::TempDir;
 
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
         // Use isolated projects file for test
         let projects_dir = TempDir::new().unwrap();
         let projects_file = projects_dir.path().join("projects.json");
-        // SAFETY: This is a test environment with no parallel access to this env var
-        unsafe { std::env::set_var("KILD_PROJECTS_FILE", &projects_file) };
+        let _guard = ProjectsFileEnvGuard::new(&projects_file);
 
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path();
@@ -705,10 +707,6 @@ mod tests {
 
         let result = super::add_project(path.to_path_buf(), Some("Custom Name".to_string()));
 
-        // Clean up env var
-        // SAFETY: This is a test environment with no parallel access to this env var
-        unsafe { std::env::remove_var("KILD_PROJECTS_FILE") };
-
         let project = result.expect("add_project should succeed");
         assert_eq!(project.name(), "Custom Name");
     }
@@ -717,11 +715,12 @@ mod tests {
     fn test_add_project_derives_name_from_path() {
         use tempfile::TempDir;
 
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
         // Use isolated projects file for test
         let projects_dir = TempDir::new().unwrap();
         let projects_file = projects_dir.path().join("projects.json");
-        // SAFETY: This is a test environment with no parallel access to this env var
-        unsafe { std::env::set_var("KILD_PROJECTS_FILE", &projects_file) };
+        let _guard = ProjectsFileEnvGuard::new(&projects_file);
 
         // Create a temp dir with a specific name
         let temp_dir = TempDir::new().unwrap();
@@ -735,10 +734,6 @@ mod tests {
             .expect("git init failed");
 
         let result = super::add_project(path.to_path_buf(), None);
-
-        // Clean up env var
-        // SAFETY: This is a test environment with no parallel access to this env var
-        unsafe { std::env::remove_var("KILD_PROJECTS_FILE") };
 
         let project = result.expect("add_project should succeed");
         // Name should be the directory name (temp dir names are random)

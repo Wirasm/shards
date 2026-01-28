@@ -222,13 +222,14 @@ pub fn save_projects(data: &ProjectsData) -> Result<(), String> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+            .map_err(|e| format!("Failed to create directory ({}): {}", parent.display(), e))?;
     }
 
     let json = serde_json::to_string_pretty(data)
         .map_err(|e| format!("Failed to serialize projects: {}", e))?;
 
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write projects file: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write projects file ({}): {}", path.display(), e))?;
 
     tracing::info!(
         event = "ui.projects.saved",
@@ -309,9 +310,13 @@ pub fn migrate_projects_to_canonical() -> Result<(), String> {
 }
 
 fn projects_file_path() -> PathBuf {
-    // Allow override via env var for testing
-    if let Ok(path) = std::env::var("KILD_PROJECTS_FILE") {
-        return PathBuf::from(path);
+    // Allow override via env var for testing.
+    // This follows the pattern used in kild-core (KILD_LOG_LEVEL, KILD_BASE_PORT_RANGE).
+    // Production code never sets this; only tests use it for isolation.
+    if let Ok(path_str) = std::env::var("KILD_PROJECTS_FILE")
+        && !path_str.is_empty()
+    {
+        return PathBuf::from(path_str);
     }
 
     match dirs::home_dir() {
@@ -358,7 +363,37 @@ pub fn validate_project_path(path: &Path, existing: &[Project]) -> ProjectValida
 }
 
 #[cfg(test)]
+pub(crate) mod test_helpers {
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that modify KILD_PROJECTS_FILE env var.
+    /// Rust runs tests in parallel by default, so without serialization,
+    /// multiple tests could race on the same env var.
+    pub(crate) static PROJECTS_FILE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// RAII guard that removes KILD_PROJECTS_FILE env var on drop.
+    /// Ensures cleanup even if the test panics.
+    pub(crate) struct ProjectsFileEnvGuard;
+
+    impl ProjectsFileEnvGuard {
+        pub(crate) fn new(path: &std::path::Path) -> Self {
+            // SAFETY: We hold PROJECTS_FILE_ENV_LOCK to prevent concurrent access
+            unsafe { std::env::set_var("KILD_PROJECTS_FILE", path) };
+            Self
+        }
+    }
+
+    impl Drop for ProjectsFileEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: We hold PROJECTS_FILE_ENV_LOCK to prevent concurrent access
+            unsafe { std::env::remove_var("KILD_PROJECTS_FILE") };
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::test_helpers::*;
     use super::*;
     use tempfile::TempDir;
 
@@ -647,26 +682,92 @@ mod tests {
 
     #[test]
     fn test_projects_file_path_env_override() {
-        use tempfile::TempDir;
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
 
         let temp_dir = TempDir::new().unwrap();
         let custom_path = temp_dir.path().join("custom_projects.json");
 
-        // Set env var
-        // SAFETY: This is a test environment with no parallel access to this env var
-        unsafe { std::env::set_var("KILD_PROJECTS_FILE", &custom_path) };
+        // Guard ensures cleanup even if test panics
+        let _guard = ProjectsFileEnvGuard::new(&custom_path);
 
         // Verify override works
         let path = super::projects_file_path();
         assert_eq!(path, custom_path);
 
-        // Clean up
-        // SAFETY: This is a test environment with no parallel access to this env var
+        // Guard drops here, cleaning up env var
+    }
+
+    #[test]
+    fn test_projects_file_path_default_after_cleanup() {
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
+        // Ensure env var is not set
+        // SAFETY: We hold PROJECTS_FILE_ENV_LOCK to prevent concurrent access
         unsafe { std::env::remove_var("KILD_PROJECTS_FILE") };
 
-        // Verify default works after cleanup
         let default_path = super::projects_file_path();
         assert!(default_path.ends_with("projects.json"));
         assert!(default_path.to_string_lossy().contains(".kild"));
+    }
+
+    #[test]
+    fn test_projects_file_path_empty_env_var_uses_default() {
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
+        // Set env var to empty string
+        // SAFETY: We hold PROJECTS_FILE_ENV_LOCK to prevent concurrent access
+        unsafe { std::env::set_var("KILD_PROJECTS_FILE", "") };
+
+        // Should fall back to default when empty
+        let path = super::projects_file_path();
+        assert!(path.ends_with("projects.json"));
+        assert!(path.to_string_lossy().contains(".kild"));
+
+        // Clean up
+        // SAFETY: We hold PROJECTS_FILE_ENV_LOCK to prevent concurrent access
+        unsafe { std::env::remove_var("KILD_PROJECTS_FILE") };
+    }
+
+    #[test]
+    fn test_load_and_save_with_env_override() {
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
+        let temp_dir = TempDir::new().unwrap();
+        let custom_path = temp_dir.path().join("custom_projects.json");
+        let _guard = ProjectsFileEnvGuard::new(&custom_path);
+
+        // Create and save test data
+        let mut data = ProjectsData::default();
+        data.projects.push(Project::new_unchecked(
+            PathBuf::from("/test/path"),
+            "Test Project".to_string(),
+        ));
+
+        save_projects(&data).expect("save should succeed");
+
+        // Verify file exists at custom location
+        assert!(custom_path.exists(), "File should exist at custom path");
+
+        // Load and verify data roundtrips correctly
+        let loaded = load_projects();
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].name(), "Test Project");
+    }
+
+    #[test]
+    fn test_save_projects_creates_parent_directory_for_env_override() {
+        let _lock = PROJECTS_FILE_ENV_LOCK.lock().unwrap();
+
+        let temp_dir = TempDir::new().unwrap();
+        // Path with non-existent parent directory
+        let custom_path = temp_dir.path().join("subdir").join("projects.json");
+        let _guard = ProjectsFileEnvGuard::new(&custom_path);
+
+        let data = ProjectsData::default();
+        let result = save_projects(&data);
+
+        // Should succeed - save_projects creates parent dirs
+        assert!(result.is_ok(), "Should create parent directory");
+        assert!(custom_path.exists());
     }
 }
