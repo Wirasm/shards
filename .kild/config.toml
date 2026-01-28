@@ -11,3 +11,6 @@ max_retry_attempts = 5
 [agents.claude]
 startup_command = "claude"
 flags = "--dangerously-skip-permissions"
+
+[include_patterns]
+patterns = [".claude/PRPs/**"]
