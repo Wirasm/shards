@@ -44,7 +44,7 @@ fn format_relative_time(timestamp: &str) -> String {
 /// Welcome screen appears only when there are no projects AND no kilds.
 /// This ensures CLI-created kilds are visible even without UI projects.
 fn should_show_welcome(state: &AppState) -> bool {
-    state.projects.is_empty() && state.displays.is_empty()
+    state.projects_is_empty() && state.sessions_is_empty()
 }
 
 /// Render the kild list based on current state.
@@ -55,7 +55,7 @@ fn should_show_welcome(state: &AppState) -> bool {
 /// - Empty: Display "No active kilds" message for the current project
 /// - List: Display uniform_list of kilds with Open/Stop and Destroy buttons
 pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl IntoElement {
-    if let Some(ref error_msg) = state.load_error {
+    if let Some(error_msg) = state.load_error() {
         // Error state - show error message
         div()
             .flex()
@@ -73,7 +73,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                 div()
                     .text_color(theme::text_subtle())
                     .text_size(px(theme::TEXT_SM))
-                    .child(error_msg.clone()),
+                    .child(error_msg.to_owned()),
             )
     } else if should_show_welcome(state) {
         // No projects AND no kilds - show welcome message
@@ -108,7 +108,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
 
         if filtered.is_empty() {
             // Empty state - message depends on whether filtering is active
-            let message = if state.active_project.is_some() {
+            let message = if state.active_project().is_some() {
                 "No active kilds for this project"
             } else {
                 "No active kilds"
@@ -124,11 +124,8 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
             // List state - show kilds with action buttons
             let item_count = filtered.len();
             let displays = filtered;
-            let open_error = state.open_error.clone();
-            let stop_error = state.stop_error.clone();
-            let editor_error = state.editor_error.clone();
-            let focus_error = state.focus_error.clone();
-            let selected_kild_id = state.selected_kild_id.clone();
+            let errors = state.errors_clone();
+            let selected_kild_id = state.selected_id().map(|s| s.to_string());
 
             div().flex_1().h_full().child(
                 uniform_list(
@@ -147,19 +144,8 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                     ProcessStatus::Unknown => Status::Crashed,
                                 };
 
-                                // Check if this row has any operation error (open, stop, editor, focus)
-                                let row_error =
-                                    [&open_error, &stop_error, &editor_error, &focus_error]
-                                        .iter()
-                                        .find_map(|err| {
-                                            err.as_ref().and_then(|e| {
-                                                if e.branch == branch {
-                                                    Some(e.message.clone())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                        });
+                                // Check if this row has any operation error
+                                let row_error = errors.get(&branch).map(|e| e.message.clone());
 
                                 // Show Open button when stopped, Stop button when running
                                 let is_running = display.status == ProcessStatus::Running;
@@ -454,39 +440,16 @@ mod tests {
 
     #[test]
     fn test_should_show_welcome_when_no_projects_and_no_displays() {
-        use crate::state::{AddProjectFormState, AppState, CreateFormState};
+        use crate::state::AppState;
 
-        let state = AppState {
-            displays: Vec::new(),
-            load_error: None,
-            show_create_dialog: false,
-            create_form: CreateFormState::default(),
-            create_error: None,
-            show_confirm_dialog: false,
-            confirm_target_branch: None,
-            confirm_error: None,
-            open_error: None,
-            stop_error: None,
-            bulk_errors: Vec::new(),
-            editor_error: None,
-            focus_error: None,
-            selected_kild_id: None,
-            last_refresh: std::time::Instant::now(),
-            projects: Vec::new(),
-            active_project: None,
-            show_add_project_dialog: false,
-            add_project_form: AddProjectFormState::default(),
-            add_project_error: None,
-        };
+        let state = AppState::test_new();
 
         assert!(should_show_welcome(&state));
     }
 
     #[test]
     fn test_should_not_show_welcome_when_displays_exist_without_projects() {
-        use crate::state::{
-            AddProjectFormState, AppState, CreateFormState, GitStatus, KildDisplay, ProcessStatus,
-        };
+        use crate::state::{AppState, GitStatus, KildDisplay, ProcessStatus};
         use kild_core::sessions::types::{Session, SessionStatus};
         use std::path::PathBuf;
 
@@ -512,33 +475,12 @@ mod tests {
             note: None,
         };
 
-        let state = AppState {
-            displays: vec![KildDisplay {
-                session,
-                status: ProcessStatus::Stopped,
-                git_status: GitStatus::Unknown,
-                diff_stats: None,
-            }],
-            load_error: None,
-            show_create_dialog: false,
-            create_form: CreateFormState::default(),
-            create_error: None,
-            show_confirm_dialog: false,
-            confirm_target_branch: None,
-            confirm_error: None,
-            open_error: None,
-            stop_error: None,
-            bulk_errors: Vec::new(),
-            editor_error: None,
-            focus_error: None,
-            selected_kild_id: None,
-            last_refresh: std::time::Instant::now(),
-            projects: Vec::new(),
-            active_project: None,
-            show_add_project_dialog: false,
-            add_project_form: AddProjectFormState::default(),
-            add_project_error: None,
-        };
+        let state = AppState::test_with_displays(vec![KildDisplay {
+            session,
+            status: ProcessStatus::Stopped,
+            git_status: GitStatus::Unknown,
+            diff_stats: None,
+        }]);
 
         assert!(!should_show_welcome(&state));
     }

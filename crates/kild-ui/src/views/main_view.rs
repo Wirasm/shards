@@ -234,30 +234,42 @@ impl MainView {
     /// Handle click on the Create button in header.
     fn on_create_button_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.create_dialog.opened");
-        self.state.show_create_dialog = true;
+        self.state.open_create_dialog();
         cx.notify();
     }
 
-    /// Handle dialog cancel button click.
+    /// Handle dialog cancel button click (create dialog).
     pub fn on_dialog_cancel(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.create_dialog.cancelled");
-        self.state.show_create_dialog = false;
-        self.state.reset_create_form();
+        self.state.close_dialog();
         cx.notify();
     }
 
-    /// Handle dialog submit button click.
+    /// Handle dialog submit button click (create dialog).
     pub fn on_dialog_submit(&mut self, cx: &mut Context<Self>) {
-        let branch = self.state.create_form.branch_name.trim().to_string();
-        let agent = self.state.create_form.selected_agent();
-        let note = if self.state.create_form.note.trim().is_empty() {
-            None
-        } else {
-            Some(self.state.create_form.note.trim().to_string())
+        // Extract form data from dialog state
+        let (branch, agent, note) = match self.state.dialog() {
+            crate::state::DialogState::Create { form, .. } => {
+                let branch = form.branch_name.trim().to_string();
+                let agent = form.selected_agent();
+                let note = if form.note.trim().is_empty() {
+                    None
+                } else {
+                    Some(form.note.trim().to_string())
+                };
+                (branch, agent, note)
+            }
+            _ => {
+                tracing::error!(
+                    event = "ui.dialog_submit.invalid_state",
+                    "on_dialog_submit called when Create dialog not open"
+                );
+                return;
+            }
         };
 
         // Get active project path for kild creation context
-        let project_path = self.state.active_project.clone();
+        let project_path = self.state.active_project_path().map(|p| p.to_path_buf());
 
         // Warn if no project selected (shouldn't happen with current UI flow)
         if project_path.is_none() {
@@ -270,8 +282,7 @@ impl MainView {
         match actions::create_kild(&branch, &agent, note, project_path) {
             Ok(_session) => {
                 // Success - close dialog and refresh list
-                self.state.show_create_dialog = false;
-                self.state.reset_create_form();
+                self.state.close_dialog();
                 self.state.refresh_sessions();
             }
             Err(e) => {
@@ -281,7 +292,7 @@ impl MainView {
                     agent = %agent,
                     error = %e
                 );
-                self.state.create_error = Some(e);
+                self.state.set_dialog_error(e);
             }
         }
         cx.notify();
@@ -292,17 +303,22 @@ impl MainView {
         let agents = create_dialog::agent_options();
         if agents.is_empty() {
             tracing::error!(event = "ui.create_dialog.no_agents_available");
-            self.state.create_error =
-                Some("No agents available. Check kild-core configuration.".to_string());
+            self.state.set_dialog_error(
+                "No agents available. Check kild-core configuration.".to_string(),
+            );
             cx.notify();
             return;
         }
-        let next_index = (self.state.create_form.selected_agent_index + 1) % agents.len();
-        self.state.create_form.selected_agent_index = next_index;
-        tracing::info!(
-            event = "ui.create_dialog.agent_changed",
-            agent = %self.state.create_form.selected_agent()
-        );
+
+        // Update selected agent index in dialog state
+        if let crate::state::DialogState::Create { form, .. } = self.state.dialog_mut() {
+            let next_index = (form.selected_agent_index + 1) % agents.len();
+            form.selected_agent_index = next_index;
+            tracing::info!(
+                event = "ui.create_dialog.agent_changed",
+                agent = %form.selected_agent()
+            );
+        }
         cx.notify();
     }
 
@@ -316,16 +332,19 @@ impl MainView {
     /// Handle click on the destroy button [×] in a kild row.
     pub fn on_destroy_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.destroy_dialog.opened", branch = branch);
-        self.state.confirm_target_branch = Some(branch.to_string());
-        self.state.show_confirm_dialog = true;
+        self.state.open_confirm_dialog(branch.to_string());
         cx.notify();
     }
 
     /// Handle confirm button click in destroy dialog.
     pub fn on_confirm_destroy(&mut self, cx: &mut Context<Self>) {
-        let Some(branch) = self.state.confirm_target_branch.clone() else {
-            tracing::warn!(event = "ui.confirm_destroy.no_target");
-            return;
+        // Extract branch from dialog state
+        let branch = match self.state.dialog() {
+            crate::state::DialogState::Confirm { branch, .. } => branch.clone(),
+            _ => {
+                tracing::warn!(event = "ui.confirm_destroy.no_target");
+                return;
+            }
         };
 
         match actions::destroy_kild(&branch) {
@@ -338,7 +357,7 @@ impl MainView {
                 {
                     self.state.clear_selection();
                 }
-                self.state.reset_confirm_dialog();
+                self.state.close_dialog();
                 self.state.refresh_sessions();
             }
             Err(e) => {
@@ -347,7 +366,7 @@ impl MainView {
                     branch = %branch,
                     error = %e
                 );
-                self.state.confirm_error = Some(e);
+                self.state.set_dialog_error(e);
             }
         }
         cx.notify();
@@ -356,21 +375,21 @@ impl MainView {
     /// Handle cancel button click in destroy dialog.
     pub fn on_confirm_cancel(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.confirm_dialog.cancelled");
-        self.state.reset_confirm_dialog();
+        self.state.close_dialog();
         cx.notify();
     }
 
     /// Handle kild row click - select for detail panel.
     pub fn on_kild_select(&mut self, session_id: &str, cx: &mut Context<Self>) {
         tracing::debug!(event = "ui.kild.selected", session_id = session_id);
-        self.state.selected_kild_id = Some(session_id.to_string());
+        self.state.select_kild(session_id.to_string());
         cx.notify();
     }
 
     /// Handle click on the Open button [▶] in a kild row.
     pub fn on_open_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.open_clicked", branch = branch);
-        self.state.clear_open_error();
+        self.state.clear_error(branch);
 
         match actions::open_kild(branch, None) {
             Ok(_session) => {
@@ -382,10 +401,13 @@ impl MainView {
                     branch = branch,
                     error = %e
                 );
-                self.state.open_error = Some(crate::state::OperationError {
-                    branch: branch.to_string(),
-                    message: e,
-                });
+                self.state.set_error(
+                    branch,
+                    crate::state::OperationError {
+                        branch: branch.to_string(),
+                        message: e,
+                    },
+                );
             }
         }
         cx.notify();
@@ -394,7 +416,7 @@ impl MainView {
     /// Handle click on the Stop button [⏹] in a kild row.
     pub fn on_stop_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.stop_clicked", branch = branch);
-        self.state.clear_stop_error();
+        self.state.clear_error(branch);
 
         match actions::stop_kild(branch) {
             Ok(()) => {
@@ -406,10 +428,13 @@ impl MainView {
                     branch = branch,
                     error = %e
                 );
-                self.state.stop_error = Some(crate::state::OperationError {
-                    branch: branch.to_string(),
-                    message: e,
-                });
+                self.state.set_error(
+                    branch,
+                    crate::state::OperationError {
+                        branch: branch.to_string(),
+                        message: e,
+                    },
+                );
             }
         }
         cx.notify();
@@ -436,7 +461,7 @@ impl MainView {
     ) {
         self.state.clear_bulk_errors();
 
-        let (count, errors) = operation(&self.state.displays);
+        let (count, errors) = operation(self.state.displays());
 
         for error in &errors {
             tracing::warn!(
@@ -445,9 +470,9 @@ impl MainView {
                 error = error.message
             );
         }
-        self.state.bulk_errors = errors;
+        self.state.set_bulk_errors(errors);
 
-        if count > 0 || !self.state.bulk_errors.is_empty() {
+        if count > 0 || self.state.has_bulk_errors() {
             self.state.refresh_sessions();
         }
         cx.notify();
@@ -480,7 +505,7 @@ impl MainView {
             event = "ui.open_editor_clicked",
             path = %worktree_path.display()
         );
-        self.state.clear_editor_error();
+        self.state.clear_error(branch);
 
         if let Err(e) = actions::open_in_editor(worktree_path) {
             tracing::warn!(
@@ -488,10 +513,13 @@ impl MainView {
                 branch = branch,
                 error = %e
             );
-            self.state.editor_error = Some(crate::state::OperationError {
-                branch: branch.to_string(),
-                message: e,
-            });
+            self.state.set_error(
+                branch,
+                crate::state::OperationError {
+                    branch: branch.to_string(),
+                    message: e,
+                },
+            );
         }
         cx.notify();
     }
@@ -516,39 +544,42 @@ impl MainView {
             terminal_type = ?terminal_type,
             window_id = ?window_id
         );
-        self.state.clear_focus_error();
+        self.state.clear_error(branch);
 
         // Validate we have both terminal type and window ID
         let Some(tt) = terminal_type else {
-            self.record_focus_error(branch, "Terminal window info not available. This session was created before window tracking was added.", cx);
+            self.record_error(branch, "Terminal window info not available. This session was created before window tracking was added.", cx);
             return;
         };
 
         let Some(wid) = window_id else {
-            self.record_focus_error(branch, "Terminal window info not available. This session was created before window tracking was added.", cx);
+            self.record_error(branch, "Terminal window info not available. This session was created before window tracking was added.", cx);
             return;
         };
 
         // Both fields present - attempt to focus terminal
         if let Err(e) = kild_core::terminal_ops::focus_terminal(tt, wid) {
             let message = format!("Failed to focus terminal: {}", e);
-            self.record_focus_error(branch, &message, cx);
+            self.record_error(branch, &message, cx);
         } else {
             cx.notify();
         }
     }
 
-    /// Record a focus terminal error and notify the UI.
-    fn record_focus_error(&mut self, branch: &str, message: &str, cx: &mut Context<Self>) {
+    /// Record an operation error for a branch and notify the UI.
+    fn record_error(&mut self, branch: &str, message: &str, cx: &mut Context<Self>) {
         tracing::warn!(
-            event = "ui.focus_terminal_click.error_displayed",
+            event = "ui.operation.error_displayed",
             branch = branch,
             error = message
         );
-        self.state.focus_error = Some(crate::state::OperationError {
-            branch: branch.to_string(),
-            message: message.to_string(),
-        });
+        self.state.set_error(
+            branch,
+            crate::state::OperationError {
+                branch: branch.to_string(),
+                message: message.to_string(),
+            },
+        );
         cx.notify();
     }
 
@@ -564,29 +595,42 @@ impl MainView {
     /// Handle click on Add Project button.
     pub fn on_add_project_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.add_project_dialog.opened");
-        self.state.show_add_project_dialog = true;
+        self.state.open_add_project_dialog();
         cx.notify();
     }
 
     /// Handle add project dialog cancel.
     pub fn on_add_project_cancel(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.add_project_dialog.cancelled");
-        self.state.show_add_project_dialog = false;
-        self.state.reset_add_project_form();
+        self.state.close_dialog();
         cx.notify();
     }
 
     /// Handle add project dialog submit.
     pub fn on_add_project_submit(&mut self, cx: &mut Context<Self>) {
-        let path_str = self.state.add_project_form.path.trim().to_string();
-        let name = if self.state.add_project_form.name.trim().is_empty() {
-            None
-        } else {
-            Some(self.state.add_project_form.name.trim().to_string())
+        // Extract form data from dialog state
+        let (path_str, name) = match self.state.dialog() {
+            crate::state::DialogState::AddProject { form, .. } => {
+                let path_str = form.path.trim().to_string();
+                let name = if form.name.trim().is_empty() {
+                    None
+                } else {
+                    Some(form.name.trim().to_string())
+                };
+                (path_str, name)
+            }
+            _ => {
+                tracing::error!(
+                    event = "ui.add_project_submit.invalid_state",
+                    "on_add_project_submit called when AddProject dialog not open"
+                );
+                return;
+            }
         };
 
         if path_str.is_empty() {
-            self.state.add_project_error = Some("Path cannot be empty".to_string());
+            self.state
+                .set_dialog_error("Path cannot be empty".to_string());
             cx.notify();
             return;
         }
@@ -595,7 +639,7 @@ impl MainView {
         let path = match normalize_project_path(&path_str) {
             Ok(p) => p,
             Err(e) => {
-                self.state.add_project_error = Some(e);
+                self.state.set_dialog_error(e);
                 cx.notify();
                 return;
             }
@@ -609,12 +653,9 @@ impl MainView {
                     name = %project.name()
                 );
                 // Update local state with new project
-                self.state.projects.push(project);
-                if self.state.projects.len() == 1 {
-                    self.state.active_project = Some(path);
-                }
-                self.state.show_add_project_dialog = false;
-                self.state.reset_add_project_form();
+                // Note: ProjectManager.add() auto-selects first project
+                let _ = self.state.add_project(project);
+                self.state.close_dialog();
                 // Refresh sessions to filter by new active project
                 self.state.refresh_sessions();
             }
@@ -624,7 +665,7 @@ impl MainView {
                     path = %path.display(),
                     error = %e
                 );
-                self.state.add_project_error = Some(e);
+                self.state.set_dialog_error(e);
             }
         }
         cx.notify();
@@ -639,12 +680,13 @@ impl MainView {
 
         if let Err(e) = actions::set_active_project(Some(path.clone())) {
             tracing::error!(event = "ui.project_select.failed", error = %e);
-            self.state.add_project_error = Some(format!("Failed to save project selection: {}", e));
+            // Note: This error is rare (file system issue) and logged - no UI display
             cx.notify();
             return;
         }
 
-        self.state.active_project = Some(path);
+        // Update local state - select() cannot fail since persistence succeeded
+        let _ = self.state.select_project(&path);
         cx.notify();
     }
 
@@ -654,13 +696,12 @@ impl MainView {
 
         if let Err(e) = actions::set_active_project(None) {
             tracing::error!(event = "ui.project_select_all.failed", error = %e);
-            self.state.add_project_error =
-                Some(format!("Failed to clear project selection: {}", e));
+            // Note: This error is rare (file system issue) and logged - no UI display
             cx.notify();
             return;
         }
 
-        self.state.active_project = None;
+        self.state.select_all_projects();
         cx.notify();
     }
 
@@ -673,16 +714,14 @@ impl MainView {
 
         if let Err(e) = actions::remove_project(&path) {
             tracing::error!(event = "ui.remove_project.failed", error = %e);
-            self.state.add_project_error = Some(format!("Failed to remove project: {}", e));
+            // Note: remove_project errors don't have a dedicated error field
+            // since they happen outside of any dialog context
             cx.notify();
             return;
         }
 
-        // Update local state
-        self.state.projects.retain(|p| p.path() != path);
-        if self.state.active_project.as_ref() == Some(&path) {
-            self.state.active_project = self.state.projects.first().map(|p| p.path().to_path_buf());
-        }
+        // Update local state - remove() handles active_index adjustment
+        let _ = self.state.remove_project(&path);
         cx.notify();
     }
 
@@ -693,150 +732,154 @@ impl MainView {
     /// When confirm dialog is open: handles dialog dismissal (Escape).
     /// When add project dialog is open: handles path/name input, submission, and dismissal.
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::state::DialogState;
+
         let key_str = event.keystroke.key.to_string();
 
-        // Handle confirm dialog escape
-        if self.state.show_confirm_dialog && key_str == "escape" {
-            self.on_confirm_cancel(cx);
-            return;
-        }
+        // Handle keyboard input based on current dialog state
+        match self.state.dialog_mut() {
+            DialogState::None => {
+                // No dialog open - ignore keyboard input
+            }
 
-        // Handle add project dialog keyboard input
-        if self.state.show_add_project_dialog {
-            match key_str.as_str() {
-                "backspace" => {
-                    match self.state.add_project_form.focused_field {
-                        AddProjectDialogField::Path => {
-                            self.state.add_project_form.path.pop();
+            DialogState::Confirm { .. } => {
+                // Confirm dialog only responds to Escape
+                if key_str == "escape" {
+                    self.on_confirm_cancel(cx);
+                }
+            }
+
+            DialogState::AddProject { form, .. } => {
+                match key_str.as_str() {
+                    "backspace" => {
+                        match form.focused_field {
+                            AddProjectDialogField::Path => {
+                                form.path.pop();
+                            }
+                            AddProjectDialogField::Name => {
+                                form.name.pop();
+                            }
                         }
-                        AddProjectDialogField::Name => {
-                            self.state.add_project_form.name.pop();
-                        }
+                        cx.notify();
                     }
-                    cx.notify();
-                }
-                "enter" => {
-                    self.on_add_project_submit(cx);
-                }
-                "escape" => {
-                    self.on_add_project_cancel(cx);
-                }
-                "tab" => {
-                    // Cycle focus between fields
-                    self.state.add_project_form.focused_field =
-                        match self.state.add_project_form.focused_field {
+                    "enter" => {
+                        self.on_add_project_submit(cx);
+                    }
+                    "escape" => {
+                        self.on_add_project_cancel(cx);
+                    }
+                    "tab" => {
+                        // Cycle focus between fields
+                        form.focused_field = match form.focused_field {
                             AddProjectDialogField::Path => AddProjectDialogField::Name,
                             AddProjectDialogField::Name => AddProjectDialogField::Path,
                         };
-                    cx.notify();
-                }
-                key if key.len() == 1 => {
-                    if let Some(c) = key.chars().next() {
-                        // Path and name fields accept most characters (file paths can have spaces, etc.)
-                        if !c.is_control() {
-                            match self.state.add_project_form.focused_field {
-                                AddProjectDialogField::Path => {
-                                    self.state.add_project_form.path.push(c);
-                                }
-                                AddProjectDialogField::Name => {
-                                    self.state.add_project_form.name.push(c);
-                                }
+                        cx.notify();
+                    }
+                    "space" => {
+                        // Allow spaces in both path and name
+                        match form.focused_field {
+                            AddProjectDialogField::Path => {
+                                form.path.push(' ');
                             }
-                            cx.notify();
-                        }
-                    }
-                }
-                "space" => {
-                    // Allow spaces in both path and name
-                    match self.state.add_project_form.focused_field {
-                        AddProjectDialogField::Path => {
-                            self.state.add_project_form.path.push(' ');
-                        }
-                        AddProjectDialogField::Name => {
-                            self.state.add_project_form.name.push(' ');
-                        }
-                    }
-                    cx.notify();
-                }
-                _ => {
-                    // Ignore other keys
-                }
-            }
-            return;
-        }
-
-        // Create dialog keyboard handling
-        if !self.state.show_create_dialog {
-            return;
-        }
-
-        match key_str.as_str() {
-            "backspace" => {
-                match self.state.create_form.focused_field {
-                    CreateDialogField::BranchName => {
-                        self.state.create_form.branch_name.pop();
-                    }
-                    CreateDialogField::Note => {
-                        self.state.create_form.note.pop();
-                    }
-                    CreateDialogField::Agent => {}
-                }
-                cx.notify();
-            }
-            "enter" => {
-                self.on_dialog_submit(cx);
-            }
-            "escape" => {
-                self.on_dialog_cancel(cx);
-            }
-            "space" => {
-                match self.state.create_form.focused_field {
-                    CreateDialogField::BranchName => {
-                        // Convert spaces to hyphens for branch names
-                        self.state.create_form.branch_name.push('-');
-                    }
-                    CreateDialogField::Note => {
-                        // Allow actual spaces in notes
-                        self.state.create_form.note.push(' ');
-                    }
-                    CreateDialogField::Agent => {}
-                }
-                cx.notify();
-            }
-            "tab" => {
-                // Cycle focus between fields
-                self.state.create_form.focused_field = match self.state.create_form.focused_field {
-                    CreateDialogField::BranchName => CreateDialogField::Agent,
-                    CreateDialogField::Agent => CreateDialogField::Note,
-                    CreateDialogField::Note => CreateDialogField::BranchName,
-                };
-                cx.notify();
-            }
-            key if key.len() == 1 => {
-                if let Some(c) = key.chars().next() {
-                    match self.state.create_form.focused_field {
-                        CreateDialogField::BranchName => {
-                            // Branch names: alphanumeric, -, _, /
-                            if c.is_alphanumeric() || c == '-' || c == '_' || c == '/' {
-                                self.state.create_form.branch_name.push(c);
-                                cx.notify();
+                            AddProjectDialogField::Name => {
+                                form.name.push(' ');
                             }
                         }
-                        CreateDialogField::Note => {
-                            // Notes: any non-control character
+                        cx.notify();
+                    }
+                    key if key.len() == 1 => {
+                        if let Some(c) = key.chars().next() {
+                            // Path and name fields accept most characters
                             if !c.is_control() {
-                                self.state.create_form.note.push(c);
+                                match form.focused_field {
+                                    AddProjectDialogField::Path => {
+                                        form.path.push(c);
+                                    }
+                                    AddProjectDialogField::Name => {
+                                        form.name.push(c);
+                                    }
+                                }
                                 cx.notify();
                             }
                         }
-                        CreateDialogField::Agent => {
-                            // Agent field uses click/tab to cycle, not typed input
-                        }
+                    }
+                    _ => {
+                        // Ignore other keys
                     }
                 }
             }
-            _ => {
-                // Ignore other keys
+
+            DialogState::Create { form, .. } => {
+                match key_str.as_str() {
+                    "backspace" => {
+                        match form.focused_field {
+                            CreateDialogField::BranchName => {
+                                form.branch_name.pop();
+                            }
+                            CreateDialogField::Note => {
+                                form.note.pop();
+                            }
+                            CreateDialogField::Agent => {}
+                        }
+                        cx.notify();
+                    }
+                    "enter" => {
+                        self.on_dialog_submit(cx);
+                    }
+                    "escape" => {
+                        self.on_dialog_cancel(cx);
+                    }
+                    "space" => {
+                        match form.focused_field {
+                            CreateDialogField::BranchName => {
+                                // Convert spaces to hyphens for branch names
+                                form.branch_name.push('-');
+                            }
+                            CreateDialogField::Note => {
+                                // Allow actual spaces in notes
+                                form.note.push(' ');
+                            }
+                            CreateDialogField::Agent => {}
+                        }
+                        cx.notify();
+                    }
+                    "tab" => {
+                        // Cycle focus between fields
+                        form.focused_field = match form.focused_field {
+                            CreateDialogField::BranchName => CreateDialogField::Agent,
+                            CreateDialogField::Agent => CreateDialogField::Note,
+                            CreateDialogField::Note => CreateDialogField::BranchName,
+                        };
+                        cx.notify();
+                    }
+                    key if key.len() == 1 => {
+                        if let Some(c) = key.chars().next() {
+                            match form.focused_field {
+                                CreateDialogField::BranchName => {
+                                    // Branch names: alphanumeric, -, _, /
+                                    if c.is_alphanumeric() || c == '-' || c == '_' || c == '/' {
+                                        form.branch_name.push(c);
+                                        cx.notify();
+                                    }
+                                }
+                                CreateDialogField::Note => {
+                                    // Notes: any non-control character
+                                    if !c.is_control() {
+                                        form.note.push(c);
+                                        cx.notify();
+                                    }
+                                }
+                                CreateDialogField::Agent => {
+                                    // Agent field uses click/tab to cycle, not typed input
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Ignore other keys
+                    }
+                }
             }
         }
     }
@@ -927,8 +970,9 @@ impl Render for MainView {
                     ),
             )
             // Bulk operation errors banner (dismissible)
-            .when(!self.state.bulk_errors.is_empty(), |this| {
-                let error_count = self.state.bulk_errors.len();
+            .when(self.state.has_bulk_errors(), |this| {
+                let bulk_errors = self.state.bulk_errors();
+                let error_count = bulk_errors.len();
                 this.child(
                     div()
                         .mx(px(theme::SPACE_4))
@@ -965,7 +1009,7 @@ impl Render for MainView {
                                 ),
                         )
                         // Error list
-                        .children(self.state.bulk_errors.iter().map(|e| {
+                        .children(bulk_errors.iter().map(|e| {
                             div()
                                 .text_size(px(theme::TEXT_SM))
                                 .text_color(theme::with_alpha(theme::ember(), 0.8))
@@ -989,22 +1033,23 @@ impl Render for MainView {
                             .child(kild_list::render_kild_list(&self.state, cx)),
                     )
                     // Detail panel (320px, conditional)
-                    .when(self.state.selected_kild_id.is_some(), |this| {
+                    .when(self.state.has_selection(), |this| {
                         this.child(detail_panel::render_detail_panel(&self.state, cx))
                     }),
             )
-            // Create dialog (conditional)
-            .when(self.state.show_create_dialog, |this| {
-                this.child(create_dialog::render_create_dialog(&self.state, cx))
+            // Dialog rendering (based on current dialog state)
+            .when(self.state.dialog().is_create(), |this| {
+                this.child(create_dialog::render_create_dialog(self.state.dialog(), cx))
             })
-            // Confirm dialog (conditional)
-            .when(self.state.show_confirm_dialog, |this| {
-                this.child(confirm_dialog::render_confirm_dialog(&self.state, cx))
+            .when(self.state.dialog().is_confirm(), |this| {
+                this.child(confirm_dialog::render_confirm_dialog(
+                    self.state.dialog(),
+                    cx,
+                ))
             })
-            // Add project dialog (conditional)
-            .when(self.state.show_add_project_dialog, |this| {
+            .when(self.state.dialog().is_add_project(), |this| {
                 this.child(add_project_dialog::render_add_project_dialog(
-                    &self.state,
+                    self.state.dialog(),
                     cx,
                 ))
             })
