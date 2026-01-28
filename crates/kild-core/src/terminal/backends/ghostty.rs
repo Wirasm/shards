@@ -13,17 +13,28 @@ use crate::terminal::{
 };
 
 /// Find the Ghostty process PID that contains the given session identifier in its command line.
-/// Returns None if no matching process is found.
+/// Returns the first matching Ghostty process PID, or None if no match is found.
 #[cfg(target_os = "macos")]
 fn find_ghostty_pid_by_session(session_id: &str) -> Option<u32> {
     use tracing::debug;
 
     // Use pgrep -f to find processes with session_id in their command line
-    let pgrep_output = std::process::Command::new("pgrep")
+    let pgrep_output = match std::process::Command::new("pgrep")
         .arg("-f")
         .arg(session_id)
         .output()
-        .ok()?;
+    {
+        Ok(output) => output,
+        Err(e) => {
+            debug!(
+                event = "core.terminal.ghostty_pgrep_failed",
+                session_id = %session_id,
+                error = %e,
+                message = "Failed to execute pgrep - falling back to title search"
+            );
+            return None;
+        }
+    };
 
     if !pgrep_output.status.success() {
         debug!(
@@ -44,8 +55,8 @@ fn find_ghostty_pid_by_session(session_id: &str) -> Option<u32> {
         candidate_count = pids.len()
     );
 
-    // Find the Ghostty process among candidates
-    // The Ghostty process will have "ghostty" in its command name
+    // Find the Ghostty process among candidates by checking each process's
+    // executable name (via ps -o comm=) for "ghostty"
     for pid in pids {
         if is_ghostty_process(pid) {
             debug!(
@@ -64,17 +75,27 @@ fn find_ghostty_pid_by_session(session_id: &str) -> Option<u32> {
     None
 }
 
-/// Check if a process is a Ghostty process by examining its command name.
+/// Check if a process is a Ghostty process by examining its executable name.
 #[cfg(target_os = "macos")]
 fn is_ghostty_process(pid: u32) -> bool {
-    std::process::Command::new("ps")
+    match std::process::Command::new("ps")
         .args(["-o", "comm=", "-p", &pid.to_string()])
         .output()
-        .map(|output| {
+    {
+        Ok(output) => {
             let comm = String::from_utf8_lossy(&output.stdout);
             comm.to_lowercase().contains("ghostty")
-        })
-        .unwrap_or(false)
+        }
+        Err(e) => {
+            debug!(
+                event = "core.terminal.is_ghostty_process_failed",
+                pid = pid,
+                error = %e,
+                message = "Failed to check if PID is Ghostty process"
+            );
+            false
+        }
+    }
 }
 
 /// Focus a Ghostty window by finding its process via PID and using System Events.
@@ -182,9 +203,10 @@ impl TerminalBackend for GhosttyBackend {
 
         // Shell-escape the title to prevent injection if it contains special characters
         let escaped_title = shell_escape(title);
-        // Set window title via ANSI escape sequence (OSC 2) for later process identification.
+        // Set window title via ANSI escape sequence (OSC 2) for process identification.
         // Format: \033]2;title\007 - ESC ] 2 ; title BEL
-        // This title is embedded in the command line, allowing pkill -f to match it.
+        // The title string is embedded in the command line, enabling process lookup
+        // via pgrep -f (for focus) and pkill -f (for close).
         let ghostty_command = format!(
             "printf '\\033]2;'{}'\\007' && {}",
             escaped_title, cd_command
@@ -328,17 +350,34 @@ impl TerminalBackend for GhosttyBackend {
 
         // Step 1: Activate Ghostty app to bring it to the foreground
         let activate_script = r#"tell application "Ghostty" to activate"#;
-        if let Err(e) = std::process::Command::new("osascript")
+        match std::process::Command::new("osascript")
             .arg("-e")
             .arg(activate_script)
             .output()
         {
-            warn!(
-                event = "core.terminal.focus_ghostty_activate_failed",
-                window_id = %window_id,
-                error = %e,
-                message = "Failed to activate Ghostty - continuing with focus attempt"
-            );
+            Ok(output) if output.status.success() => {
+                debug!(
+                    event = "core.terminal.focus_ghostty_activated",
+                    window_id = %window_id
+                );
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    event = "core.terminal.focus_ghostty_activate_failed",
+                    window_id = %window_id,
+                    stderr = %stderr.trim(),
+                    message = "Ghostty activation failed - continuing with focus attempt"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    event = "core.terminal.focus_ghostty_activate_failed",
+                    window_id = %window_id,
+                    error = %e,
+                    message = "Failed to execute osascript for activation - continuing with focus attempt"
+                );
+            }
         }
 
         // Step 2: Try PID-based focus first (handles dynamic title changes)
@@ -371,8 +410,8 @@ impl TerminalBackend for GhosttyBackend {
         }
 
         // Step 3: Fallback to title-based search (for edge cases)
-        // This handles scenarios where the process might not be found via pgrep
-        // but the window title still matches (e.g., no command running yet).
+        // This handles scenarios where PID lookup fails: pgrep unavailable, permission
+        // issues, or race conditions where the process exits between lookup and focus.
         let focus_script = format!(
             r#"tell application "System Events"
             tell process "Ghostty"
@@ -526,5 +565,33 @@ mod tests {
             result.is_none(),
             "Should return None for non-existent session"
         );
+    }
+
+    #[test]
+    fn test_pid_parsing_handles_malformed_output() {
+        // Test that the parsing logic used in find_ghostty_pid_by_session
+        // correctly handles malformed pgrep output without panicking
+        let input = "12345\n\nnot_a_number\n67890\n  \n";
+        let pids: Vec<u32> = input
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect();
+        assert_eq!(pids, vec![12345, 67890]);
+    }
+
+    #[test]
+    fn test_ghostty_comm_matching_is_case_insensitive() {
+        // Test that the string matching logic used in is_ghostty_process
+        // is case-insensitive and handles various executable name formats
+        let check_comm = |comm: &str| comm.to_lowercase().contains("ghostty");
+
+        assert!(check_comm("Ghostty"));
+        assert!(check_comm("ghostty"));
+        assert!(check_comm("GHOSTTY"));
+        assert!(check_comm(
+            "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+        ));
+        assert!(!check_comm("iterm"));
+        assert!(!check_comm("Terminal"));
     }
 }
