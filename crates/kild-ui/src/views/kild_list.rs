@@ -284,10 +284,17 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                                     )
                                                 },
                                             )
-                                            // Note column (truncated to 25 chars)
+                                            // Note column (truncated to 25 characters - uses char count, not bytes)
                                             .when_some(note, |row, note_text| {
-                                                let display_text = if note_text.len() > 25 {
-                                                    format!("{}...", &note_text[..25])
+                                                let display_text = if note_text.chars().count() > 25
+                                                {
+                                                    format!(
+                                                        "{}...",
+                                                        note_text
+                                                            .chars()
+                                                            .take(25)
+                                                            .collect::<String>()
+                                                    )
                                                 } else {
                                                     note_text
                                                 };
