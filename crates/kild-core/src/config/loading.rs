@@ -505,12 +505,16 @@ patterns = []
     #[test]
     fn test_include_patterns_default_has_patterns() {
         let config = KildConfig::default();
-        let include = config.include_patterns.unwrap_or_default();
+        let include = config
+            .include_patterns
+            .expect("default config should have include_patterns set");
 
         assert!(include.enabled);
-        assert!(!include.patterns.is_empty());
+        assert_eq!(include.patterns.len(), 4);
         assert!(include.patterns.contains(&".env*".to_string()));
+        assert!(include.patterns.contains(&"*.local.json".to_string()));
         assert!(include.patterns.contains(&".claude/**".to_string()));
+        assert!(include.patterns.contains(&".cursor/**".to_string()));
     }
 
     #[test]
@@ -564,5 +568,152 @@ patterns = ["*.local.json"]
 
         // max_file_size from user should be preserved when project doesn't specify
         assert_eq!(include.max_file_size, Some("10MB".to_string()));
+    }
+
+    #[test]
+    fn test_include_patterns_defaults_merge_with_user_config() {
+        // Default config (simulating no files loaded)
+        let base = KildConfig::default();
+
+        // User config adds one pattern
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = ["custom.txt"]
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(base, user_config);
+        let patterns = &merged.include_patterns.unwrap().patterns;
+
+        // Should have defaults (4) + user pattern (1) = 5
+        assert_eq!(patterns.len(), 5);
+        assert!(patterns.contains(&".env*".to_string())); // from default
+        assert!(patterns.contains(&"*.local.json".to_string())); // from default
+        assert!(patterns.contains(&".claude/**".to_string())); // from default
+        assert!(patterns.contains(&".cursor/**".to_string())); // from default
+        assert!(patterns.contains(&"custom.txt".to_string())); // from user
+    }
+
+    #[test]
+    fn test_include_patterns_empty_array_merges_with_base() {
+        // Document behavior: empty array in override does NOT clear base patterns
+        // This is intentional - to disable patterns entirely, set enabled = false
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = [".env*", "user/**"]
+"#,
+        )
+        .unwrap();
+
+        // Project explicitly sets empty patterns
+        let project_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = []
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(user_config, project_config);
+        let include = merged.include_patterns.unwrap();
+
+        // Empty array from project means "no additional patterns"
+        // User patterns are preserved (merge semantics, not replace)
+        assert_eq!(include.patterns.len(), 2);
+        assert!(include.patterns.contains(&".env*".to_string()));
+        assert!(include.patterns.contains(&"user/**".to_string()));
+    }
+
+    #[test]
+    fn test_include_patterns_merge_preserves_order() {
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = ["a", "b", "c"]
+"#,
+        )
+        .unwrap();
+
+        let project_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = ["b", "d", "e"]
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(user_config, project_config);
+        let patterns = &merged.include_patterns.unwrap().patterns;
+
+        // Base order preserved, then new patterns appended (b is deduplicated)
+        assert_eq!(
+            patterns,
+            &vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_include_patterns_max_file_size_override() {
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = [".env*"]
+max_file_size = "10MB"
+"#,
+        )
+        .unwrap();
+
+        let project_config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+patterns = ["*.json"]
+max_file_size = "5MB"
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(user_config, project_config);
+        let include = merged.include_patterns.unwrap();
+
+        // Project override should win
+        assert_eq!(include.max_file_size, Some("5MB".to_string()));
+    }
+
+    #[test]
+    fn test_include_patterns_deserializes_with_defaults() {
+        // Empty config should use serde default for include_patterns
+        let config: KildConfig = toml::from_str("").unwrap();
+
+        let include = config
+            .include_patterns
+            .expect("empty config should have default include_patterns");
+        assert!(include.enabled);
+        assert_eq!(include.patterns.len(), 4);
+    }
+
+    #[test]
+    fn test_include_patterns_field_level_defaults() {
+        // Partial include_patterns should use field-level defaults for patterns
+        let config: KildConfig = toml::from_str(
+            r#"
+[include_patterns]
+enabled = false
+"#,
+        )
+        .unwrap();
+
+        let include = config.include_patterns.unwrap();
+        assert!(!include.enabled); // explicitly set
+        assert_eq!(include.patterns.len(), 4); // should use field default
+        assert!(include.patterns.contains(&".env*".to_string()));
     }
 }

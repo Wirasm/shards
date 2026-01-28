@@ -58,7 +58,7 @@ pub struct Config {
 /// 2. Project config: `./.kild/config.toml`
 ///
 /// Project config values override user config values.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KildConfig {
     /// Global agent configuration
     #[serde(default)]
@@ -79,6 +79,18 @@ pub struct KildConfig {
     /// Health monitoring configuration
     #[serde(default)]
     pub health: HealthConfig,
+}
+
+impl Default for KildConfig {
+    fn default() -> Self {
+        Self {
+            agent: AgentConfig::default(),
+            terminal: TerminalConfig::default(),
+            agents: HashMap::default(),
+            include_patterns: default_include_config(),
+            health: HealthConfig::default(),
+        }
+    }
 }
 
 /// Health monitoring configuration.
