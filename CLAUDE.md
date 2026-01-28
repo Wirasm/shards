@@ -250,10 +250,13 @@ pub trait TerminalBackend: Send + Sync {
         -> Result<Option<String>, TerminalError>;
     fn focus_window(&self, window_id: Option<&str>) -> Result<(), TerminalError>;
     fn close_window(&self, window_id: Option<&str>);
+    fn is_window_open(&self, window_id: &str) -> Result<Option<bool>, TerminalError>;
 }
 ```
 
 Backends registered in `terminal/registry.rs`. Detection preference: Ghostty > iTerm > Terminal.app.
+
+Status detection uses PID tracking by default. Ghostty uses window-based detection as fallback when PID is unavailable.
 
 ## Configuration Hierarchy
 
