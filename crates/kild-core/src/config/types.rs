@@ -28,6 +28,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Returns the default include config with default patterns.
+///
+/// Used by serde `#[serde(default = "...")]` attribute.
+fn default_include_config() -> Option<IncludeConfig> {
+    Some(IncludeConfig::default())
+}
+
 /// Runtime configuration for the KILD CLI.
 ///
 /// This struct holds paths and settings that are derived from environment
@@ -66,7 +73,7 @@ pub struct KildConfig {
     pub agents: HashMap<String, AgentSettings>,
 
     /// File inclusion patterns for worktrees
-    #[serde(default)]
+    #[serde(default = "default_include_config")]
     pub include_patterns: Option<IncludeConfig>,
 
     /// Health monitoring configuration
