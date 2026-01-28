@@ -264,6 +264,33 @@ pub fn focus_terminal_window(
     })
 }
 
+/// Check if a terminal window is open.
+///
+/// Returns `Ok(Some(true/false))` if the terminal supports window detection,
+/// or `Ok(None)` if the terminal doesn't support it (use PID-based detection instead).
+#[cfg(target_os = "macos")]
+pub fn is_terminal_window_open(
+    terminal_type: &TerminalType,
+    window_id: &str,
+) -> Result<Option<bool>, TerminalError> {
+    let resolved_type = match terminal_type {
+        TerminalType::Native => registry::detect_terminal()?,
+        t => t.clone(),
+    };
+
+    let backend = registry::get_backend(&resolved_type).ok_or(TerminalError::NoTerminalFound)?;
+    backend.is_window_open(window_id)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_terminal_window_open(
+    _terminal_type: &TerminalType,
+    _window_id: &str,
+) -> Result<Option<bool>, TerminalError> {
+    // Window detection not supported on non-macOS platforms
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

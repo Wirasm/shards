@@ -53,6 +53,22 @@ pub trait TerminalBackend: Send + Sync {
     /// * `Ok(())` - Window was focused successfully
     /// * `Err(TerminalError)` - Focus failed (window not found, permission denied, etc.)
     fn focus_window(&self, window_id: &str) -> Result<(), TerminalError>;
+
+    /// Check if a terminal window is open (by window ID or title).
+    ///
+    /// # Returns
+    /// - `Ok(Some(true))` - Window is definitely open
+    /// - `Ok(Some(false))` - Window is definitely closed
+    /// - `Ok(None)` - Cannot determine (use PID-based detection instead)
+    /// - `Err(...)` - Error occurred during check
+    ///
+    /// This is used as a fallback for terminals like Ghostty where PID tracking
+    /// may not be available.
+    fn is_window_open(&self, window_id: &str) -> Result<Option<bool>, TerminalError> {
+        // Default: cannot determine, fall back to PID-based detection
+        let _ = window_id;
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

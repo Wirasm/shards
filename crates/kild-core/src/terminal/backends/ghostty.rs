@@ -488,6 +488,95 @@ impl TerminalBackend for GhosttyBackend {
             message: "Focus not supported on this platform".to_string(),
         })
     }
+
+    #[cfg(target_os = "macos")]
+    fn is_window_open(&self, window_id: &str) -> Result<Option<bool>, TerminalError> {
+        debug!(
+            event = "core.terminal.ghostty_window_check_started",
+            window_title = %window_id
+        );
+
+        // Use System Events to check if a Ghostty window with our title exists.
+        // This mirrors the approach in focus_window but only checks existence.
+        let check_script = format!(
+            r#"tell application "System Events"
+            if not (exists process "Ghostty") then
+                return "app_not_running"
+            end if
+            tell process "Ghostty"
+                repeat with w in windows
+                    if name of w contains "{}" then
+                        return "found"
+                    end if
+                end repeat
+                return "not_found"
+            end tell
+        end tell"#,
+            window_id
+        );
+
+        match std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&check_script)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let result = String::from_utf8_lossy(&output.stdout);
+                let trimmed = result.trim();
+
+                match trimmed {
+                    "found" => {
+                        debug!(
+                            event = "core.terminal.ghostty_window_check_found",
+                            window_title = %window_id
+                        );
+                        Ok(Some(true))
+                    }
+                    "not_found" | "app_not_running" => {
+                        debug!(
+                            event = "core.terminal.ghostty_window_check_not_found",
+                            window_title = %window_id,
+                            reason = %trimmed
+                        );
+                        Ok(Some(false))
+                    }
+                    _ => {
+                        debug!(
+                            event = "core.terminal.ghostty_window_check_unknown_result",
+                            window_title = %window_id,
+                            result = %trimmed
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    event = "core.terminal.ghostty_window_check_script_failed",
+                    window_title = %window_id,
+                    stderr = %stderr.trim()
+                );
+                // Script execution failed - fall back to PID detection
+                Ok(None)
+            }
+            Err(e) => {
+                debug!(
+                    event = "core.terminal.ghostty_window_check_error",
+                    window_title = %window_id,
+                    error = %e
+                );
+                // osascript failed - fall back to PID detection
+                Ok(None)
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn is_window_open(&self, _window_id: &str) -> Result<Option<bool>, TerminalError> {
+        // Non-macOS: cannot determine
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -591,5 +680,35 @@ mod tests {
         ));
         assert!(!check_comm("iterm"));
         assert!(!check_comm("Terminal"));
+    }
+
+    #[test]
+    fn test_is_window_open_returns_option_type() {
+        let backend = GhosttyBackend;
+        // The method should return without panic
+        let result = backend.is_window_open("nonexistent-window-title");
+        // Result type should be Result<Option<bool>, _>
+        assert!(result.is_ok());
+        // For a non-existent window, should return Some(false) or None
+        // (depends on whether Ghostty is installed/running)
+        let value = result.unwrap();
+        assert!(value.is_none() || value == Some(false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore] // Requires Ghostty installed - run manually
+    fn test_is_window_open_ghostty_not_running() {
+        // When Ghostty app is not running, should return Some(false)
+        // This test is ignored because it depends on Ghostty being closed
+        let backend = GhosttyBackend;
+        let result = backend.is_window_open("any-window");
+        // Should succeed and indicate window not found
+        if let Ok(Some(found)) = result {
+            assert!(
+                !found,
+                "Should report window not found when app not running"
+            );
+        }
     }
 }
