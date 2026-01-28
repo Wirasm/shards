@@ -208,10 +208,8 @@ mod tests {
             SessionError::InvalidStructure { field } if field == "worktree path is empty"
         ));
 
-        // Session with non-existing worktree path should PASS validation.
-        // Worktree existence is checked at operation time (open, restart, etc.),
-        // not during structural validation. This allows sessions with missing
-        // worktrees to still appear in `kild list` for debugging/cleanup.
+        // Sessions with non-existing worktrees should pass structural validation.
+        // Worktree existence is checked at operation time, not during loading.
         let nonexistent_path = temp_dir.join("nonexistent");
         let session_missing_worktree = Session {
             id: "test/branch".to_string(),
@@ -233,7 +231,6 @@ mod tests {
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
         };
-        // This should now pass - missing worktree is not a structural error
         assert!(validate_session_structure(&session_missing_worktree).is_ok());
 
         // Clean up

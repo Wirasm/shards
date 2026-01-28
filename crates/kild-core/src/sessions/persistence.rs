@@ -641,14 +641,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    /// Test that sessions with missing worktree paths are still loaded.
+    /// Test that sessions with missing worktree paths are still loaded (issue #102).
     ///
-    /// This is the fix for issue #102: Session file disappears during open --all.
-    /// Previously, sessions with non-existent worktree paths would be silently
-    /// skipped during loading, making them "disappear" from `kild list`.
-    ///
-    /// After the fix, these sessions are included in the load result so users
-    /// can see them, investigate, and clean up as needed.
+    /// Sessions with non-existent worktrees should be included in load results
+    /// so users can see them and clean up as needed.
     #[test]
     fn test_load_sessions_includes_missing_worktree() {
         use std::env;
@@ -657,9 +653,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        // Create a session with a worktree path that does NOT exist
         let nonexistent_worktree = temp_dir.join("worktree_that_does_not_exist");
-        // Intentionally do NOT create the directory
 
         let session_missing_worktree = Session {
             id: "test/orphaned".to_string(),
@@ -682,38 +676,20 @@ mod tests {
             note: None,
         };
 
-        // Save the session directly (bypassing validation since we want to test loading)
         let session_file = temp_dir.join("test_orphaned.json");
         let json = serde_json::to_string_pretty(&session_missing_worktree).unwrap();
         std::fs::write(&session_file, json).unwrap();
 
-        // Verify the session file exists
         assert!(session_file.exists());
-
-        // Verify the worktree does NOT exist
         assert!(!nonexistent_worktree.exists());
 
-        // Load sessions - the session with missing worktree should be INCLUDED
         let (sessions, skipped) = load_sessions_from_files(&temp_dir).unwrap();
 
-        // This is the key assertion: session should be loaded, not skipped
-        assert_eq!(
-            sessions.len(),
-            1,
-            "Session with missing worktree should be loaded"
-        );
-        assert_eq!(
-            skipped, 0,
-            "Session with missing worktree should NOT be skipped"
-        );
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(skipped, 0);
         assert_eq!(sessions[0].id, "test/orphaned");
         assert_eq!(sessions[0].branch, "orphaned");
-
-        // Verify is_worktree_valid() helper reports correctly
-        assert!(
-            !sessions[0].is_worktree_valid(),
-            "is_worktree_valid() should return false for missing worktree"
-        );
+        assert!(!sessions[0].is_worktree_valid());
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
