@@ -117,11 +117,11 @@ impl KildDisplay {
             match get_diff_stats(&session.worktree_path) {
                 Ok(stats) => Some(stats),
                 Err(e) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         event = "ui.kild_list.diff_stats_failed",
                         path = %session.worktree_path.display(),
                         error = %e,
-                        "Failed to compute diff stats"
+                        "Failed to compute diff stats - showing fallback indicator"
                     );
                     None
                 }
@@ -545,6 +545,80 @@ mod tests {
         assert_eq!(display.status, ProcessStatus::Stopped);
         // Non-existent path should result in Unknown git status
         assert_eq!(display.git_status, GitStatus::Unknown);
+    }
+
+    #[test]
+    fn test_kild_display_from_session_populates_diff_stats_when_dirty() {
+        use kild_core::sessions::types::SessionStatus;
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path();
+
+        // Initialize git repo with a commit
+        Command::new("git")
+            .args(["init"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        std::fs::write(path.join("test.txt"), "line1\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(path)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+
+        // Make it dirty (unstaged changes)
+        std::fs::write(path.join("test.txt"), "line1\nline2\nline3\n").unwrap();
+
+        let session = Session {
+            id: "test".to_string(),
+            branch: "test".to_string(),
+            worktree_path: path.to_path_buf(),
+            agent: "claude".to_string(),
+            project_id: "test".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let display = KildDisplay::from_session(session);
+
+        assert_eq!(display.git_status, GitStatus::Dirty);
+        assert!(
+            display.diff_stats.is_some(),
+            "diff_stats should be populated for dirty repo"
+        );
+        let stats = display.diff_stats.unwrap();
+        assert_eq!(stats.insertions, 2, "Should have 2 insertions");
+        assert_eq!(stats.files_changed, 1);
+        assert!(stats.has_changes());
     }
 
     #[test]

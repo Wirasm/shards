@@ -3,7 +3,8 @@ use std::path::PathBuf;
 /// Git diff statistics for a worktree.
 ///
 /// Represents the number of lines added, removed, and files changed
-/// compared to the index (uncommitted changes).
+/// between the index (staging area) and the working directory.
+/// This captures **unstaged changes only**, not staged changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DiffStats {
     /// Number of lines added
@@ -12,6 +13,13 @@ pub struct DiffStats {
     pub deletions: usize,
     /// Number of files changed
     pub files_changed: usize,
+}
+
+impl DiffStats {
+    /// Returns true if there are any line changes.
+    pub fn has_changes(&self) -> bool {
+        self.insertions > 0 || self.deletions > 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
