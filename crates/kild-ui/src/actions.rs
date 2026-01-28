@@ -398,6 +398,7 @@ mod tests {
             session: make_session(id, branch),
             status,
             git_status: GitStatus::Unknown,
+            diff_stats: None,
         }
     }
 

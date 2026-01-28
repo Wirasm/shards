@@ -4,6 +4,7 @@
 //! create dialog, and form state.
 
 use kild_core::Session;
+use kild_core::git::{operations::get_diff_stats, types::DiffStats};
 use std::path::PathBuf;
 
 use crate::projects::Project;
@@ -43,6 +44,7 @@ pub struct KildDisplay {
     pub session: Session,
     pub status: ProcessStatus,
     pub git_status: GitStatus,
+    pub diff_stats: Option<DiffStats>,
 }
 
 /// Check if a worktree has uncommitted changes.
@@ -110,10 +112,29 @@ impl KildDisplay {
             GitStatus::Unknown
         };
 
+        // Compute diff stats if worktree exists and is dirty
+        let diff_stats = if git_status == GitStatus::Dirty {
+            match get_diff_stats(&session.worktree_path) {
+                Ok(stats) => Some(stats),
+                Err(e) => {
+                    tracing::debug!(
+                        event = "ui.kild_list.diff_stats_failed",
+                        path = %session.worktree_path.display(),
+                        error = %e,
+                        "Failed to compute diff stats"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             session,
             status,
             git_status,
+            diff_stats,
         }
     }
 }
@@ -928,16 +949,19 @@ mod tests {
                 session: session_with_dead_pid,
                 status: ProcessStatus::Running, // Start as Running (incorrect)
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: session_with_live_pid,
                 status: ProcessStatus::Stopped, // Start as Stopped (incorrect)
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: session_no_pid,
                 status: ProcessStatus::Stopped, // Start as Stopped (correct)
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
         ];
 
@@ -1005,26 +1029,31 @@ mod tests {
                 session: make_session("1", "branch-1"),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("2", "branch-2"),
                 status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("3", "branch-3"),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("4", "branch-4"),
                 status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("5", "branch-5"),
                 status: ProcessStatus::Unknown,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
         ];
 
@@ -1096,11 +1125,13 @@ mod tests {
                 session: make_session("1", "project-a"),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("2", "project-b"),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
         ];
 
@@ -1145,16 +1176,19 @@ mod tests {
                 session: make_session("1", &project_id_a),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("2", &project_id_b),
                 status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
             KildDisplay {
                 session: make_session("3", &project_id_a),
                 status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
+                diff_stats: None,
             },
         ];
 
@@ -1199,6 +1233,7 @@ mod tests {
             session: make_session("1", "other-project-hash"),
             status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
+            diff_stats: None,
         }];
 
         // Active project set to a different path - should return empty

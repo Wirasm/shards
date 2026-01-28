@@ -1,5 +1,19 @@
 use std::path::PathBuf;
 
+/// Git diff statistics for a worktree.
+///
+/// Represents the number of lines added, removed, and files changed
+/// compared to the index (uncommitted changes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DiffStats {
+    /// Number of lines added
+    pub insertions: usize,
+    /// Number of lines removed
+    pub deletions: usize,
+    /// Number of files changed
+    pub files_changed: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorktreeInfo {
     pub path: PathBuf,

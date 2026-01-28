@@ -182,12 +182,41 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                             .gap(px(theme::SPACE_3))
                                             // Status indicator (dot with optional glow)
                                             .child(StatusIndicator::dot(status))
-                                            // Git dirty indicator (orange dot when dirty, gray ? when unknown)
-                                            .when(git_status == GitStatus::Dirty, |row| {
+                                            // Git diff stats (when dirty) or unknown indicator
+                                            .when_some(display.diff_stats, |row, stats| {
                                                 row.child(
-                                                    div().text_color(theme::copper()).child("●"),
+                                                    div()
+                                                        .flex()
+                                                        .gap(px(theme::SPACE_1))
+                                                        .text_size(px(theme::TEXT_SM))
+                                                        .child(
+                                                            div()
+                                                                .text_color(theme::aurora())
+                                                                .child(format!(
+                                                                    "+{}",
+                                                                    stats.insertions
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            div().text_color(theme::ember()).child(
+                                                                format!("-{}", stats.deletions),
+                                                            ),
+                                                        ),
                                                 )
                                             })
+                                            // Fallback: dirty but no stats (shouldn't happen often)
+                                            .when(
+                                                git_status == GitStatus::Dirty
+                                                    && display.diff_stats.is_none(),
+                                                |row| {
+                                                    row.child(
+                                                        div()
+                                                            .text_color(theme::copper())
+                                                            .child("●"),
+                                                    )
+                                                },
+                                            )
+                                            // Unknown git status
                                             .when(git_status == GitStatus::Unknown, |row| {
                                                 row.child(
                                                     div()

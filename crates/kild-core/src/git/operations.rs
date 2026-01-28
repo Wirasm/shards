@@ -1,4 +1,6 @@
 use crate::git::errors::GitError;
+use crate::git::types::DiffStats;
+use git2::Repository;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
@@ -94,6 +96,33 @@ pub fn should_use_current_branch(current_branch: &str, requested_branch: &str) -
 
 pub fn is_valid_git_directory(path: &Path) -> bool {
     path.join(".git").exists()
+}
+
+/// Get diff statistics for uncommitted changes in a worktree.
+///
+/// Returns the number of insertions, deletions, and files changed
+/// between the index and the working directory.
+///
+/// # Errors
+///
+/// Returns `GitError::Git2Error` if the repository cannot be opened
+/// or the diff cannot be computed.
+pub fn get_diff_stats(worktree_path: &Path) -> Result<DiffStats, GitError> {
+    let repo = Repository::open(worktree_path).map_err(|e| GitError::Git2Error { source: e })?;
+
+    let diff = repo
+        .diff_index_to_workdir(None, None)
+        .map_err(|e| GitError::Git2Error { source: e })?;
+
+    let stats = diff
+        .stats()
+        .map_err(|e| GitError::Git2Error { source: e })?;
+
+    Ok(DiffStats {
+        insertions: stats.insertions(),
+        deletions: stats.deletions(),
+        files_changed: stats.files_changed(),
+    })
 }
 
 #[cfg(test)]
@@ -193,5 +222,88 @@ mod tests {
         assert!(!should_use_current_branch("main", "feature-branch"));
         assert!(!should_use_current_branch("feature-branch", "main"));
         assert!(should_use_current_branch("issue-33", "issue-33"));
+    }
+
+    // --- get_diff_stats tests ---
+
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn init_git_repo(dir: &Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .output()
+            .expect("Failed to init git repo");
+        Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir)
+            .output()
+            .expect("Failed to set git email");
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(dir)
+            .output()
+            .expect("Failed to set git name");
+    }
+
+    #[test]
+    fn test_get_diff_stats_clean_repo() {
+        let dir = TempDir::new().unwrap();
+        init_git_repo(dir.path());
+
+        // Create and commit a file
+        fs::write(dir.path().join("test.txt"), "hello").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let stats = get_diff_stats(dir.path()).unwrap();
+        assert_eq!(stats.insertions, 0);
+        assert_eq!(stats.deletions, 0);
+        assert_eq!(stats.files_changed, 0);
+    }
+
+    #[test]
+    fn test_get_diff_stats_with_changes() {
+        let dir = TempDir::new().unwrap();
+        init_git_repo(dir.path());
+
+        // Create and commit a file
+        fs::write(dir.path().join("test.txt"), "line1\nline2\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "initial"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // Make changes
+        fs::write(dir.path().join("test.txt"), "line1\nmodified\nnew line\n").unwrap();
+
+        let stats = get_diff_stats(dir.path()).unwrap();
+        assert!(stats.insertions > 0 || stats.deletions > 0);
+        assert_eq!(stats.files_changed, 1);
+    }
+
+    #[test]
+    fn test_get_diff_stats_not_a_repo() {
+        let dir = TempDir::new().unwrap();
+        // Don't init git
+
+        let result = get_diff_stats(dir.path());
+        assert!(result.is_err());
     }
 }

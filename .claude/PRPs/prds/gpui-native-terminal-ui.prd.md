@@ -165,7 +165,7 @@ Build a native GPUI application as a **visual dashboard** for shard management. 
 | 9.4 | TextInput Component | Form input with focus states | Reusable TextInput | ✅ DONE |
 | 9.5 | Modal Component | Dialog structure | Reusable Modal | ✅ DONE |
 | 9.6 | Theme Integration | Apply theme to all views | Visual match to mockup | ✅ DONE |
-| 9.7 | Git Diff Stats | Diff data in list rows | Show `+adds -dels` per kild | TODO |
+| 9.7 | Git Diff Stats | Diff data in list rows | Show `+adds -dels` per kild | ✅ DONE |
 | 9.8 | Selection & Detail Panel | Click row → detail view | Right panel with full kild info | TODO |
 | 9.9 | Sidebar Layout | 3-column layout | Project sidebar replaces dropdown | TODO |
 | 10 | Keyboard Shortcuts | Full keyboard control | Navigate and operate UI without mouse | TODO |
@@ -1125,7 +1125,7 @@ cargo run -p shards-ui
 | 9.4 | TextInput Component | Form input with focus states | DONE |
 | 9.5 | Modal Component | Reusable dialog structure | DONE |
 | 9.6 | Theme Integration | Apply theme to all views, final polish | DONE |
-| 9.7 | Git Diff Stats | Diff data in list rows | TODO |
+| 9.7 | Git Diff Stats | Diff data in list rows | DONE |
 | 9.8 | Selection & Detail Panel | Click row → detail view | TODO |
 | 9.9 | Sidebar Layout | 3-column layout with sidebar | TODO |
 
