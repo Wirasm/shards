@@ -75,7 +75,14 @@ impl SessionWatcher {
                             paths = ?event.paths
                         );
                         // Drain remaining events and return true
-                        while self.receiver.try_recv().is_ok() {}
+                        while let Ok(result) = self.receiver.try_recv() {
+                            if let Err(e) = result {
+                                tracing::warn!(
+                                    event = "ui.watcher.event_error_while_draining",
+                                    error = %e
+                                );
+                            }
+                        }
                         return true;
                     }
                     // Not relevant, continue checking
@@ -134,6 +141,8 @@ mod tests {
         }
     }
 
+    // --- Unit tests for is_relevant_event ---
+
     #[test]
     fn test_is_relevant_event_create_json() {
         let event = make_event(
@@ -186,5 +195,123 @@ mod tests {
             vec![PathBuf::from("/sessions/test.json")],
         );
         assert!(!SessionWatcher::is_relevant_event(&event));
+    }
+
+    #[test]
+    fn test_is_relevant_event_with_multiple_paths_mixed() {
+        // If ANY path is .json, should return true
+        let event = make_event(
+            EventKind::Create(CreateKind::File),
+            vec![
+                PathBuf::from("/sessions/test.txt"),
+                PathBuf::from("/sessions/test.json"),
+            ],
+        );
+        assert!(
+            SessionWatcher::is_relevant_event(&event),
+            "Should return true if ANY path is .json"
+        );
+    }
+
+    #[test]
+    fn test_is_relevant_event_with_empty_paths() {
+        let event = make_event(EventKind::Create(CreateKind::File), vec![]);
+        assert!(
+            !SessionWatcher::is_relevant_event(&event),
+            "Should return false for empty paths"
+        );
+    }
+
+    // --- Integration tests for SessionWatcher::new ---
+
+    #[test]
+    fn test_session_watcher_new_returns_none_for_nonexistent_directory() {
+        let nonexistent = PathBuf::from("/nonexistent/path/that/will/never/exist");
+        let watcher = SessionWatcher::new(&nonexistent);
+        assert!(
+            watcher.is_none(),
+            "Should return None when directory doesn't exist"
+        );
+    }
+
+    #[test]
+    fn test_session_watcher_new_succeeds_for_existing_directory() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher = SessionWatcher::new(temp_dir.path());
+        assert!(
+            watcher.is_some(),
+            "Should successfully create watcher for valid directory"
+        );
+    }
+
+    // --- Integration tests for has_pending_events ---
+
+    #[test]
+    fn test_has_pending_events_returns_false_when_no_events() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher = SessionWatcher::new(temp_dir.path()).unwrap();
+
+        // No events yet
+        assert!(
+            !watcher.has_pending_events(),
+            "Should return false with no events"
+        );
+    }
+
+    #[test]
+    fn test_has_pending_events_returns_true_after_json_file_creation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher = SessionWatcher::new(temp_dir.path()).unwrap();
+
+        // Create a .json file (relevant event)
+        let test_file = temp_dir.path().join("test.json");
+        std::fs::File::create(&test_file).unwrap();
+
+        // Give notify time to detect the change (file events are async)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        assert!(
+            watcher.has_pending_events(),
+            "Should detect .json file creation"
+        );
+
+        // Second call should return false (events drained)
+        assert!(
+            !watcher.has_pending_events(),
+            "Should return false after draining events"
+        );
+    }
+
+    #[test]
+    fn test_has_pending_events_ignores_non_json_files() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher = SessionWatcher::new(temp_dir.path()).unwrap();
+
+        // Create a .txt file (irrelevant event)
+        std::fs::File::create(temp_dir.path().join("test.txt")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        assert!(
+            !watcher.has_pending_events(),
+            "Should ignore non-.json files"
+        );
+    }
+
+    #[test]
+    fn test_has_pending_events_drains_multiple_events() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher = SessionWatcher::new(temp_dir.path()).unwrap();
+
+        // Create multiple .json files rapidly
+        for i in 0..5 {
+            std::fs::File::create(temp_dir.path().join(format!("test{}.json", i))).unwrap();
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // First call should return true and drain ALL events
+        assert!(watcher.has_pending_events());
+        // Second call should see no pending events
+        assert!(!watcher.has_pending_events());
     }
 }

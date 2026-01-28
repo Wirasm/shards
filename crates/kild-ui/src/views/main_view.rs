@@ -145,7 +145,8 @@ impl MainView {
             tracing::warn!(
                 event = "ui.sessions_dir.create_failed",
                 path = %sessions_dir.display(),
-                error = %e
+                error = %e,
+                "Failed to create sessions directory - file watcher may fail to initialize"
             );
         }
 
