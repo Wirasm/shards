@@ -532,14 +532,17 @@ fn try_match_app(
     original_app: &str,
 ) -> Option<Result<WindowInfo, WindowError>> {
     for (w, window_title, app_name) in windows {
-        let matches = if exact {
-            app_name.to_lowercase() == app_lower
-        } else {
-            app_name.to_lowercase().contains(app_lower)
+        let app_name_lower = app_name.to_lowercase();
+        let matches = match exact {
+            true => app_name_lower == app_lower,
+            false => app_name_lower.contains(app_lower),
         };
 
         if matches {
-            let match_type = if exact { "exact_app" } else { "partial_app" };
+            let match_type = match exact {
+                true => "exact_app",
+                false => "partial_app",
+            };
             info!(
                 event = "core.window.find_by_app_completed",
                 app = original_app,

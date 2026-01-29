@@ -109,6 +109,18 @@ fn is_permission_error(message: &str) -> bool {
     message.contains("permission") || message.contains("denied")
 }
 
+/// Enumerate all windows with consistent permission error handling
+fn enumerate_windows() -> Result<Vec<xcap::Window>, ScreenshotError> {
+    xcap::Window::all().map_err(|e| {
+        let msg = e.to_string();
+        if is_permission_error(&msg) {
+            ScreenshotError::PermissionDenied
+        } else {
+            ScreenshotError::EnumerationFailed(msg)
+        }
+    })
+}
+
 /// Check if a window is minimized and return an error if so.
 ///
 /// Returns Ok(()) if the window is not minimized or if the check fails
@@ -150,14 +162,7 @@ fn capture_window_by_title(
     })?;
 
     // Now find the actual xcap window by ID to capture
-    let windows = xcap::Window::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let windows = enumerate_windows()?;
 
     let window = windows
         .into_iter()
@@ -186,14 +191,7 @@ fn capture_window_by_title(
 }
 
 fn capture_window_by_id(id: u32, format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
-    let windows = xcap::Window::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let windows = enumerate_windows()?;
 
     let window = windows
         .into_iter()
@@ -223,14 +221,7 @@ fn capture_window_by_app(
     })?;
 
     // Find the actual xcap window by ID to capture
-    let windows = xcap::Window::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let windows = enumerate_windows()?;
 
     let window = windows
         .into_iter()
@@ -270,14 +261,7 @@ fn capture_window_by_app_and_title(
         map_window_error_to_screenshot_error(e)
     })?;
 
-    let windows = xcap::Window::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let windows = enumerate_windows()?;
 
     let window = windows
         .into_iter()
@@ -305,14 +289,7 @@ fn capture_window_by_app_and_title(
 }
 
 fn capture_monitor(index: usize, format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
-    let monitors = xcap::Monitor::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let monitors = enumerate_monitors()?;
 
     let monitor = monitors
         .into_iter()
@@ -327,14 +304,7 @@ fn capture_monitor(index: usize, format: &ImageFormat) -> Result<CaptureResult, 
 }
 
 fn capture_primary_monitor(format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
-    let monitors = xcap::Monitor::all().map_err(|e| {
-        let msg = e.to_string();
-        if is_permission_error(&msg) {
-            ScreenshotError::PermissionDenied
-        } else {
-            ScreenshotError::EnumerationFailed(msg)
-        }
-    })?;
+    let monitors = enumerate_monitors()?;
 
     // First try to find primary monitor
     let primary_monitor = monitors.iter().find(|m| match m.is_primary() {
@@ -364,6 +334,18 @@ fn capture_primary_monitor(format: &ImageFormat) -> Result<CaptureResult, Screen
         .map_err(|e| ScreenshotError::CaptureFailed(e.to_string()))?;
 
     encode_image(image, format)
+}
+
+/// Enumerate all monitors with consistent permission error handling
+fn enumerate_monitors() -> Result<Vec<xcap::Monitor>, ScreenshotError> {
+    xcap::Monitor::all().map_err(|e| {
+        let msg = e.to_string();
+        if is_permission_error(&msg) {
+            ScreenshotError::PermissionDenied
+        } else {
+            ScreenshotError::EnumerationFailed(msg)
+        }
+    })
 }
 
 fn encode_image(
