@@ -5,6 +5,52 @@ use tracing::{debug, info, warn};
 use super::errors::WindowError;
 use super::types::{MonitorInfo, WindowInfo};
 
+/// Generic polling function that retries until success or timeout
+///
+/// Polls every 100ms until the find function succeeds or timeout is reached.
+/// Returns immediately if found on first attempt.
+/// Propagates non-retryable errors immediately.
+fn poll_until_found<F, M, T>(
+    timeout_ms: u64,
+    find_fn: F,
+    error_matcher: M,
+    timeout_error: T,
+) -> Result<WindowInfo, WindowError>
+where
+    F: Fn() -> Result<WindowInfo, WindowError>,
+    M: Fn(WindowError) -> WindowError,
+    T: Fn() -> WindowError,
+{
+    let start = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    let poll_interval = Duration::from_millis(100);
+
+    loop {
+        match find_fn() {
+            Ok(window) => return Ok(window),
+            Err(e) => {
+                let normalized = error_matcher(e);
+
+                // Check if this is a retryable error
+                let is_retryable = matches!(
+                    normalized,
+                    WindowError::WindowNotFound { .. } | WindowError::WindowNotFoundByApp { .. }
+                );
+
+                if !is_retryable {
+                    return Err(normalized);
+                }
+
+                if start.elapsed() >= timeout {
+                    return Err(timeout_error());
+                }
+
+                std::thread::sleep(poll_interval);
+            }
+        }
+    }
+}
+
 /// List all visible windows
 pub fn list_windows() -> Result<Vec<WindowInfo>, WindowError> {
     info!(event = "core.window.list_started");
@@ -333,47 +379,33 @@ pub fn find_window_by_title_with_wait(
         timeout_ms = timeout_ms
     );
 
-    let start = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms);
-    let poll_interval = Duration::from_millis(100);
-    let mut attempt = 0u32;
+    let result = poll_until_found(
+        timeout_ms,
+        || find_window_by_title(title),
+        |_| WindowError::WindowNotFound {
+            title: title.to_string(),
+        },
+        || WindowError::WaitTimeoutByTitle {
+            title: title.to_string(),
+            timeout_ms,
+        },
+    );
 
-    loop {
-        attempt += 1;
-        match find_window_by_title(title) {
-            Ok(window) => {
-                info!(
-                    event = "core.window.poll_completed",
-                    title = title,
-                    attempts = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                return Ok(window);
-            }
-            Err(WindowError::WindowNotFound { .. }) => {
-                if start.elapsed() >= timeout {
-                    warn!(
-                        event = "core.window.poll_timeout",
-                        title = title,
-                        timeout_ms = timeout_ms,
-                        attempts = attempt
-                    );
-                    return Err(WindowError::WaitTimeoutByTitle {
-                        title: title.to_string(),
-                        timeout_ms,
-                    });
-                }
-                debug!(
-                    event = "core.window.poll_attempt",
-                    title = title,
-                    attempt = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                std::thread::sleep(poll_interval);
-            }
-            Err(e) => return Err(e), // Propagate non-NotFound errors immediately
+    match &result {
+        Ok(_) => {
+            info!(event = "core.window.poll_completed", title = title);
         }
+        Err(WindowError::WaitTimeoutByTitle { .. }) => {
+            warn!(
+                event = "core.window.poll_timeout",
+                title = title,
+                timeout_ms = timeout_ms
+            );
+        }
+        _ => {}
     }
+
+    result
 }
 
 /// Try to find a matching window using the specified match type
@@ -594,47 +626,33 @@ pub fn find_window_by_app_with_wait(app: &str, timeout_ms: u64) -> Result<Window
         timeout_ms = timeout_ms
     );
 
-    let start = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms);
-    let poll_interval = Duration::from_millis(100);
-    let mut attempt = 0u32;
+    let result = poll_until_found(
+        timeout_ms,
+        || find_window_by_app(app),
+        |_| WindowError::WindowNotFoundByApp {
+            app: app.to_string(),
+        },
+        || WindowError::WaitTimeoutByApp {
+            app: app.to_string(),
+            timeout_ms,
+        },
+    );
 
-    loop {
-        attempt += 1;
-        match find_window_by_app(app) {
-            Ok(window) => {
-                info!(
-                    event = "core.window.poll_by_app_completed",
-                    app = app,
-                    attempts = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                return Ok(window);
-            }
-            Err(WindowError::WindowNotFoundByApp { .. }) => {
-                if start.elapsed() >= timeout {
-                    warn!(
-                        event = "core.window.poll_by_app_timeout",
-                        app = app,
-                        timeout_ms = timeout_ms,
-                        attempts = attempt
-                    );
-                    return Err(WindowError::WaitTimeoutByApp {
-                        app: app.to_string(),
-                        timeout_ms,
-                    });
-                }
-                debug!(
-                    event = "core.window.poll_by_app_attempt",
-                    app = app,
-                    attempt = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                std::thread::sleep(poll_interval);
-            }
-            Err(e) => return Err(e),
+    match &result {
+        Ok(_) => {
+            info!(event = "core.window.poll_by_app_completed", app = app);
         }
+        Err(WindowError::WaitTimeoutByApp { .. }) => {
+            warn!(
+                event = "core.window.poll_by_app_timeout",
+                app = app,
+                timeout_ms = timeout_ms
+            );
+        }
+        _ => {}
     }
+
+    result
 }
 
 /// Helper for app matching
@@ -766,51 +784,45 @@ pub fn find_window_by_app_and_title_with_wait(
         timeout_ms = timeout_ms
     );
 
-    let start = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms);
-    let poll_interval = Duration::from_millis(100);
-    let mut attempt = 0u32;
+    let result = poll_until_found(
+        timeout_ms,
+        || find_window_by_app_and_title(app, title),
+        |e| match e {
+            WindowError::WindowNotFound { .. } => WindowError::WindowNotFound {
+                title: title.to_string(),
+            },
+            WindowError::WindowNotFoundByApp { .. } => WindowError::WindowNotFoundByApp {
+                app: app.to_string(),
+            },
+            other => other,
+        },
+        || WindowError::WaitTimeoutByAppAndTitle {
+            app: app.to_string(),
+            title: title.to_string(),
+            timeout_ms,
+        },
+    );
 
-    loop {
-        attempt += 1;
-        match find_window_by_app_and_title(app, title) {
-            Ok(window) => {
-                info!(
-                    event = "core.window.poll_by_app_and_title_completed",
-                    app = app,
-                    title = title,
-                    attempts = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                return Ok(window);
-            }
-            Err(WindowError::WindowNotFound { .. } | WindowError::WindowNotFoundByApp { .. }) => {
-                if start.elapsed() >= timeout {
-                    warn!(
-                        event = "core.window.poll_by_app_and_title_timeout",
-                        app = app,
-                        title = title,
-                        timeout_ms = timeout_ms,
-                        attempts = attempt
-                    );
-                    return Err(WindowError::WaitTimeoutByAppAndTitle {
-                        app: app.to_string(),
-                        title: title.to_string(),
-                        timeout_ms,
-                    });
-                }
-                debug!(
-                    event = "core.window.poll_by_app_and_title_attempt",
-                    app = app,
-                    title = title,
-                    attempt = attempt,
-                    elapsed_ms = start.elapsed().as_millis() as u64
-                );
-                std::thread::sleep(poll_interval);
-            }
-            Err(e) => return Err(e),
+    match &result {
+        Ok(_) => {
+            info!(
+                event = "core.window.poll_by_app_and_title_completed",
+                app = app,
+                title = title
+            );
         }
+        Err(WindowError::WaitTimeoutByAppAndTitle { .. }) => {
+            warn!(
+                event = "core.window.poll_by_app_and_title_timeout",
+                app = app,
+                title = title,
+                timeout_ms = timeout_ms
+            );
+        }
+        _ => {}
     }
+
+    result
 }
 
 /// Get a monitor by index

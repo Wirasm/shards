@@ -230,43 +230,30 @@ fn build_capture_request_with_wait(
     wait: bool,
     timeout_ms: u64,
 ) -> Result<CaptureRequest, Box<dyn std::error::Error>> {
-    // If wait is enabled and we have a window target (not monitor/window-id), pre-resolve
+    // Check if wait flag is applicable to this target
     if wait {
-        match (app_name, window_title, window_id, monitor_index) {
-            (Some(app), Some(title), None, None) => {
-                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)?;
-                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
-            }
-            (Some(app), None, None, None) => {
-                let window = find_window_by_app_with_wait(app, timeout_ms)?;
-                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
-            }
-            (None, Some(title), None, None) => {
-                let window = find_window_by_title_with_wait(title, timeout_ms)?;
-                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
-            }
-            // For window-id and monitor targets, warn that wait flag is ignored
-            (_, _, Some(id), _) => {
-                warn!(
-                    event = "cli.screenshot_wait_ignored",
-                    window_id = id,
-                    reason = "window-id targets are already resolved"
-                );
-                eprintln!(
-                    "Warning: --wait flag is ignored when using --window-id (window ID is already resolved)"
-                );
-            }
-            (_, _, _, Some(index)) => {
-                warn!(
-                    event = "cli.screenshot_wait_ignored",
-                    monitor_index = index,
-                    reason = "monitor targets are already resolved"
-                );
-                eprintln!(
-                    "Warning: --wait flag is ignored when using --monitor (monitors don't appear dynamically)"
-                );
-            }
-            _ => {}
+        if let Some(id) = window_id {
+            warn!(
+                event = "cli.screenshot_wait_ignored",
+                window_id = id,
+                reason = "window-id targets are already resolved"
+            );
+            eprintln!(
+                "Warning: --wait flag is ignored when using --window-id (window ID is already resolved)"
+            );
+        } else if let Some(index) = monitor_index {
+            warn!(
+                event = "cli.screenshot_wait_ignored",
+                monitor_index = index,
+                reason = "monitor targets are already resolved"
+            );
+            eprintln!(
+                "Warning: --wait flag is ignored when using --monitor (monitors don't appear dynamically)"
+            );
+        } else if app_name.is_some() || window_title.is_some() {
+            // Wait is applicable and enabled - pre-resolve window
+            let window = resolve_window_for_capture(app_name, window_title, Some(timeout_ms))?;
+            return Ok(CaptureRequest::window_id(window.id()).with_format(format));
         }
     }
 
@@ -437,40 +424,7 @@ fn resolve_window_title(
     app_name: Option<&String>,
     window_title: Option<&String>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match (app_name, window_title) {
-        (Some(app), Some(title)) => {
-            let window = find_window_by_app_and_title(app, title).map_err(|e| {
-                error!(
-                    event = "cli.assert_window_resolution_failed",
-                    app = app,
-                    title = title,
-                    error = %e,
-                    error_code = e.error_code()
-                );
-                events::log_app_error(&e);
-                format!(
-                    "Window not found for app '{}' with title '{}': {}",
-                    app, title, e
-                )
-            })?;
-            Ok(window.title().to_string())
-        }
-        (Some(app), None) => {
-            let window = find_window_by_app(app).map_err(|e| {
-                error!(
-                    event = "cli.assert_window_resolution_failed",
-                    app = app,
-                    error = %e,
-                    error_code = e.error_code()
-                );
-                events::log_app_error(&e);
-                format!("Window not found for app '{}': {}", app, e)
-            })?;
-            Ok(window.title().to_string())
-        }
-        (None, Some(title)) => Ok(title.clone()),
-        (None, None) => Ok(String::new()),
-    }
+    resolve_window_title_impl(app_name, window_title, None)
 }
 
 /// Resolve window title with wait support
@@ -479,54 +433,52 @@ fn resolve_window_title_with_wait(
     window_title: Option<&String>,
     timeout_ms: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match (app_name, window_title) {
-        (Some(app), Some(title)) => {
-            let window =
-                find_window_by_app_and_title_with_wait(app, title, timeout_ms).map_err(|e| {
-                    error!(
-                        event = "cli.assert_window_resolution_failed",
-                        app = app,
-                        title = title,
-                        error = %e,
-                        error_code = e.error_code()
-                    );
-                    events::log_app_error(&e);
-                    format!(
-                        "Window not found for app '{}' with title '{}': {}",
-                        app, title, e
-                    )
-                })?;
-            Ok(window.title().to_string())
+    resolve_window_title_impl(app_name, window_title, Some(timeout_ms))
+}
+
+/// Implementation for window title resolution with optional wait
+fn resolve_window_title_impl(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    timeout_ms: Option<u64>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let window = match (app_name, window_title, timeout_ms) {
+        (Some(app), Some(title), Some(timeout)) => {
+            find_window_by_app_and_title_with_wait(app, title, timeout)
         }
-        (Some(app), None) => {
-            let window = find_window_by_app_with_wait(app, timeout_ms).map_err(|e| {
-                error!(
-                    event = "cli.assert_window_resolution_failed",
-                    app = app,
-                    error = %e,
-                    error_code = e.error_code()
-                );
-                events::log_app_error(&e);
-                format!("Window not found for app '{}': {}", app, e)
-            })?;
-            Ok(window.title().to_string())
+        (Some(app), Some(title), None) => find_window_by_app_and_title(app, title),
+        (Some(app), None, Some(timeout)) => find_window_by_app_with_wait(app, timeout),
+        (Some(app), None, None) => find_window_by_app(app),
+        (None, Some(title), Some(timeout)) => find_window_by_title_with_wait(title, timeout),
+        (None, Some(title), None) => {
+            return Ok(title.clone());
         }
-        (None, Some(title)) => {
-            // For title-only with wait, we resolve using the wait function
-            let window = find_window_by_title_with_wait(title, timeout_ms).map_err(|e| {
-                error!(
-                    event = "cli.assert_window_resolution_failed",
-                    title = title,
-                    error = %e,
-                    error_code = e.error_code()
-                );
-                events::log_app_error(&e);
-                format!("Window not found with title '{}': {}", title, e)
-            })?;
-            Ok(window.title().to_string())
+        (None, None, _) => {
+            return Ok(String::new());
         }
-        (None, None) => Ok(String::new()),
     }
+    .map_err(|e| {
+        error!(
+            event = "cli.assert_window_resolution_failed",
+            app = ?app_name,
+            title = ?window_title,
+            error = %e,
+            error_code = e.error_code()
+        );
+        events::log_app_error(&e);
+
+        match (app_name, window_title) {
+            (Some(app), Some(title)) => format!(
+                "Window not found for app '{}' with title '{}': {}",
+                app, title, e
+            ),
+            (Some(app), None) => format!("Window not found for app '{}': {}", app, e),
+            (None, Some(title)) => format!("Window not found with title '{}': {}", title, e),
+            (None, None) => format!("Window resolution error: {}", e),
+        }
+    })?;
+
+    Ok(window.title().to_string())
 }
 
 /// Build a similar assertion with optional wait support
@@ -544,54 +496,11 @@ fn build_similar_assertion_with_wait(
 
     // Build capture request based on what was provided, with optional wait
     let request = if wait {
-        match (app_name, window_title) {
-            (Some(app), Some(title)) => {
-                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)
-                    .map_err(|e| {
-                        error!(
-                            event = "cli.assert_similar_window_resolution_failed",
-                            app = app,
-                            title = title,
-                            error = %e,
-                            error_code = e.error_code()
-                        );
-                        events::log_app_error(&e);
-                        format!(
-                            "Window not found for app '{}' with title '{}': {}",
-                            app, title, e
-                        )
-                    })?;
-                CaptureRequest::window_id(window.id())
-            }
-            (Some(app), None) => {
-                let window = find_window_by_app_with_wait(app, timeout_ms).map_err(|e| {
-                    error!(
-                        event = "cli.assert_similar_window_resolution_failed",
-                        app = app,
-                        error = %e,
-                        error_code = e.error_code()
-                    );
-                    events::log_app_error(&e);
-                    format!("Window not found for app '{}': {}", app, e)
-                })?;
-                CaptureRequest::window_id(window.id())
-            }
-            (None, Some(title)) => {
-                let window = find_window_by_title_with_wait(title, timeout_ms).map_err(|e| {
-                    error!(
-                        event = "cli.assert_similar_window_resolution_failed",
-                        title = title,
-                        error = %e,
-                        error_code = e.error_code()
-                    );
-                    events::log_app_error(&e);
-                    format!("Window not found with title '{}': {}", title, e)
-                })?;
-                CaptureRequest::window_id(window.id())
-            }
-            (None, None) => unreachable!(),
-        }
+        // Pre-resolve window with wait, then capture by ID
+        let window = resolve_window_for_capture(app_name, window_title, Some(timeout_ms))?;
+        CaptureRequest::window_id(window.id())
     } else {
+        // Use direct capture (window lookup happens during capture)
         match (app_name, window_title) {
             (Some(app), Some(title)) => CaptureRequest::window_app_and_title(app, title),
             (Some(app), None) => CaptureRequest::window_app(app),
@@ -613,6 +522,44 @@ fn build_similar_assertion_with_wait(
         baseline_path,
         threshold,
     ))
+}
+
+/// Resolve a window for capture, with optional wait timeout
+fn resolve_window_for_capture(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    timeout_ms: Option<u64>,
+) -> Result<kild_peek_core::window::WindowInfo, Box<dyn std::error::Error>> {
+    let window = match (app_name, window_title, timeout_ms) {
+        (Some(app), Some(title), Some(timeout)) => {
+            find_window_by_app_and_title_with_wait(app, title, timeout)
+        }
+        (Some(app), None, Some(timeout)) => find_window_by_app_with_wait(app, timeout),
+        (None, Some(title), Some(timeout)) => find_window_by_title_with_wait(title, timeout),
+        _ => unreachable!("resolve_window_for_capture requires timeout"),
+    }
+    .map_err(|e| {
+        error!(
+            event = "cli.assert_similar_window_resolution_failed",
+            app = ?app_name,
+            title = ?window_title,
+            error = %e,
+            error_code = e.error_code()
+        );
+        events::log_app_error(&e);
+
+        match (app_name, window_title) {
+            (Some(app), Some(title)) => format!(
+                "Window not found for app '{}' with title '{}': {}",
+                app, title, e
+            ),
+            (Some(app), None) => format!("Window not found for app '{}': {}", app, e),
+            (None, Some(title)) => format!("Window not found with title '{}': {}", title, e),
+            (None, None) => format!("Window resolution error: {}", e),
+        }
+    })?;
+
+    Ok(window)
 }
 
 #[cfg(test)]
