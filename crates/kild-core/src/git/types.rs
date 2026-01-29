@@ -54,6 +54,71 @@ impl WorktreeInfo {
     }
 }
 
+/// Comprehensive worktree status for destroy safety checks.
+///
+/// Contains information about uncommitted changes, unpushed commits,
+/// and remote branch existence to help users make informed decisions
+/// before destroying a kild.
+///
+/// # Degraded State
+///
+/// If `status_check_failed` is true, the status information may be incomplete
+/// or inaccurate. In this case, the fallback behavior is conservative:
+/// - `has_uncommitted_changes` is set to true (assume dirty)
+/// - Users should be warned that the check failed
+#[derive(Debug, Clone, Default)]
+pub struct WorktreeStatus {
+    /// Whether there are uncommitted changes (staged, modified, or untracked).
+    ///
+    /// When `status_check_failed` is true, this defaults to true (conservative).
+    pub has_uncommitted_changes: bool,
+    /// Number of commits ahead of the remote tracking branch.
+    ///
+    /// Zero when:
+    /// - Branch tracks a remote and is up-to-date
+    /// - Branch has no remote tracking branch (check `has_remote_branch`)
+    /// - Status check failed (check `status_check_failed`)
+    ///
+    /// Note: When `has_remote_branch` is false, this is always 0 because
+    /// there's no baseline to compare against. Use the "never pushed" warning
+    /// via `has_remote_branch` instead.
+    pub unpushed_commit_count: usize,
+    /// Whether a remote tracking branch exists for this branch.
+    /// False means the branch has never been pushed.
+    pub has_remote_branch: bool,
+    /// Details about uncommitted changes (file counts by category).
+    /// None when no uncommitted changes exist or when status check failed.
+    pub uncommitted_details: Option<UncommittedDetails>,
+    /// Whether the status check encountered errors and returned degraded results.
+    ///
+    /// When true, the status information may be incomplete. The fallback behavior
+    /// is conservative (assumes uncommitted changes exist) to prevent data loss.
+    pub status_check_failed: bool,
+}
+
+/// Detailed breakdown of uncommitted changes.
+#[derive(Debug, Clone, Default)]
+pub struct UncommittedDetails {
+    /// Number of files staged for commit.
+    pub staged_files: usize,
+    /// Number of tracked files with unstaged modifications.
+    pub modified_files: usize,
+    /// Number of untracked files.
+    pub untracked_files: usize,
+}
+
+impl UncommittedDetails {
+    /// Returns true if there are no uncommitted changes.
+    pub fn is_empty(&self) -> bool {
+        self.staged_files == 0 && self.modified_files == 0 && self.untracked_files == 0
+    }
+
+    /// Returns the total number of files with uncommitted changes.
+    pub fn total(&self) -> usize {
+        self.staged_files + self.modified_files + self.untracked_files
+    }
+}
+
 impl ProjectInfo {
     pub fn new(id: String, name: String, path: PathBuf, remote_url: Option<String>) -> Self {
         Self {
@@ -129,5 +194,67 @@ mod tests {
         assert_eq!(branch.name, "main");
         assert!(branch.exists);
         assert!(branch.is_current);
+    }
+
+    // --- UncommittedDetails tests ---
+
+    #[test]
+    fn test_uncommitted_details_is_empty() {
+        let empty = UncommittedDetails::default();
+        assert!(empty.is_empty());
+
+        let with_staged = UncommittedDetails {
+            staged_files: 1,
+            ..Default::default()
+        };
+        assert!(!with_staged.is_empty());
+
+        let with_modified = UncommittedDetails {
+            modified_files: 1,
+            ..Default::default()
+        };
+        assert!(!with_modified.is_empty());
+
+        let with_untracked = UncommittedDetails {
+            untracked_files: 1,
+            ..Default::default()
+        };
+        assert!(!with_untracked.is_empty());
+    }
+
+    #[test]
+    fn test_uncommitted_details_total() {
+        let empty = UncommittedDetails::default();
+        assert_eq!(empty.total(), 0);
+
+        let details = UncommittedDetails {
+            staged_files: 2,
+            modified_files: 3,
+            untracked_files: 5,
+        };
+        assert_eq!(details.total(), 10);
+    }
+
+    // --- WorktreeStatus tests ---
+
+    #[test]
+    fn test_worktree_status_default() {
+        let status = WorktreeStatus::default();
+        assert!(!status.has_uncommitted_changes);
+        assert_eq!(status.unpushed_commit_count, 0);
+        assert!(!status.has_remote_branch);
+        assert!(status.uncommitted_details.is_none());
+        assert!(!status.status_check_failed);
+    }
+
+    #[test]
+    fn test_worktree_status_with_degraded_state() {
+        let status = WorktreeStatus {
+            has_uncommitted_changes: true,
+            status_check_failed: true,
+            ..Default::default()
+        };
+        assert!(status.has_uncommitted_changes);
+        assert!(status.status_check_failed);
     }
 }
