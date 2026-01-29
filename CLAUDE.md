@@ -86,7 +86,7 @@ cargo run -p kild -- destroy --all --force       # Force destroy all (skip confi
 cargo run -p kild -- complete my-branch          # Complete kild (check PR, cleanup)
 cargo run -p kild -- complete my-branch --force  # Force complete (bypass git checks)
 
-# kild-peek - Native app inspection
+# kild-peek - Native app inspection and interaction
 cargo run -p kild-peek -- list windows           # List all visible windows
 cargo run -p kild-peek -- list windows --app Ghostty  # List windows for specific app
 cargo run -p kild-peek -- list monitors          # List connected monitors
@@ -99,6 +99,17 @@ cargo run -p kild-peek -- screenshot --window "Terminal" --wait --timeout 5000 -
 cargo run -p kild-peek -- screenshot --app Ghostty --crop 0,0,400,300 -o /tmp/cropped.png
 cargo run -p kild-peek -- diff img1.png img2.png --threshold 95
 cargo run -p kild-peek -- diff img1.png img2.png --diff-output /tmp/diff.png
+cargo run -p kild-peek -- click --window "Terminal" --at 100,50  # Click at coordinates (x,y)
+cargo run -p kild-peek -- click --app Ghostty --at 200,100      # Target by app name
+cargo run -p kild-peek -- click --app Ghostty --window "Terminal" --at 150,75  # Target both
+cargo run -p kild-peek -- click --window "Terminal" --at 100,50 --json  # JSON output
+cargo run -p kild-peek -- type --window "Terminal" "hello world"  # Type text
+cargo run -p kild-peek -- type --app TextEdit "some text"         # Target by app
+cargo run -p kild-peek -- type --window "Terminal" "test" --json  # JSON output
+cargo run -p kild-peek -- key --window "Terminal" "enter"         # Single key
+cargo run -p kild-peek -- key --app Ghostty "cmd+s"               # Key combo
+cargo run -p kild-peek -- key --window "Terminal" "cmd+shift+p"   # Multiple modifiers
+cargo run -p kild-peek -- key --app TextEdit "tab" --json         # JSON output
 cargo run -p kild-peek -- assert --app "KILD" --exists
 cargo run -p kild-peek -- assert --window "KILD" --visible
 cargo run -p kild-peek -- assert --window "KILD" --exists --wait  # Wait for window to appear
@@ -112,7 +123,7 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `crates/kild-core` - Core library with all business logic, no CLI dependencies
 - `crates/kild` - Thin CLI that consumes kild-core (clap for arg parsing)
 - `crates/kild-ui` - GPUI-based native GUI with multi-project support
-- `crates/kild-peek-core` - Core library for native app inspection (window listing, screenshots, image comparison, assertions)
+- `crates/kild-peek-core` - Core library for native app inspection and interaction (window listing, screenshots, image comparison, assertions, UI automation)
 - `crates/kild-peek` - CLI for visual verification of native macOS applications
 
 **Key modules in kild-core:**
@@ -142,6 +153,7 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `screenshot/` - Screenshot capture with multiple targets (window, monitor, base64 output)
 - `diff/` - Image comparison using SSIM algorithm
 - `assert/` - UI state assertions (window exists, visible, image similarity)
+- `interact/` - Native UI interaction (mouse clicks, keyboard input, key combinations)
 - `logging/` - Tracing initialization matching kild-core patterns
 - `events/` - App lifecycle event helpers
 
@@ -177,7 +189,7 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
-**Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `watcher`, `window`, `screenshot`, `diff`, `assert`
+**Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`
 
 **State suffixes:** `_started`, `_completed`, `_failed`, `_skipped`
 
@@ -252,6 +264,7 @@ grep 'ui\.projects\.'   # Project management events
 grep 'ui\.watcher\.'    # File watcher events
 grep 'peek\.core\.window\.'     # Window enumeration events
 grep 'peek\.core\.screenshot\.' # Screenshot capture events
+grep 'peek\.core\.interact\.'   # UI interaction events
 
 # By outcome
 grep '_failed"'         # All failures

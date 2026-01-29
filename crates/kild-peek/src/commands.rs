@@ -7,6 +7,9 @@ use tracing::{error, info, warn};
 use kild_peek_core::assert::{Assertion, run_assertion};
 use kild_peek_core::diff::{DiffRequest, compare_images};
 use kild_peek_core::events;
+use kild_peek_core::interact::{
+    ClickRequest, InteractionTarget, KeyComboRequest, TypeRequest, click, send_key_combo, type_text,
+};
 use kild_peek_core::screenshot::{CaptureRequest, CropArea, ImageFormat, capture, save_to_file};
 use kild_peek_core::window::{
     find_window_by_app, find_window_by_app_and_title, find_window_by_app_and_title_with_wait,
@@ -22,6 +25,9 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("list", sub_matches)) => handle_list_command(sub_matches),
         Some(("screenshot", sub_matches)) => handle_screenshot_command(sub_matches),
         Some(("diff", sub_matches)) => handle_diff_command(sub_matches),
+        Some(("click", sub_matches)) => handle_click_command(sub_matches),
+        Some(("type", sub_matches)) => handle_type_command(sub_matches),
+        Some(("key", sub_matches)) => handle_key_command(sub_matches),
         Some(("assert", sub_matches)) => handle_assert_command(sub_matches),
         _ => {
             error!(event = "cli.command_unknown");
@@ -82,31 +88,27 @@ fn apply_app_filter(
     windows: Vec<kild_peek_core::window::WindowInfo>,
     app_filter: Option<&String>,
 ) -> Vec<kild_peek_core::window::WindowInfo> {
-    match app_filter {
-        Some(app) => {
-            let app_lower = app.to_lowercase();
-            windows
-                .into_iter()
-                .filter(|w| {
-                    let name = w.app_name().to_lowercase();
-                    name == app_lower || name.contains(&app_lower)
-                })
-                .collect()
-        }
-        None => windows,
-    }
+    let Some(app) = app_filter else {
+        return windows;
+    };
+
+    let app_lower = app.to_lowercase();
+    windows
+        .into_iter()
+        .filter(|w| {
+            let name = w.app_name().to_lowercase();
+            name == app_lower || name.contains(&app_lower)
+        })
+        .collect()
 }
 
 /// Print appropriate message when no windows are found
 fn print_no_windows_message(app_filter: Option<&String>) {
-    match app_filter {
-        Some(app) => {
-            info!(event = "cli.list_windows_app_filter_empty", app = app);
-            println!("No windows found for app filter.");
-        }
-        None => {
-            println!("No visible windows found.");
-        }
+    if let Some(app) = app_filter {
+        info!(event = "cli.list_windows_app_filter_empty", app = app);
+        println!("No windows found for app filter.");
+    } else {
+        println!("No visible windows found.");
     }
 }
 
@@ -230,6 +232,7 @@ fn handle_screenshot_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
 }
 
 /// Build a capture request from command-line arguments, with optional wait support
+#[allow(clippy::too_many_arguments)]
 fn build_capture_request_with_wait(
     app_name: Option<&String>,
     window_title: Option<&String>,
@@ -348,10 +351,9 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let status = if result.is_similar() {
-                    "SIMILAR"
-                } else {
-                    "DIFFERENT"
+                let status = match result.is_similar() {
+                    true => "SIMILAR",
+                    false => "DIFFERENT",
                 };
                 println!("Image comparison: {}", status);
                 println!("  Similarity: {}", result.similarity_percent());
@@ -385,6 +387,179 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     }
 }
 
+/// Parse an InteractionTarget from --window and --app arguments
+fn parse_interaction_target(
+    matches: &ArgMatches,
+) -> Result<InteractionTarget, Box<dyn std::error::Error>> {
+    let window_title = matches.get_one::<String>("window");
+    let app_name = matches.get_one::<String>("app");
+
+    if app_name.is_none() && window_title.is_none() {
+        return Err("At least one of --window or --app is required".into());
+    }
+
+    let target = match (app_name, window_title) {
+        (Some(app), Some(title)) => InteractionTarget::AppAndWindow {
+            app: app.clone(),
+            title: title.clone(),
+        },
+        (Some(app), None) => InteractionTarget::App { app: app.clone() },
+        (None, Some(title)) => InteractionTarget::Window {
+            title: title.clone(),
+        },
+        (None, None) => unreachable!("already checked both are not None"),
+    };
+
+    Ok(target)
+}
+
+fn parse_coordinates(at_str: &str) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = at_str.split(',').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "--at format must be x,y (e.g., \"100,50\"), got: '{}'",
+            at_str
+        )
+        .into());
+    }
+    let x: i32 = parts[0].trim().parse().map_err(|e| {
+        format!(
+            "Invalid x coordinate '{}': {} (expected integer)",
+            parts[0].trim(),
+            e
+        )
+    })?;
+    let y: i32 = parts[1].trim().parse().map_err(|e| {
+        format!(
+            "Invalid y coordinate '{}': {} (expected integer)",
+            parts[1].trim(),
+            e
+        )
+    })?;
+    Ok((x, y))
+}
+
+fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let target = parse_interaction_target(matches)?;
+    let at_str = matches.get_one::<String>("at").unwrap();
+    let json_output = matches.get_flag("json");
+
+    let (x, y) = parse_coordinates(at_str)?;
+
+    info!(
+        event = "cli.interact.click_started",
+        x = x,
+        y = y,
+        target = ?target
+    );
+
+    let request = ClickRequest::new(target, x, y);
+
+    match click(&request) {
+        Ok(result) => {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Clicked at ({}, {})", x, y);
+                if let Some(details) = &result.details {
+                    if let Some(window) = details.get("window") {
+                        println!("  Window: {}", window.as_str().unwrap_or("unknown"));
+                    }
+                    if let (Some(sx), Some(sy)) = (details.get("screen_x"), details.get("screen_y"))
+                    {
+                        println!("  Screen: ({}, {})", sx, sy);
+                    }
+                }
+            }
+
+            info!(event = "cli.interact.click_completed", x = x, y = y);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Click failed: {}", e);
+            error!(event = "cli.interact.click_failed", error = %e);
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
+fn handle_type_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let target = parse_interaction_target(matches)?;
+    let text = matches.get_one::<String>("text").unwrap();
+    let json_output = matches.get_flag("json");
+
+    info!(
+        event = "cli.interact.type_started",
+        text_len = text.len(),
+        target = ?target
+    );
+
+    let request = TypeRequest::new(target, text);
+
+    match type_text(&request) {
+        Ok(result) => {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Typed {} characters", text.len());
+                if let Some(details) = &result.details
+                    && let Some(window) = details.get("window")
+                {
+                    println!("  Window: {}", window.as_str().unwrap_or("unknown"));
+                }
+            }
+
+            info!(event = "cli.interact.type_completed", text_len = text.len());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Type failed: {}", e);
+            error!(event = "cli.interact.type_failed", error = %e);
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
+fn handle_key_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let target = parse_interaction_target(matches)?;
+    let combo = matches.get_one::<String>("combo").unwrap();
+    let json_output = matches.get_flag("json");
+
+    info!(
+        event = "cli.interact.key_started",
+        combo = combo.as_str(),
+        target = ?target
+    );
+
+    let request = KeyComboRequest::new(target, combo);
+
+    match send_key_combo(&request) {
+        Ok(result) => {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Sent key: {}", combo);
+                if let Some(details) = &result.details
+                    && let Some(window) = details.get("window")
+                {
+                    println!("  Window: {}", window.as_str().unwrap_or("unknown"));
+                }
+            }
+
+            info!(event = "cli.interact.key_completed", combo = combo.as_str());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Key failed: {}", e);
+            error!(event = "cli.interact.key_failed", error = %e);
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
 fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let window_title = matches.get_one::<String>("window");
     let app_name = matches.get_one::<String>("app");
@@ -411,21 +586,20 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 
     // Determine which assertion to run
-    let assertion = if exists_flag {
-        Assertion::window_exists(&resolved_title)
-    } else if visible_flag {
-        Assertion::window_visible(&resolved_title)
-    } else if let Some(baseline_path) = similar_path {
-        build_similar_assertion_with_wait(
+    let assertion = match (exists_flag, visible_flag, similar_path) {
+        (true, _, _) => Assertion::window_exists(&resolved_title),
+        (_, true, _) => Assertion::window_visible(&resolved_title),
+        (_, _, Some(baseline_path)) => build_similar_assertion_with_wait(
             app_name,
             window_title,
             baseline_path,
             threshold,
             wait_flag,
             timeout_ms,
-        )?
-    } else {
-        return Err("One of --exists, --visible, or --similar must be specified".into());
+        )?,
+        (false, false, None) => {
+            return Err("One of --exists, --visible, or --similar must be specified".into());
+        }
     };
 
     info!(event = "cli.assert_started", assertion = ?assertion);
@@ -484,7 +658,31 @@ fn resolve_window_title_impl(
     window_title: Option<&String>,
     timeout_ms: Option<u64>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let window = match (app_name, window_title, timeout_ms) {
+    // Early returns for simple cases
+    if app_name.is_none() && window_title.is_none() {
+        return Ok(String::new());
+    }
+
+    if let (None, Some(title), None) = (app_name, window_title, timeout_ms) {
+        return Ok(title.clone());
+    }
+
+    // Find window based on provided parameters
+    let window = find_window_with_params(app_name, window_title, timeout_ms).map_err(|e| {
+        log_window_resolution_error(&e, app_name, window_title);
+        format_window_resolution_error(&e, app_name, window_title)
+    })?;
+
+    Ok(window.title().to_string())
+}
+
+/// Find window with the given parameters
+fn find_window_with_params(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    timeout_ms: Option<u64>,
+) -> Result<kild_peek_core::window::WindowInfo, kild_peek_core::window::WindowError> {
+    match (app_name, window_title, timeout_ms) {
         (Some(app), Some(title), Some(timeout)) => {
             find_window_by_app_and_title_with_wait(app, title, timeout)
         }
@@ -492,35 +690,44 @@ fn resolve_window_title_impl(
         (Some(app), None, Some(timeout)) => find_window_by_app_with_wait(app, timeout),
         (Some(app), None, None) => find_window_by_app(app),
         (None, Some(title), Some(timeout)) => find_window_by_title_with_wait(title, timeout),
-        (None, Some(title), None) => {
-            return Ok(title.clone());
-        }
-        (None, None, _) => {
-            return Ok(String::new());
-        }
+        (None, Some(_), None) => unreachable!("handled in early return"),
+        (None, None, _) => unreachable!("handled in early return"),
     }
-    .map_err(|e| {
-        error!(
-            event = "cli.assert_window_resolution_failed",
-            app = ?app_name,
-            title = ?window_title,
-            error = %e,
-            error_code = e.error_code()
-        );
-        events::log_app_error(&e);
+}
 
-        match (app_name, window_title) {
-            (Some(app), Some(title)) => format!(
+/// Log window resolution error
+fn log_window_resolution_error(
+    error: &kild_peek_core::window::WindowError,
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+) {
+    error!(
+        event = "cli.assert_window_resolution_failed",
+        app = ?app_name,
+        title = ?window_title,
+        error = %error,
+        error_code = error.error_code()
+    );
+    events::log_app_error(error);
+}
+
+/// Format window resolution error message
+fn format_window_resolution_error(
+    error: &kild_peek_core::window::WindowError,
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+) -> String {
+    match (app_name, window_title) {
+        (Some(app), Some(title)) => {
+            format!(
                 "Window not found for app '{}' with title '{}': {}",
-                app, title, e
-            ),
-            (Some(app), None) => format!("Window not found for app '{}': {}", app, e),
-            (None, Some(title)) => format!("Window not found with title '{}': {}", title, e),
-            (None, None) => format!("Window resolution error: {}", e),
+                app, title, error
+            )
         }
-    })?;
-
-    Ok(window.title().to_string())
+        (Some(app), None) => format!("Window not found for app '{}': {}", app, error),
+        (None, Some(title)) => format!("Window not found with title '{}': {}", title, error),
+        (None, None) => format!("Window resolution error: {}", error),
+    }
 }
 
 /// Build a similar assertion with optional wait support
@@ -572,36 +779,44 @@ fn resolve_window_for_capture(
     window_title: Option<&String>,
     timeout_ms: Option<u64>,
 ) -> Result<kild_peek_core::window::WindowInfo, Box<dyn std::error::Error>> {
-    let window = match (app_name, window_title, timeout_ms) {
-        (Some(app), Some(title), Some(timeout)) => {
-            find_window_by_app_and_title_with_wait(app, title, timeout)
-        }
-        (Some(app), None, Some(timeout)) => find_window_by_app_with_wait(app, timeout),
-        (None, Some(title), Some(timeout)) => find_window_by_title_with_wait(title, timeout),
-        _ => unreachable!("resolve_window_for_capture requires timeout"),
-    }
-    .map_err(|e| {
-        error!(
-            event = "cli.assert_similar_window_resolution_failed",
-            app = ?app_name,
-            title = ?window_title,
-            error = %e,
-            error_code = e.error_code()
-        );
-        events::log_app_error(&e);
+    let timeout = timeout_ms.expect("resolve_window_for_capture requires timeout");
 
-        match (app_name, window_title) {
-            (Some(app), Some(title)) => format!(
-                "Window not found for app '{}' with title '{}': {}",
-                app, title, e
-            ),
-            (Some(app), None) => format!("Window not found for app '{}': {}", app, e),
-            (None, Some(title)) => format!("Window not found with title '{}': {}", title, e),
-            (None, None) => format!("Window resolution error: {}", e),
-        }
+    let window = find_window_with_wait(app_name, window_title, timeout).map_err(|e| {
+        log_capture_window_resolution_error(&e, app_name, window_title);
+        format_window_resolution_error(&e, app_name, window_title)
     })?;
 
     Ok(window)
+}
+
+/// Find window with wait based on app and/or title
+fn find_window_with_wait(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    timeout: u64,
+) -> Result<kild_peek_core::window::WindowInfo, kild_peek_core::window::WindowError> {
+    match (app_name, window_title) {
+        (Some(app), Some(title)) => find_window_by_app_and_title_with_wait(app, title, timeout),
+        (Some(app), None) => find_window_by_app_with_wait(app, timeout),
+        (None, Some(title)) => find_window_by_title_with_wait(title, timeout),
+        (None, None) => unreachable!("at least one of app or title must be provided"),
+    }
+}
+
+/// Log window resolution error for capture operations
+fn log_capture_window_resolution_error(
+    error: &kild_peek_core::window::WindowError,
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+) {
+    error!(
+        event = "cli.assert_similar_window_resolution_failed",
+        app = ?app_name,
+        title = ?window_title,
+        error = %error,
+        error_code = error.error_code()
+    );
+    events::log_app_error(error);
 }
 
 #[cfg(test)]
