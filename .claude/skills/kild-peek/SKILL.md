@@ -84,13 +84,10 @@ When the user asks to "peek at X", find the right window:
 
 ## Screenshot Storage
 
-**Always save screenshots to the scratchpad directory** provided by Claude Code:
+**Always save screenshots to the scratchpad directory:**
 
 ```bash
-# The scratchpad directory is provided in the system context
-# Example: /private/tmp/claude-501/-Users-rasmus-Projects-mine-kild/.../scratchpad
-
-# Save screenshots there
+# Save screenshots to the scratchpad
 kild-peek screenshot --window "KILD" -o "$SCRATCHPAD/kild-ui.png"
 ```
 
