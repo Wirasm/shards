@@ -15,7 +15,17 @@ pub enum WindowError {
     WindowNotFoundByApp { app: String },
 
     #[error("Window '{title}' not found after {timeout_ms}ms")]
-    WaitTimeout { title: String, timeout_ms: u64 },
+    WaitTimeoutByTitle { title: String, timeout_ms: u64 },
+
+    #[error("Window for app '{app}' not found after {timeout_ms}ms")]
+    WaitTimeoutByApp { app: String, timeout_ms: u64 },
+
+    #[error("Window '{title}' in app '{app}' not found after {timeout_ms}ms")]
+    WaitTimeoutByAppAndTitle {
+        app: String,
+        title: String,
+        timeout_ms: u64,
+    },
 
     #[error("Failed to enumerate monitors: {message}")]
     MonitorEnumerationFailed { message: String },
@@ -31,7 +41,9 @@ impl PeekError for WindowError {
             WindowError::WindowNotFound { .. } => "WINDOW_NOT_FOUND",
             WindowError::WindowNotFoundById { .. } => "WINDOW_NOT_FOUND_BY_ID",
             WindowError::WindowNotFoundByApp { .. } => "WINDOW_NOT_FOUND_BY_APP",
-            WindowError::WaitTimeout { .. } => "WINDOW_WAIT_TIMEOUT",
+            WindowError::WaitTimeoutByTitle { .. } => "WINDOW_WAIT_TIMEOUT_BY_TITLE",
+            WindowError::WaitTimeoutByApp { .. } => "WINDOW_WAIT_TIMEOUT_BY_APP",
+            WindowError::WaitTimeoutByAppAndTitle { .. } => "WINDOW_WAIT_TIMEOUT_BY_APP_AND_TITLE",
             WindowError::MonitorEnumerationFailed { .. } => "MONITOR_ENUMERATION_FAILED",
             WindowError::MonitorNotFound { .. } => "MONITOR_NOT_FOUND",
         }
@@ -43,7 +55,9 @@ impl PeekError for WindowError {
             WindowError::WindowNotFound { .. }
                 | WindowError::WindowNotFoundById { .. }
                 | WindowError::WindowNotFoundByApp { .. }
-                | WindowError::WaitTimeout { .. }
+                | WindowError::WaitTimeoutByTitle { .. }
+                | WindowError::WaitTimeoutByApp { .. }
+                | WindowError::WaitTimeoutByAppAndTitle { .. }
                 | WindowError::MonitorNotFound { .. }
         )
     }
@@ -92,8 +106,8 @@ mod tests {
     }
 
     #[test]
-    fn test_wait_timeout_error() {
-        let error = WindowError::WaitTimeout {
+    fn test_wait_timeout_by_title_error() {
+        let error = WindowError::WaitTimeoutByTitle {
             title: "Test Window".to_string(),
             timeout_ms: 5000,
         };
@@ -101,7 +115,36 @@ mod tests {
             error.to_string(),
             "Window 'Test Window' not found after 5000ms"
         );
-        assert_eq!(error.error_code(), "WINDOW_WAIT_TIMEOUT");
+        assert_eq!(error.error_code(), "WINDOW_WAIT_TIMEOUT_BY_TITLE");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_wait_timeout_by_app_error() {
+        let error = WindowError::WaitTimeoutByApp {
+            app: "Ghostty".to_string(),
+            timeout_ms: 5000,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Window for app 'Ghostty' not found after 5000ms"
+        );
+        assert_eq!(error.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_wait_timeout_by_app_and_title_error() {
+        let error = WindowError::WaitTimeoutByAppAndTitle {
+            app: "Ghostty".to_string(),
+            title: "Terminal".to_string(),
+            timeout_ms: 5000,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Window 'Terminal' in app 'Ghostty' not found after 5000ms"
+        );
+        assert_eq!(error.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP_AND_TITLE");
         assert!(error.is_user_error());
     }
 }

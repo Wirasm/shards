@@ -358,7 +358,7 @@ pub fn find_window_by_title_with_wait(
                         timeout_ms = timeout_ms,
                         attempts = attempt
                     );
-                    return Err(WindowError::WaitTimeout {
+                    return Err(WindowError::WaitTimeoutByTitle {
                         title: title.to_string(),
                         timeout_ms,
                     });
@@ -619,8 +619,8 @@ pub fn find_window_by_app_with_wait(app: &str, timeout_ms: u64) -> Result<Window
                         timeout_ms = timeout_ms,
                         attempts = attempt
                     );
-                    return Err(WindowError::WaitTimeout {
-                        title: format!("app:{}", app),
+                    return Err(WindowError::WaitTimeoutByApp {
+                        app: app.to_string(),
                         timeout_ms,
                     });
                 }
@@ -793,8 +793,9 @@ pub fn find_window_by_app_and_title_with_wait(
                         timeout_ms = timeout_ms,
                         attempts = attempt
                     );
-                    return Err(WindowError::WaitTimeout {
-                        title: format!("{}:{}", app, title),
+                    return Err(WindowError::WaitTimeoutByAppAndTitle {
+                        app: app.to_string(),
+                        title: title.to_string(),
                         timeout_ms,
                     });
                 }
@@ -990,6 +991,38 @@ mod tests {
         assert!(result.is_err());
         if let Err(e) = result {
             assert_eq!(e.error_code(), "WINDOW_NOT_FOUND_BY_APP");
+        }
+    }
+
+    #[test]
+    fn test_find_window_by_title_with_wait_timeout() {
+        // Use a very short timeout with a non-existent window
+        let result = find_window_by_title_with_wait("NONEXISTENT_WINDOW_UNIQUE_12345", 200);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_TITLE");
+        }
+    }
+
+    #[test]
+    fn test_find_window_by_app_with_wait_timeout() {
+        let result = find_window_by_app_with_wait("NONEXISTENT_APP_UNIQUE_12345", 200);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP");
+        }
+    }
+
+    #[test]
+    fn test_find_window_by_app_and_title_with_wait_timeout() {
+        let result = find_window_by_app_and_title_with_wait(
+            "NONEXISTENT_APP_UNIQUE_12345",
+            "NONEXISTENT_TITLE",
+            200,
+        );
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP_AND_TITLE");
         }
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::ArgMatches;
 use kild_peek_core::errors::PeekError;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_peek_core::assert::{Assertion, run_assertion};
 use kild_peek_core::diff::{DiffRequest, compare_images};
@@ -245,12 +245,32 @@ fn build_capture_request_with_wait(
                 let window = find_window_by_title_with_wait(title, timeout_ms)?;
                 return Ok(CaptureRequest::window_id(window.id()).with_format(format));
             }
-            // For window-id and monitor targets, wait flag is ignored (they're already resolved)
+            // For window-id and monitor targets, warn that wait flag is ignored
+            (_, _, Some(id), _) => {
+                warn!(
+                    event = "cli.screenshot_wait_ignored",
+                    window_id = id,
+                    reason = "window-id targets are already resolved"
+                );
+                eprintln!(
+                    "Warning: --wait flag is ignored when using --window-id (window ID is already resolved)"
+                );
+            }
+            (_, _, _, Some(index)) => {
+                warn!(
+                    event = "cli.screenshot_wait_ignored",
+                    monitor_index = index,
+                    reason = "monitor targets are already resolved"
+                );
+                eprintln!(
+                    "Warning: --wait flag is ignored when using --monitor (monitors don't appear dynamically)"
+                );
+            }
             _ => {}
         }
     }
 
-    // No wait, or non-waiteable target - use normal request building
+    // No wait, or non-waitable target - use normal request building
     Ok(build_capture_request(
         app_name,
         window_title,
@@ -526,15 +546,47 @@ fn build_similar_assertion_with_wait(
     let request = if wait {
         match (app_name, window_title) {
             (Some(app), Some(title)) => {
-                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)?;
+                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)
+                    .map_err(|e| {
+                        error!(
+                            event = "cli.assert_similar_window_resolution_failed",
+                            app = app,
+                            title = title,
+                            error = %e,
+                            error_code = e.error_code()
+                        );
+                        events::log_app_error(&e);
+                        format!(
+                            "Window not found for app '{}' with title '{}': {}",
+                            app, title, e
+                        )
+                    })?;
                 CaptureRequest::window_id(window.id())
             }
             (Some(app), None) => {
-                let window = find_window_by_app_with_wait(app, timeout_ms)?;
+                let window = find_window_by_app_with_wait(app, timeout_ms).map_err(|e| {
+                    error!(
+                        event = "cli.assert_similar_window_resolution_failed",
+                        app = app,
+                        error = %e,
+                        error_code = e.error_code()
+                    );
+                    events::log_app_error(&e);
+                    format!("Window not found for app '{}': {}", app, e)
+                })?;
                 CaptureRequest::window_id(window.id())
             }
             (None, Some(title)) => {
-                let window = find_window_by_title_with_wait(title, timeout_ms)?;
+                let window = find_window_by_title_with_wait(title, timeout_ms).map_err(|e| {
+                    error!(
+                        event = "cli.assert_similar_window_resolution_failed",
+                        title = title,
+                        error = %e,
+                        error_code = e.error_code()
+                    );
+                    events::log_app_error(&e);
+                    format!("Window not found with title '{}': {}", title, e)
+                })?;
                 CaptureRequest::window_id(window.id())
             }
             (None, None) => unreachable!(),
