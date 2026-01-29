@@ -9,7 +9,8 @@ use kild_peek_core::diff::{DiffRequest, compare_images};
 use kild_peek_core::events;
 use kild_peek_core::screenshot::{CaptureRequest, ImageFormat, capture, save_to_file};
 use kild_peek_core::window::{
-    find_window_by_app, find_window_by_app_and_title, list_monitors, list_windows,
+    find_window_by_app, find_window_by_app_and_title, find_window_by_app_and_title_with_wait,
+    find_window_by_app_with_wait, find_window_by_title_with_wait, list_monitors, list_windows,
 };
 
 use crate::table;
@@ -150,6 +151,8 @@ fn handle_screenshot_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
     let monitor_index = matches.get_one::<usize>("monitor");
     let output_path = matches.get_one::<String>("output");
     let base64_flag = matches.get_flag("base64");
+    let wait_flag = matches.get_flag("wait");
+    let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
     let format_str = matches
         .get_one::<String>("format")
         .map(|s| s.as_str())
@@ -172,11 +175,21 @@ fn handle_screenshot_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
         app_name = ?app_name,
         monitor_index = ?monitor_index,
         base64 = use_base64,
-        format = ?format_str
+        format = ?format_str,
+        wait = wait_flag,
+        timeout_ms = timeout_ms
     );
 
-    // Build the capture request
-    let request = build_capture_request(app_name, window_title, window_id, monitor_index, format);
+    // Build the capture request, using wait functions if --wait is set
+    let request = build_capture_request_with_wait(
+        app_name,
+        window_title,
+        window_id,
+        monitor_index,
+        format,
+        wait_flag,
+        timeout_ms,
+    )?;
 
     match capture(&request) {
         Ok(result) => {
@@ -205,6 +218,46 @@ fn handle_screenshot_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
             Err(e.into())
         }
     }
+}
+
+/// Build a capture request from command-line arguments, with optional wait support
+fn build_capture_request_with_wait(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    window_id: Option<&u32>,
+    monitor_index: Option<&usize>,
+    format: ImageFormat,
+    wait: bool,
+    timeout_ms: u64,
+) -> Result<CaptureRequest, Box<dyn std::error::Error>> {
+    // If wait is enabled and we have a window target (not monitor/window-id), pre-resolve
+    if wait {
+        match (app_name, window_title, window_id, monitor_index) {
+            (Some(app), Some(title), None, None) => {
+                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)?;
+                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
+            }
+            (Some(app), None, None, None) => {
+                let window = find_window_by_app_with_wait(app, timeout_ms)?;
+                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
+            }
+            (None, Some(title), None, None) => {
+                let window = find_window_by_title_with_wait(title, timeout_ms)?;
+                return Ok(CaptureRequest::window_id(window.id()).with_format(format));
+            }
+            // For window-id and monitor targets, wait flag is ignored (they're already resolved)
+            _ => {}
+        }
+    }
+
+    // No wait, or non-waiteable target - use normal request building
+    Ok(build_capture_request(
+        app_name,
+        window_title,
+        window_id,
+        monitor_index,
+        format,
+    ))
 }
 
 /// Build a capture request from command-line arguments
@@ -291,11 +344,17 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     let similar_path = matches.get_one::<String>("similar");
     let threshold_percent = *matches.get_one::<u8>("threshold").unwrap_or(&95);
     let json_output = matches.get_flag("json");
+    let wait_flag = matches.get_flag("wait");
+    let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
 
     let threshold = (threshold_percent as f64) / 100.0;
 
-    // Resolve the window using app and/or title
-    let resolved_title = resolve_window_title(app_name, window_title)?;
+    // Resolve the window using app and/or title, with optional wait
+    let resolved_title = if wait_flag {
+        resolve_window_title_with_wait(app_name, window_title, timeout_ms)?
+    } else {
+        resolve_window_title(app_name, window_title)?
+    };
 
     // Validate that window/app is provided when needed
     if (exists_flag || visible_flag) && resolved_title.is_empty() {
@@ -308,7 +367,14 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     } else if visible_flag {
         Assertion::window_visible(&resolved_title)
     } else if let Some(baseline_path) = similar_path {
-        build_similar_assertion(app_name, window_title, baseline_path, threshold)?
+        build_similar_assertion_with_wait(
+            app_name,
+            window_title,
+            baseline_path,
+            threshold,
+            wait_flag,
+            timeout_ms,
+        )?
     } else {
         return Err("One of --exists, --visible, or --similar must be specified".into());
     };
@@ -387,23 +453,99 @@ fn resolve_window_title(
     }
 }
 
-/// Build a similar assertion by capturing a screenshot and comparing to baseline
-fn build_similar_assertion(
+/// Resolve window title with wait support
+fn resolve_window_title_with_wait(
+    app_name: Option<&String>,
+    window_title: Option<&String>,
+    timeout_ms: u64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match (app_name, window_title) {
+        (Some(app), Some(title)) => {
+            let window =
+                find_window_by_app_and_title_with_wait(app, title, timeout_ms).map_err(|e| {
+                    error!(
+                        event = "cli.assert_window_resolution_failed",
+                        app = app,
+                        title = title,
+                        error = %e,
+                        error_code = e.error_code()
+                    );
+                    events::log_app_error(&e);
+                    format!(
+                        "Window not found for app '{}' with title '{}': {}",
+                        app, title, e
+                    )
+                })?;
+            Ok(window.title().to_string())
+        }
+        (Some(app), None) => {
+            let window = find_window_by_app_with_wait(app, timeout_ms).map_err(|e| {
+                error!(
+                    event = "cli.assert_window_resolution_failed",
+                    app = app,
+                    error = %e,
+                    error_code = e.error_code()
+                );
+                events::log_app_error(&e);
+                format!("Window not found for app '{}': {}", app, e)
+            })?;
+            Ok(window.title().to_string())
+        }
+        (None, Some(title)) => {
+            // For title-only with wait, we resolve using the wait function
+            let window = find_window_by_title_with_wait(title, timeout_ms).map_err(|e| {
+                error!(
+                    event = "cli.assert_window_resolution_failed",
+                    title = title,
+                    error = %e,
+                    error_code = e.error_code()
+                );
+                events::log_app_error(&e);
+                format!("Window not found with title '{}': {}", title, e)
+            })?;
+            Ok(window.title().to_string())
+        }
+        (None, None) => Ok(String::new()),
+    }
+}
+
+/// Build a similar assertion with optional wait support
+fn build_similar_assertion_with_wait(
     app_name: Option<&String>,
     window_title: Option<&String>,
     baseline_path: &str,
     threshold: f64,
+    wait: bool,
+    timeout_ms: u64,
 ) -> Result<Assertion, Box<dyn std::error::Error>> {
     if app_name.is_none() && window_title.is_none() {
         return Err("--window or --app is required with --similar".into());
     }
 
-    // Build capture request based on what was provided
-    let request = match (app_name, window_title) {
-        (Some(app), Some(title)) => CaptureRequest::window_app_and_title(app, title),
-        (Some(app), None) => CaptureRequest::window_app(app),
-        (None, Some(title)) => CaptureRequest::window(title),
-        (None, None) => unreachable!(),
+    // Build capture request based on what was provided, with optional wait
+    let request = if wait {
+        match (app_name, window_title) {
+            (Some(app), Some(title)) => {
+                let window = find_window_by_app_and_title_with_wait(app, title, timeout_ms)?;
+                CaptureRequest::window_id(window.id())
+            }
+            (Some(app), None) => {
+                let window = find_window_by_app_with_wait(app, timeout_ms)?;
+                CaptureRequest::window_id(window.id())
+            }
+            (None, Some(title)) => {
+                let window = find_window_by_title_with_wait(title, timeout_ms)?;
+                CaptureRequest::window_id(window.id())
+            }
+            (None, None) => unreachable!(),
+        }
+    } else {
+        match (app_name, window_title) {
+            (Some(app), Some(title)) => CaptureRequest::window_app_and_title(app, title),
+            (Some(app), None) => CaptureRequest::window_app(app),
+            (None, Some(title)) => CaptureRequest::window(title),
+            (None, None) => unreachable!(),
+        }
     };
 
     let result = capture(&request).map_err(|e| format!("Failed to capture screenshot: {}", e))?;

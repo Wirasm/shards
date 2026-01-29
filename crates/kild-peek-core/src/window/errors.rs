@@ -14,6 +14,9 @@ pub enum WindowError {
     #[error("Window not found for app: '{app}'")]
     WindowNotFoundByApp { app: String },
 
+    #[error("Window '{title}' not found after {timeout_ms}ms")]
+    WaitTimeout { title: String, timeout_ms: u64 },
+
     #[error("Failed to enumerate monitors: {message}")]
     MonitorEnumerationFailed { message: String },
 
@@ -28,6 +31,7 @@ impl PeekError for WindowError {
             WindowError::WindowNotFound { .. } => "WINDOW_NOT_FOUND",
             WindowError::WindowNotFoundById { .. } => "WINDOW_NOT_FOUND_BY_ID",
             WindowError::WindowNotFoundByApp { .. } => "WINDOW_NOT_FOUND_BY_APP",
+            WindowError::WaitTimeout { .. } => "WINDOW_WAIT_TIMEOUT",
             WindowError::MonitorEnumerationFailed { .. } => "MONITOR_ENUMERATION_FAILED",
             WindowError::MonitorNotFound { .. } => "MONITOR_NOT_FOUND",
         }
@@ -39,6 +43,7 @@ impl PeekError for WindowError {
             WindowError::WindowNotFound { .. }
                 | WindowError::WindowNotFoundById { .. }
                 | WindowError::WindowNotFoundByApp { .. }
+                | WindowError::WaitTimeout { .. }
                 | WindowError::MonitorNotFound { .. }
         )
     }
@@ -84,5 +89,19 @@ mod tests {
             title: "test".to_string(),
         };
         assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn test_wait_timeout_error() {
+        let error = WindowError::WaitTimeout {
+            title: "Test Window".to_string(),
+            timeout_ms: 5000,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Window 'Test Window' not found after 5000ms"
+        );
+        assert_eq!(error.error_code(), "WINDOW_WAIT_TIMEOUT");
+        assert!(error.is_user_error());
     }
 }

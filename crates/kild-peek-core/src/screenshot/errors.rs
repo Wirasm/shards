@@ -11,6 +11,9 @@ pub enum ScreenshotError {
     #[error("Window not found for app: '{app}'")]
     WindowNotFoundByApp { app: String },
 
+    #[error("Window '{title}' not found after {timeout_ms}ms")]
+    WaitTimeout { title: String, timeout_ms: u64 },
+
     #[error("Window is minimized and cannot be captured: '{title}'")]
     WindowMinimized { title: String },
 
@@ -54,6 +57,7 @@ impl PeekError for ScreenshotError {
             ScreenshotError::WindowNotFound { .. } => "SCREENSHOT_WINDOW_NOT_FOUND",
             ScreenshotError::WindowNotFoundById { .. } => "SCREENSHOT_WINDOW_NOT_FOUND_BY_ID",
             ScreenshotError::WindowNotFoundByApp { .. } => "SCREENSHOT_WINDOW_NOT_FOUND_BY_APP",
+            ScreenshotError::WaitTimeout { .. } => "SCREENSHOT_WAIT_TIMEOUT",
             ScreenshotError::WindowMinimized { .. } => "SCREENSHOT_WINDOW_MINIMIZED",
             ScreenshotError::PermissionDenied => "SCREENSHOT_PERMISSION_DENIED",
             ScreenshotError::EnumerationFailed(_) => "SCREENSHOT_ENUMERATION_FAILED",
@@ -73,6 +77,7 @@ impl PeekError for ScreenshotError {
             ScreenshotError::WindowNotFound { .. }
                 | ScreenshotError::WindowNotFoundById { .. }
                 | ScreenshotError::WindowNotFoundByApp { .. }
+                | ScreenshotError::WaitTimeout { .. }
                 | ScreenshotError::WindowMinimized { .. }
                 | ScreenshotError::PermissionDenied
                 | ScreenshotError::MonitorNotFound { .. }

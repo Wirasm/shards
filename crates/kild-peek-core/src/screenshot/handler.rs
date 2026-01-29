@@ -64,6 +64,9 @@ fn map_window_error_to_screenshot_error(error: WindowError) -> ScreenshotError {
     match error {
         WindowError::WindowNotFound { title } => ScreenshotError::WindowNotFound { title },
         WindowError::WindowNotFoundByApp { app } => ScreenshotError::WindowNotFoundByApp { app },
+        WindowError::WaitTimeout { title, timeout_ms } => {
+            ScreenshotError::WaitTimeout { title, timeout_ms }
+        }
         WindowError::EnumerationFailed { message } => {
             if is_permission_error(&message) {
                 debug!(
