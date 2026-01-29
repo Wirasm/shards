@@ -35,6 +35,12 @@ pub enum InteractionError {
 
     #[error("Window is minimized: '{title}'")]
     WindowMinimized { title: String },
+
+    #[error("Failed to focus window for app '{app}': {reason}")]
+    WindowFocusFailed { app: String, reason: String },
+
+    #[error("Window lookup failed: {reason}")]
+    WindowLookupFailed { reason: String },
 }
 
 impl PeekError for InteractionError {
@@ -51,6 +57,8 @@ impl PeekError for InteractionError {
                 "INTERACTION_COORDINATE_OUT_OF_BOUNDS"
             }
             InteractionError::WindowMinimized { .. } => "INTERACTION_WINDOW_MINIMIZED",
+            InteractionError::WindowFocusFailed { .. } => "INTERACTION_WINDOW_FOCUS_FAILED",
+            InteractionError::WindowLookupFailed { .. } => "INTERACTION_WINDOW_LOOKUP_FAILED",
         }
     }
 
@@ -63,6 +71,8 @@ impl PeekError for InteractionError {
                 | InteractionError::UnknownKey { .. }
                 | InteractionError::CoordinateOutOfBounds { .. }
                 | InteractionError::WindowMinimized { .. }
+                | InteractionError::WindowFocusFailed { .. }
+                | InteractionError::WindowLookupFailed { .. }
         )
     }
 }
@@ -163,6 +173,33 @@ mod tests {
         };
         assert_eq!(error.to_string(), "Window is minimized: 'Terminal'");
         assert_eq!(error.error_code(), "INTERACTION_WINDOW_MINIMIZED");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_window_focus_failed_error() {
+        let error = InteractionError::WindowFocusFailed {
+            app: "Finder".to_string(),
+            reason: "osascript failed".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Failed to focus window for app 'Finder': osascript failed"
+        );
+        assert_eq!(error.error_code(), "INTERACTION_WINDOW_FOCUS_FAILED");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_window_lookup_failed_error() {
+        let error = InteractionError::WindowLookupFailed {
+            reason: "enumeration failed".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Window lookup failed: enumeration failed"
+        );
+        assert_eq!(error.error_code(), "INTERACTION_WINDOW_LOOKUP_FAILED");
         assert!(error.is_user_error());
     }
 

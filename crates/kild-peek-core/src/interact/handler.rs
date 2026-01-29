@@ -4,10 +4,10 @@ use std::time::Duration;
 use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::errors::InteractionError;
-use super::keymap;
+use super::operations;
 use super::types::{
     ClickRequest, InteractionResult, InteractionTarget, KeyComboRequest, TypeRequest,
 };
@@ -15,7 +15,8 @@ use crate::window::{
     WindowError, WindowInfo, find_window_by_app, find_window_by_app_and_title, find_window_by_title,
 };
 
-// FFI declaration for accessibility check
+// SAFETY: FFI declaration for AXIsProcessTrusted from macOS ApplicationServices framework.
+// Returns false when the process lacks accessibility permissions (does not crash).
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
@@ -67,6 +68,11 @@ fn resolve_and_focus_window(target: &InteractionTarget) -> Result<WindowInfo, In
 }
 
 /// Focus a window by app name using AppleScript
+///
+/// # Errors
+///
+/// Returns `InteractionError::WindowFocusFailed` if the osascript command fails
+/// to execute or returns a non-zero exit status.
 fn focus_window(app_name: &str) -> Result<(), InteractionError> {
     debug!(event = "peek.core.interact.focus_started", app = app_name);
 
@@ -78,29 +84,33 @@ fn focus_window(app_name: &str) -> Result<(), InteractionError> {
     let output = std::process::Command::new("osascript")
         .arg("-e")
         .arg(&script)
-        .output();
-
-    match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                debug!(
-                    event = "peek.core.interact.focus_failed",
-                    app = app_name,
-                    stderr = %stderr
-                );
-                // Don't fail the operation — focus is best-effort
-            }
-        }
-        Err(e) => {
-            debug!(
-                event = "peek.core.interact.focus_failed",
+        .output()
+        .map_err(|e| {
+            warn!(
+                event = "peek.core.interact.focus_command_failed",
                 app = app_name,
                 error = %e
             );
-        }
+            InteractionError::WindowFocusFailed {
+                app: app_name.to_string(),
+                reason: format!("Failed to execute osascript: {}", e),
+            }
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(
+            event = "peek.core.interact.focus_failed",
+            app = app_name,
+            stderr = %stderr
+        );
+        return Err(InteractionError::WindowFocusFailed {
+            app: app_name.to_string(),
+            reason: stderr.trim().to_string(),
+        });
     }
 
+    debug!(event = "peek.core.interact.focus_completed", app = app_name);
     Ok(())
 }
 
@@ -109,9 +119,15 @@ fn map_window_error(error: WindowError) -> InteractionError {
     match error {
         WindowError::WindowNotFound { title } => InteractionError::WindowNotFound { title },
         WindowError::WindowNotFoundByApp { app } => InteractionError::WindowNotFoundByApp { app },
-        other => InteractionError::WindowNotFound {
-            title: other.to_string(),
-        },
+        other => {
+            warn!(
+                event = "peek.core.interact.window_error_unmapped",
+                error = %other
+            );
+            InteractionError::WindowLookupFailed {
+                reason: other.to_string(),
+            }
+        }
     }
 }
 
@@ -136,6 +152,14 @@ fn to_screen_coordinates(x: i32, y: i32, window: &WindowInfo) -> (f64, f64) {
 }
 
 /// Click at coordinates within a window
+///
+/// Focuses the target window via AppleScript, validates coordinates are within
+/// window bounds, then sends mouse down/up CGEvents at the screen-absolute position.
+///
+/// # Errors
+///
+/// Returns error if accessibility permission is denied, window is not found or
+/// minimized, coordinates are out of bounds, or event creation fails.
 pub fn click(request: &ClickRequest) -> Result<InteractionResult, InteractionError> {
     info!(
         event = "peek.core.interact.click_started",
@@ -173,6 +197,11 @@ pub fn click(request: &ClickRequest) -> Result<InteractionResult, InteractionErr
                 y: screen_y,
             })?;
 
+    debug!(
+        event = "peek.core.interact.click_posting",
+        screen_x = screen_x,
+        screen_y = screen_y
+    );
     mouse_down.post(CGEventTapLocation::HID);
     thread::sleep(MOUSE_EVENT_DELAY);
     mouse_up.post(CGEventTapLocation::HID);
@@ -197,6 +226,15 @@ pub fn click(request: &ClickRequest) -> Result<InteractionResult, InteractionErr
 }
 
 /// Type text into the focused element of a window
+///
+/// Focuses the target window, then sends the text as a unicode string via a
+/// single CGEvent (keycode 0 with unicode string set). This handles special
+/// characters and international input correctly.
+///
+/// # Errors
+///
+/// Returns error if accessibility permission is denied, window is not found or
+/// minimized, or event creation fails.
 pub fn type_text(request: &TypeRequest) -> Result<InteractionResult, InteractionError> {
     info!(
         event = "peek.core.interact.type_started",
@@ -211,11 +249,17 @@ pub fn type_text(request: &TypeRequest) -> Result<InteractionResult, Interaction
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|()| InteractionError::EventSourceFailed)?;
 
-    // Create a keyboard event and set the unicode string
+    // Create a keyboard event with keycode 0 and set the unicode string.
+    // This sends text as a unicode string rather than individual key events,
+    // which correctly handles special characters and international input.
     let event = CGEvent::new_keyboard_event(source, 0, true)
         .map_err(|()| InteractionError::KeyboardEventFailed { keycode: 0 })?;
 
     event.set_string(&request.text);
+    debug!(
+        event = "peek.core.interact.type_posting",
+        text_len = request.text.len()
+    );
     event.post(CGEventTapLocation::HID);
 
     info!(
@@ -234,6 +278,14 @@ pub fn type_text(request: &TypeRequest) -> Result<InteractionResult, Interaction
 }
 
 /// Send a key combination to a window
+///
+/// Focuses the target window, parses the combo string into keycode + modifier
+/// flags, then sends key down/up CGEvents.
+///
+/// # Errors
+///
+/// Returns error if accessibility permission is denied, window is not found or
+/// minimized, the combo string is invalid, or event creation fails.
 pub fn send_key_combo(request: &KeyComboRequest) -> Result<InteractionResult, InteractionError> {
     info!(
         event = "peek.core.interact.key_started",
@@ -244,34 +296,38 @@ pub fn send_key_combo(request: &KeyComboRequest) -> Result<InteractionResult, In
     check_accessibility_permission()?;
 
     let window = resolve_and_focus_window(&request.target)?;
-    let mapping = keymap::parse_key_combo(&request.combo)?;
+    let mapping = operations::parse_key_combo(&request.combo)?;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|()| InteractionError::EventSourceFailed)?;
 
-    // Key down
     let key_down =
-        CGEvent::new_keyboard_event(source.clone(), mapping.keycode, true).map_err(|()| {
+        CGEvent::new_keyboard_event(source.clone(), mapping.keycode(), true).map_err(|()| {
             InteractionError::KeyboardEventFailed {
-                keycode: mapping.keycode,
+                keycode: mapping.keycode(),
             }
         })?;
 
-    if mapping.flags != CGEventFlags::CGEventFlagNull {
-        key_down.set_flags(mapping.flags);
-    }
-
-    // Key up
-    let key_up = CGEvent::new_keyboard_event(source, mapping.keycode, false).map_err(|()| {
+    let key_up = CGEvent::new_keyboard_event(source, mapping.keycode(), false).map_err(|()| {
         InteractionError::KeyboardEventFailed {
-            keycode: mapping.keycode,
+            keycode: mapping.keycode(),
         }
     })?;
 
-    if mapping.flags != CGEventFlags::CGEventFlagNull {
-        key_up.set_flags(mapping.flags);
+    if mapping.flags() != CGEventFlags::CGEventFlagNull {
+        debug!(
+            event = "peek.core.interact.key_flags_applied",
+            keycode = mapping.keycode(),
+            flags = ?mapping.flags()
+        );
+        key_down.set_flags(mapping.flags());
+        key_up.set_flags(mapping.flags());
     }
 
+    debug!(
+        event = "peek.core.interact.key_posting",
+        keycode = mapping.keycode()
+    );
     key_down.post(CGEventTapLocation::HID);
     thread::sleep(KEY_EVENT_DELAY);
     key_up.post(CGEventTapLocation::HID);
@@ -279,7 +335,7 @@ pub fn send_key_combo(request: &KeyComboRequest) -> Result<InteractionResult, In
     info!(
         event = "peek.core.interact.key_completed",
         combo = &request.combo,
-        keycode = mapping.keycode,
+        keycode = mapping.keycode(),
         window_title = window.title()
     );
 
@@ -287,7 +343,7 @@ pub fn send_key_combo(request: &KeyComboRequest) -> Result<InteractionResult, In
         "key",
         serde_json::json!({
             "combo": &request.combo,
-            "keycode": mapping.keycode,
+            "keycode": mapping.keycode(),
             "window": window.title(),
         }),
     ))
@@ -409,10 +465,10 @@ mod tests {
             message: "test error".to_string(),
         });
         match err {
-            InteractionError::WindowNotFound { title } => {
-                assert!(title.contains("test error"));
+            InteractionError::WindowLookupFailed { reason } => {
+                assert!(reason.contains("test error"));
             }
-            _ => panic!("Expected WindowNotFound fallback"),
+            _ => panic!("Expected WindowLookupFailed"),
         }
     }
 }

@@ -412,21 +412,41 @@ fn parse_interaction_target(
     }
 }
 
+fn parse_coordinates(at_str: &str) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = at_str.split(',').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "--at format must be x,y (e.g., \"100,50\"), got: '{}'",
+            at_str
+        )
+        .into());
+    }
+    let x: i32 = parts[0].trim().parse().map_err(|e| {
+        format!(
+            "Invalid x coordinate '{}': {} (expected integer)",
+            parts[0].trim(),
+            e
+        )
+    })?;
+    let y: i32 = parts[1].trim().parse().map_err(|e| {
+        format!(
+            "Invalid y coordinate '{}': {} (expected integer)",
+            parts[1].trim(),
+            e
+        )
+    })?;
+    Ok((x, y))
+}
+
 fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let target = parse_interaction_target(matches)?;
     let at_str = matches.get_one::<String>("at").unwrap();
     let json_output = matches.get_flag("json");
 
-    // Parse "x,y" coordinates
-    let parts: Vec<&str> = at_str.split(',').collect();
-    if parts.len() != 2 {
-        return Err("--at format must be x,y (e.g., \"100,50\")".into());
-    }
-    let x: i32 = parts[0].trim().parse()?;
-    let y: i32 = parts[1].trim().parse()?;
+    let (x, y) = parse_coordinates(at_str)?;
 
     info!(
-        event = "cli.click_started",
+        event = "cli.interact.click_started",
         x = x,
         y = y,
         target = ?target
@@ -444,20 +464,19 @@ fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
                     if let Some(window) = details.get("window") {
                         println!("  Window: {}", window.as_str().unwrap_or("unknown"));
                     }
-                    if let Some(sx) = details.get("screen_x")
-                        && let Some(sy) = details.get("screen_y")
+                    if let (Some(sx), Some(sy)) = (details.get("screen_x"), details.get("screen_y"))
                     {
                         println!("  Screen: ({}, {})", sx, sy);
                     }
                 }
             }
 
-            info!(event = "cli.click_completed", x = x, y = y);
+            info!(event = "cli.interact.click_completed", x = x, y = y);
             Ok(())
         }
         Err(e) => {
             eprintln!("Click failed: {}", e);
-            error!(event = "cli.click_failed", error = %e);
+            error!(event = "cli.interact.click_failed", error = %e);
             events::log_app_error(&e);
             Err(e.into())
         }
@@ -470,7 +489,7 @@ fn handle_type_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     let json_output = matches.get_flag("json");
 
     info!(
-        event = "cli.type_started",
+        event = "cli.interact.type_started",
         text_len = text.len(),
         target = ?target
     );
@@ -490,12 +509,12 @@ fn handle_type_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 }
             }
 
-            info!(event = "cli.type_completed", text_len = text.len());
+            info!(event = "cli.interact.type_completed", text_len = text.len());
             Ok(())
         }
         Err(e) => {
             eprintln!("Type failed: {}", e);
-            error!(event = "cli.type_failed", error = %e);
+            error!(event = "cli.interact.type_failed", error = %e);
             events::log_app_error(&e);
             Err(e.into())
         }
@@ -508,7 +527,7 @@ fn handle_key_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Er
     let json_output = matches.get_flag("json");
 
     info!(
-        event = "cli.key_started",
+        event = "cli.interact.key_started",
         combo = combo.as_str(),
         target = ?target
     );
@@ -528,12 +547,12 @@ fn handle_key_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Er
                 }
             }
 
-            info!(event = "cli.key_completed", combo = combo.as_str());
+            info!(event = "cli.interact.key_completed", combo = combo.as_str());
             Ok(())
         }
         Err(e) => {
             eprintln!("Key failed: {}", e);
-            error!(event = "cli.key_failed", error = %e);
+            error!(event = "cli.interact.key_failed", error = %e);
             events::log_app_error(&e);
             Err(e.into())
         }

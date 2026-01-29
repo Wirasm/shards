@@ -5,8 +5,22 @@ use super::errors::InteractionError;
 /// A resolved key mapping with virtual keycode and modifier flags
 #[derive(Debug, Clone)]
 pub struct KeyMapping {
-    pub keycode: u16,
-    pub flags: CGEventFlags,
+    keycode: u16,
+    flags: CGEventFlags,
+}
+
+impl KeyMapping {
+    pub(crate) fn new(keycode: u16, flags: CGEventFlags) -> Self {
+        Self { keycode, flags }
+    }
+
+    pub fn keycode(&self) -> u16 {
+        self.keycode
+    }
+
+    pub fn flags(&self) -> CGEventFlags {
+        self.flags
+    }
 }
 
 /// Parse a key combo string like "cmd+s", "enter", "cmd+shift+p" into a KeyMapping.
@@ -20,6 +34,13 @@ pub struct KeyMapping {
 /// - Function keys: "f1"-"f12"
 ///
 /// Parsing is case-insensitive.
+///
+/// # Parsing Rules
+///
+/// - Only one non-modifier key is allowed (e.g., "cmd+s+p" is invalid)
+/// - Modifier-only combos return an error (e.g., "cmd+shift" with no key)
+/// - Empty strings return an error
+/// - Unknown key names return `UnknownKey` error
 pub fn parse_key_combo(combo: &str) -> Result<KeyMapping, InteractionError> {
     let parts: Vec<&str> = combo.split('+').map(|s| s.trim()).collect();
 
@@ -50,16 +71,15 @@ pub fn parse_key_combo(combo: &str) -> Result<KeyMapping, InteractionError> {
 
     let keycode = resolve_keycode(key)?;
 
-    Ok(KeyMapping { keycode, flags })
+    Ok(KeyMapping::new(keycode, flags))
 }
 
 /// Resolve a key name to its macOS virtual keycode
 fn resolve_keycode(name: &str) -> Result<u16, InteractionError> {
     let lower = name.to_lowercase();
     match lower.as_str() {
-        // Letters (a=0, s=1, d=2, f=3, h=4, g=5, z=6, x=7, c=8, v=9,
-        //          b=11, q=12, w=13, e=14, r=15, y=16, t=17, u=32, i=34,
-        //          p=35, l=37, j=38, k=40, n=45, m=46, o=31)
+        // macOS virtual keycodes for letter keys (QWERTY layout order, not alphabetical)
+        // Reference: Events.h in Carbon framework (HIToolbox)
         "a" => Ok(0),
         "s" => Ok(1),
         "d" => Ok(2),
@@ -151,93 +171,93 @@ mod tests {
     #[test]
     fn test_parse_single_key_enter() {
         let mapping = parse_key_combo("enter").unwrap();
-        assert_eq!(mapping.keycode, 36);
-        assert_eq!(mapping.flags, CGEventFlags::CGEventFlagNull);
+        assert_eq!(mapping.keycode(), 36);
+        assert_eq!(mapping.flags(), CGEventFlags::CGEventFlagNull);
     }
 
     #[test]
     fn test_parse_single_key_tab() {
         let mapping = parse_key_combo("tab").unwrap();
-        assert_eq!(mapping.keycode, 48);
-        assert_eq!(mapping.flags, CGEventFlags::CGEventFlagNull);
+        assert_eq!(mapping.keycode(), 48);
+        assert_eq!(mapping.flags(), CGEventFlags::CGEventFlagNull);
     }
 
     #[test]
     fn test_parse_single_key_escape() {
         let mapping = parse_key_combo("escape").unwrap();
-        assert_eq!(mapping.keycode, 53);
-        assert_eq!(mapping.flags, CGEventFlags::CGEventFlagNull);
+        assert_eq!(mapping.keycode(), 53);
+        assert_eq!(mapping.flags(), CGEventFlags::CGEventFlagNull);
     }
 
     #[test]
     fn test_parse_single_key_space() {
         let mapping = parse_key_combo("space").unwrap();
-        assert_eq!(mapping.keycode, 49);
-        assert_eq!(mapping.flags, CGEventFlags::CGEventFlagNull);
+        assert_eq!(mapping.keycode(), 49);
+        assert_eq!(mapping.flags(), CGEventFlags::CGEventFlagNull);
     }
 
     #[test]
     fn test_parse_cmd_s() {
         let mapping = parse_key_combo("cmd+s").unwrap();
-        assert_eq!(mapping.keycode, 1); // 's' keycode
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagCommand));
+        assert_eq!(mapping.keycode(), 1); // 's' keycode
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagCommand));
     }
 
     #[test]
     fn test_parse_cmd_shift_p() {
         let mapping = parse_key_combo("cmd+shift+p").unwrap();
-        assert_eq!(mapping.keycode, 35); // 'p' keycode
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagCommand));
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagShift));
+        assert_eq!(mapping.keycode(), 35); // 'p' keycode
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagCommand));
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagShift));
     }
 
     #[test]
     fn test_parse_ctrl_c() {
         let mapping = parse_key_combo("ctrl+c").unwrap();
-        assert_eq!(mapping.keycode, 8); // 'c' keycode
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagControl));
+        assert_eq!(mapping.keycode(), 8); // 'c' keycode
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagControl));
     }
 
     #[test]
     fn test_parse_alt_tab() {
         let mapping = parse_key_combo("alt+tab").unwrap();
-        assert_eq!(mapping.keycode, 48); // tab keycode
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagAlternate));
+        assert_eq!(mapping.keycode(), 48); // tab keycode
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagAlternate));
     }
 
     #[test]
     fn test_parse_case_insensitive() {
         let mapping = parse_key_combo("CMD+S").unwrap();
-        assert_eq!(mapping.keycode, 1);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagCommand));
+        assert_eq!(mapping.keycode(), 1);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagCommand));
     }
 
     #[test]
     fn test_parse_command_alias() {
         let mapping = parse_key_combo("command+s").unwrap();
-        assert_eq!(mapping.keycode, 1);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagCommand));
+        assert_eq!(mapping.keycode(), 1);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagCommand));
     }
 
     #[test]
     fn test_parse_control_alias() {
         let mapping = parse_key_combo("control+c").unwrap();
-        assert_eq!(mapping.keycode, 8);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagControl));
+        assert_eq!(mapping.keycode(), 8);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagControl));
     }
 
     #[test]
     fn test_parse_option_alias() {
         let mapping = parse_key_combo("option+a").unwrap();
-        assert_eq!(mapping.keycode, 0);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagAlternate));
+        assert_eq!(mapping.keycode(), 0);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagAlternate));
     }
 
     #[test]
     fn test_parse_opt_alias() {
         let mapping = parse_key_combo("opt+a").unwrap();
-        assert_eq!(mapping.keycode, 0);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagAlternate));
+        assert_eq!(mapping.keycode(), 0);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagAlternate));
     }
 
     #[test]
@@ -253,58 +273,58 @@ mod tests {
 
     #[test]
     fn test_parse_arrow_keys() {
-        assert_eq!(parse_key_combo("up").unwrap().keycode, 126);
-        assert_eq!(parse_key_combo("down").unwrap().keycode, 125);
-        assert_eq!(parse_key_combo("left").unwrap().keycode, 123);
-        assert_eq!(parse_key_combo("right").unwrap().keycode, 124);
+        assert_eq!(parse_key_combo("up").unwrap().keycode(), 126);
+        assert_eq!(parse_key_combo("down").unwrap().keycode(), 125);
+        assert_eq!(parse_key_combo("left").unwrap().keycode(), 123);
+        assert_eq!(parse_key_combo("right").unwrap().keycode(), 124);
     }
 
     #[test]
     fn test_parse_function_keys() {
-        assert_eq!(parse_key_combo("f1").unwrap().keycode, 122);
-        assert_eq!(parse_key_combo("f5").unwrap().keycode, 96);
-        assert_eq!(parse_key_combo("f12").unwrap().keycode, 111);
+        assert_eq!(parse_key_combo("f1").unwrap().keycode(), 122);
+        assert_eq!(parse_key_combo("f5").unwrap().keycode(), 96);
+        assert_eq!(parse_key_combo("f12").unwrap().keycode(), 111);
     }
 
     #[test]
     fn test_parse_return_alias() {
         let mapping = parse_key_combo("return").unwrap();
-        assert_eq!(mapping.keycode, 36);
+        assert_eq!(mapping.keycode(), 36);
     }
 
     #[test]
     fn test_parse_esc_alias() {
         let mapping = parse_key_combo("esc").unwrap();
-        assert_eq!(mapping.keycode, 53);
+        assert_eq!(mapping.keycode(), 53);
     }
 
     #[test]
     fn test_parse_backspace_alias() {
         let mapping = parse_key_combo("backspace").unwrap();
-        assert_eq!(mapping.keycode, 51);
+        assert_eq!(mapping.keycode(), 51);
     }
 
     #[test]
     fn test_parse_delete_key() {
         let mapping = parse_key_combo("delete").unwrap();
-        assert_eq!(mapping.keycode, 51);
+        assert_eq!(mapping.keycode(), 51);
     }
 
     #[test]
     fn test_parse_number_keys() {
-        assert_eq!(parse_key_combo("0").unwrap().keycode, 29);
-        assert_eq!(parse_key_combo("1").unwrap().keycode, 18);
-        assert_eq!(parse_key_combo("9").unwrap().keycode, 25);
+        assert_eq!(parse_key_combo("0").unwrap().keycode(), 29);
+        assert_eq!(parse_key_combo("1").unwrap().keycode(), 18);
+        assert_eq!(parse_key_combo("9").unwrap().keycode(), 25);
     }
 
     #[test]
     fn test_parse_all_modifiers() {
         let mapping = parse_key_combo("cmd+shift+ctrl+alt+a").unwrap();
-        assert_eq!(mapping.keycode, 0);
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagCommand));
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagShift));
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagControl));
-        assert!(mapping.flags.contains(CGEventFlags::CGEventFlagAlternate));
+        assert_eq!(mapping.keycode(), 0);
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagCommand));
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagShift));
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagControl));
+        assert!(mapping.flags().contains(CGEventFlags::CGEventFlagAlternate));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 mod errors;
 mod handler;
-mod keymap;
+mod operations;
 mod types;
 
 pub use errors::InteractionError;
