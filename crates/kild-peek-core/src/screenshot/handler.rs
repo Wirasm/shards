@@ -4,7 +4,7 @@ use std::path::Path;
 use image::ImageEncoder;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::errors::ScreenshotError;
 use super::types::{CaptureRequest, CaptureResult, CaptureTarget, ImageFormat};
@@ -34,6 +34,11 @@ pub fn save_to_file(result: &CaptureResult, path: &Path) -> Result<(), Screensho
     {
         debug!(event = "core.screenshot.creating_parent_directory", path = %parent.display());
         std::fs::create_dir_all(parent).map_err(|source| {
+            error!(
+                event = "core.screenshot.directory_creation_failed",
+                path = %parent.display(),
+                error = %source
+            );
             ScreenshotError::DirectoryCreationFailed {
                 path: parent.display().to_string(),
                 source,
@@ -346,6 +351,8 @@ mod tests {
 
     #[test]
     fn test_directory_creation_failed_error() {
+        use std::error::Error;
+
         let error = ScreenshotError::DirectoryCreationFailed {
             path: "/some/path".to_string(),
             source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied"),
@@ -353,6 +360,39 @@ mod tests {
         assert_eq!(error.error_code(), "SCREENSHOT_DIRECTORY_CREATION_FAILED");
         assert!(error.is_user_error());
         assert!(error.to_string().contains("/some/path"));
+
+        // Verify error source chain is preserved
+        assert!(error.source().is_some());
+        assert!(
+            error
+                .source()
+                .unwrap()
+                .to_string()
+                .contains("permission denied")
+        );
+    }
+
+    #[test]
+    fn test_save_to_file_with_filename_only() {
+        use std::env;
+
+        // Use a unique filename in the current temp directory
+        let temp_dir = env::temp_dir();
+        let filename_only = temp_dir.join("kild_peek_test_filename_only.png");
+
+        // Clean up if exists from previous run
+        let _ = std::fs::remove_file(&filename_only);
+
+        // Create a minimal valid PNG
+        let png_data = create_test_png();
+        let result = CaptureResult::new(1, 1, ImageFormat::Png, png_data);
+
+        // Should succeed - no directory creation needed when parent exists
+        assert!(save_to_file(&result, &filename_only).is_ok());
+        assert!(filename_only.exists());
+
+        // Clean up
+        let _ = std::fs::remove_file(&filename_only);
     }
 
     /// Helper to create a minimal valid PNG for testing

@@ -28,6 +28,10 @@ pub enum ScreenshotError {
     #[error("Monitor not found at index: {index}")]
     MonitorNotFound { index: usize },
 
+    /// Directory creation failed during screenshot save.
+    ///
+    /// Use this for mkdir-like failures when creating parent directories.
+    /// Use `IoError` for file write failures after directories exist.
     #[error("Failed to create output directory '{path}': {source}")]
     DirectoryCreationFailed {
         path: String,
