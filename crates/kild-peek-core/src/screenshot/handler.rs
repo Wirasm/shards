@@ -8,6 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use super::errors::ScreenshotError;
 use super::types::{CaptureRequest, CaptureResult, CaptureTarget, ImageFormat};
+use crate::window::{WindowError, find_window_by_title};
 
 /// Capture a screenshot based on the request
 pub fn capture(request: &CaptureRequest) -> Result<CaptureResult, ScreenshotError> {
@@ -52,6 +53,55 @@ pub fn save_to_file(result: &CaptureResult, path: &Path) -> Result<(), Screensho
     Ok(())
 }
 
+/// Map WindowError to ScreenshotError with appropriate handling
+fn map_window_error_to_screenshot_error(error: WindowError) -> ScreenshotError {
+    match error {
+        WindowError::WindowNotFound { title } => ScreenshotError::WindowNotFound { title },
+        WindowError::EnumerationFailed { message } => {
+            if is_permission_error(&message) {
+                debug!(
+                    event = "core.screenshot.permission_error_detected",
+                    message = &message
+                );
+                ScreenshotError::PermissionDenied
+            } else {
+                ScreenshotError::EnumerationFailed(message)
+            }
+        }
+        WindowError::WindowNotFoundById { id } => {
+            warn!(
+                event = "core.screenshot.unexpected_window_error",
+                error_type = "WindowNotFoundById",
+                id = id
+            );
+            ScreenshotError::EnumerationFailed(format!("Unexpected: window not found by id {}", id))
+        }
+        WindowError::MonitorEnumerationFailed { message } => {
+            warn!(
+                event = "core.screenshot.unexpected_window_error",
+                error_type = "MonitorEnumerationFailed"
+            );
+            ScreenshotError::EnumerationFailed(message)
+        }
+        WindowError::MonitorNotFound { index } => {
+            warn!(
+                event = "core.screenshot.unexpected_window_error",
+                error_type = "MonitorNotFound",
+                index = index
+            );
+            ScreenshotError::EnumerationFailed(format!(
+                "Unexpected: monitor not found at index {}",
+                index
+            ))
+        }
+    }
+}
+
+/// Check if an error message indicates a permission error
+fn is_permission_error(message: &str) -> bool {
+    message.contains("permission") || message.contains("denied")
+}
+
 /// Check if a window is minimized and return an error if so.
 ///
 /// Returns Ok(()) if the window is not minimized or if the check fails
@@ -83,25 +133,40 @@ fn capture_window_by_title(
     title: &str,
     format: &ImageFormat,
 ) -> Result<CaptureResult, ScreenshotError> {
+    // Use shared find_window_by_title for consistent matching behavior across modules
+    let window_info = find_window_by_title(title).map_err(|e| {
+        debug!(
+            event = "core.screenshot.window_error_mapping",
+            original_error = %e
+        );
+        map_window_error_to_screenshot_error(e)
+    })?;
+
+    // Now find the actual xcap window by ID to capture
     let windows = xcap::Window::all().map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("permission") || msg.contains("denied") {
+        if is_permission_error(&msg) {
             ScreenshotError::PermissionDenied
         } else {
             ScreenshotError::EnumerationFailed(msg)
         }
     })?;
 
-    let title_lower = title.to_lowercase();
     let window = windows
         .into_iter()
-        .find(|w| {
-            w.title()
-                .ok()
-                .is_some_and(|t| t.to_lowercase().contains(&title_lower))
-        })
-        .ok_or_else(|| ScreenshotError::WindowNotFound {
-            title: title.to_string(),
+        .find(|w| w.id().ok() == Some(window_info.id()))
+        .ok_or_else(|| {
+            // Window was found by title but disappeared before we could capture it
+            // This can happen if the window closes between find and capture
+            warn!(
+                event = "core.screenshot.window_disappeared",
+                title = title,
+                window_id = window_info.id(),
+                "Window was found but disappeared before capture"
+            );
+            ScreenshotError::WindowNotFound {
+                title: title.to_string(),
+            }
         })?;
 
     check_window_not_minimized(&window, title)?;
@@ -116,7 +181,7 @@ fn capture_window_by_title(
 fn capture_window_by_id(id: u32, format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
     let windows = xcap::Window::all().map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("permission") || msg.contains("denied") {
+        if is_permission_error(&msg) {
             ScreenshotError::PermissionDenied
         } else {
             ScreenshotError::EnumerationFailed(msg)
@@ -141,7 +206,7 @@ fn capture_window_by_id(id: u32, format: &ImageFormat) -> Result<CaptureResult, 
 fn capture_monitor(index: usize, format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
     let monitors = xcap::Monitor::all().map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("permission") || msg.contains("denied") {
+        if is_permission_error(&msg) {
             ScreenshotError::PermissionDenied
         } else {
             ScreenshotError::EnumerationFailed(msg)
@@ -163,7 +228,7 @@ fn capture_monitor(index: usize, format: &ImageFormat) -> Result<CaptureResult, 
 fn capture_primary_monitor(format: &ImageFormat) -> Result<CaptureResult, ScreenshotError> {
     let monitors = xcap::Monitor::all().map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("permission") || msg.contains("denied") {
+        if is_permission_error(&msg) {
             ScreenshotError::PermissionDenied
         } else {
             ScreenshotError::EnumerationFailed(msg)

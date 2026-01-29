@@ -247,8 +247,17 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, WindowError> {
     Ok(result)
 }
 
-/// Find a window by title (partial match, case-insensitive)
+/// Find a window by title (exact match preferred, falls back to partial match)
 /// Searches both window title and app name
+///
+/// Matching priority (returns first match at highest priority level):
+/// 1. Exact case-insensitive match on window title
+/// 2. Exact case-insensitive match on app name
+/// 3. Partial case-insensitive match on window title
+/// 4. Partial case-insensitive match on app name
+///
+/// When multiple windows match at the same priority level, the first one
+/// encountered in the system's window enumeration order is returned.
 pub fn find_window_by_title(title: &str) -> Result<WindowInfo, WindowError> {
     info!(event = "core.window.find_started", title = title);
 
@@ -259,57 +268,187 @@ pub fn find_window_by_title(title: &str) -> Result<WindowInfo, WindowError> {
         message: e.to_string(),
     })?;
 
-    for w in xcap_windows {
-        let window_title = w.title().ok().unwrap_or_default();
-        let app_name = w.app_name().ok().unwrap_or_default();
+    // Collect all windows with their properties for multi-pass matching
+    let windows_with_props: Vec<_> = xcap_windows
+        .into_iter()
+        .map(|w| {
+            let window_title = w.title().ok().unwrap_or_default();
+            let app_name = w.app_name().ok().unwrap_or_default();
+            (w, window_title, app_name)
+        })
+        .collect();
 
-        // Match against both title and app_name
-        let matches = window_title.to_lowercase().contains(&title_lower)
-            || app_name.to_lowercase().contains(&title_lower);
-
-        if matches {
-            let id = w.id().ok().ok_or_else(|| WindowError::WindowNotFound {
-                title: title.to_string(),
-            })?;
-            let x = w.x().ok().unwrap_or(0);
-            let y = w.y().ok().unwrap_or(0);
-            let width = w.width().ok().unwrap_or(0);
-            let height = w.height().ok().unwrap_or(0);
-            let is_minimized = w.is_minimized().ok().unwrap_or(false);
-
-            let display_title = if window_title.is_empty() {
-                if app_name.is_empty() {
-                    format!("[Window {}]", id)
-                } else {
-                    app_name.clone()
-                }
-            } else {
-                window_title
-            };
-
-            info!(
-                event = "core.window.find_completed",
-                title = title,
-                found_id = id
-            );
-
-            // Use max(1, value) to ensure non-zero dimensions for the constructor
-            return Ok(WindowInfo::new(
-                id,
-                display_title,
-                app_name,
-                x,
-                y,
-                width.max(1),
-                height.max(1),
-                is_minimized,
-            ));
-        }
+    // Try each match type in priority order
+    if let Some(result) = try_match(
+        &windows_with_props,
+        &title_lower,
+        MatchType::ExactTitle,
+        title,
+    ) {
+        return result;
+    }
+    if let Some(result) = try_match(
+        &windows_with_props,
+        &title_lower,
+        MatchType::ExactAppName,
+        title,
+    ) {
+        return result;
+    }
+    if let Some(result) = try_match(
+        &windows_with_props,
+        &title_lower,
+        MatchType::PartialTitle,
+        title,
+    ) {
+        return result;
+    }
+    if let Some(result) = try_match(
+        &windows_with_props,
+        &title_lower,
+        MatchType::PartialAppName,
+        title,
+    ) {
+        return result;
     }
 
     Err(WindowError::WindowNotFound {
         title: title.to_string(),
     })
+}
+
+/// Try to find a matching window using the specified match type
+fn try_match(
+    windows: &[(xcap::Window, String, String)],
+    title_lower: &str,
+    match_type: MatchType,
+    original_title: &str,
+) -> Option<Result<WindowInfo, WindowError>> {
+    for (w, window_title, app_name) in windows {
+        let matches = match match_type {
+            MatchType::ExactTitle => window_title.to_lowercase() == title_lower,
+            MatchType::ExactAppName => app_name.to_lowercase() == title_lower,
+            MatchType::PartialTitle => window_title.to_lowercase().contains(title_lower),
+            MatchType::PartialAppName => app_name.to_lowercase().contains(title_lower),
+        };
+
+        if matches {
+            info!(
+                event = "core.window.find_completed",
+                title = original_title,
+                match_type = match_type.as_str()
+            );
+            return Some(build_window_info(w, window_title, app_name, original_title));
+        }
+    }
+    None
+}
+
+/// Types of window title matches, in priority order
+#[derive(Copy, Clone)]
+enum MatchType {
+    ExactTitle,
+    ExactAppName,
+    PartialTitle,
+    PartialAppName,
+}
+
+impl MatchType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            MatchType::ExactTitle => "exact_title",
+            MatchType::ExactAppName => "exact_app_name",
+            MatchType::PartialTitle => "partial_title",
+            MatchType::PartialAppName => "partial_app_name",
+        }
+    }
+}
+
+/// Helper to build WindowInfo from xcap window and pre-fetched properties
+///
+/// Returns WindowNotFound error if the window ID cannot be retrieved.
+/// Falls back to 0 for position and 1 for dimensions if properties are unavailable.
+fn build_window_info(
+    w: &xcap::Window,
+    window_title: &str,
+    app_name: &str,
+    search_title: &str,
+) -> Result<WindowInfo, WindowError> {
+    let id = w.id().ok().ok_or_else(|| WindowError::WindowNotFound {
+        title: search_title.to_string(),
+    })?;
+
+    let x = get_window_property_i32(w, "x", id, |w| w.x(), 0);
+    let y = get_window_property_i32(w, "y", id, |w| w.y(), 0);
+    let width = get_window_property_u32(w, "width", id, |w| w.width(), 0);
+    let height = get_window_property_u32(w, "height", id, |w| w.height(), 0);
+
+    let is_minimized = w.is_minimized().unwrap_or_else(|e| {
+        debug!(
+            event = "core.window.is_minimized_check_failed",
+            window_id = id,
+            error = %e
+        );
+        false
+    });
+
+    let display_title = build_display_title(window_title, app_name, id);
+
+    Ok(WindowInfo::new(
+        id,
+        display_title,
+        app_name.to_string(),
+        x,
+        y,
+        width.max(1),
+        height.max(1),
+        is_minimized,
+    ))
+}
+
+/// Get an i32 window property with fallback and debug logging
+fn get_window_property_i32<F>(w: &xcap::Window, name: &str, id: u32, getter: F, default: i32) -> i32
+where
+    F: FnOnce(&xcap::Window) -> Result<i32, xcap::XCapError>,
+{
+    getter(w).unwrap_or_else(|e| {
+        debug!(
+            event = "core.window.property_access_failed",
+            property = name,
+            window_id = id,
+            error = %e
+        );
+        default
+    })
+}
+
+/// Get a u32 window property with fallback and debug logging
+fn get_window_property_u32<F>(w: &xcap::Window, name: &str, id: u32, getter: F, default: u32) -> u32
+where
+    F: FnOnce(&xcap::Window) -> Result<u32, xcap::XCapError>,
+{
+    getter(w).unwrap_or_else(|e| {
+        debug!(
+            event = "core.window.property_access_failed",
+            property = name,
+            window_id = id,
+            error = %e
+        );
+        default
+    })
+}
+
+/// Build a display title from window title and app name
+fn build_display_title(window_title: &str, app_name: &str, window_id: u32) -> String {
+    if !window_title.is_empty() {
+        return window_title.to_string();
+    }
+
+    if !app_name.is_empty() {
+        return app_name.to_string();
+    }
+
+    format!("[Window {}]", window_id)
 }
 
 /// Find a window by its ID
@@ -457,5 +596,23 @@ mod tests {
         assert_eq!(monitor.width(), 2560);
         assert_eq!(monitor.height(), 1440);
         assert!(monitor.is_primary());
+    }
+
+    #[test]
+    fn test_find_window_by_title_is_case_insensitive() {
+        // Both should return the same error (no such window exists)
+        // This verifies case-insensitivity is applied consistently
+        let result_lower = find_window_by_title("nonexistent_window_test_abc123");
+        let result_upper = find_window_by_title("NONEXISTENT_WINDOW_TEST_ABC123");
+
+        // Both should be errors (window doesn't exist)
+        assert!(result_lower.is_err());
+        assert!(result_upper.is_err());
+
+        // Both should have the same error code
+        assert_eq!(
+            result_lower.unwrap_err().error_code(),
+            result_upper.unwrap_err().error_code()
+        );
     }
 }

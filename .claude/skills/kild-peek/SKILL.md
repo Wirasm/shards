@@ -49,10 +49,18 @@ kild-peek list windows
 
 This shows all visible windows with:
 - **ID** - Unique window identifier (use with `--window-id`)
-- **Title** - Window title (use with `--window` for partial match)
+- **Title** - Window title (use with `--window`)
 - **App** - Application name (searchable with `--window`)
 - **Size** - Window dimensions
 - **Status** - Visible or Minimized
+
+### Window Matching Priority
+
+When using `--window <title>`, matching follows this priority:
+1. Exact case-insensitive match on window title
+2. Exact case-insensitive match on app name
+3. Partial case-insensitive match on window title
+4. Partial case-insensitive match on app name
 
 ### Matching User Intent to Windows
 
@@ -121,7 +129,7 @@ kild-peek screenshot [--window <title>] [--window-id <id>] [--monitor <index>] -
 Captures a screenshot of a window or monitor.
 
 **Flags:**
-- `--window <title>` - Capture window by title (partial match, case-insensitive)
+- `--window <title>` - Capture window by title (exact match preferred, falls back to partial)
 - `--window-id <id>` - Capture window by exact ID
 - `--monitor <index>` - Capture specific monitor (0 = primary)
 - `-o <path>` - Output file path (required for file output)
