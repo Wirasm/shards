@@ -28,6 +28,16 @@ pub enum ScreenshotError {
     #[error("Monitor not found at index: {index}")]
     MonitorNotFound { index: usize },
 
+    /// Directory creation failed during screenshot save.
+    ///
+    /// Use this for mkdir-like failures when creating parent directories.
+    /// Use `IoError` for file write failures after directories exist.
+    #[error("Failed to create output directory '{path}': {source}")]
+    DirectoryCreationFailed {
+        path: String,
+        source: std::io::Error,
+    },
+
     #[error("IO error: {source}")]
     IoError {
         #[from]
@@ -46,6 +56,9 @@ impl PeekError for ScreenshotError {
             ScreenshotError::CaptureFailed(_) => "SCREENSHOT_CAPTURE_FAILED",
             ScreenshotError::EncodingError(_) => "SCREENSHOT_ENCODING_ERROR",
             ScreenshotError::MonitorNotFound { .. } => "SCREENSHOT_MONITOR_NOT_FOUND",
+            ScreenshotError::DirectoryCreationFailed { .. } => {
+                "SCREENSHOT_DIRECTORY_CREATION_FAILED"
+            }
             ScreenshotError::IoError { .. } => "SCREENSHOT_IO_ERROR",
         }
     }
@@ -58,6 +71,7 @@ impl PeekError for ScreenshotError {
                 | ScreenshotError::WindowMinimized { .. }
                 | ScreenshotError::PermissionDenied
                 | ScreenshotError::MonitorNotFound { .. }
+                | ScreenshotError::DirectoryCreationFailed { .. }
         )
     }
 }
