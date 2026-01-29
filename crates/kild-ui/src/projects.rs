@@ -121,6 +121,9 @@ pub struct ProjectsData {
     pub projects: Vec<Project>,
     /// Path of the currently active project (None if no project selected)
     pub active: Option<PathBuf>,
+    /// Error message if loading failed (file corrupted, unreadable, etc.)
+    #[serde(skip)]
+    pub load_error: Option<String>,
 }
 
 /// Check if a path is a git repository.
@@ -201,16 +204,31 @@ pub fn load_projects() -> ProjectsData {
                     error = %e,
                     "Projects file exists but contains invalid JSON - project configuration lost"
                 );
-                ProjectsData::default()
+                ProjectsData {
+                    load_error: Some(format!(
+                        "Projects file corrupted ({}). Your project list could not be loaded. \
+                         Delete {} to reset.",
+                        e,
+                        path.display()
+                    )),
+                    ..Default::default()
+                }
             }
         },
         Err(e) => {
-            tracing::warn!(
+            tracing::error!(
                 event = "ui.projects.load_failed",
                 path = %path.display(),
                 error = %e
             );
-            ProjectsData::default()
+            ProjectsData {
+                load_error: Some(format!(
+                    "Failed to read projects file: {}. Check permissions on {}",
+                    e,
+                    path.display()
+                )),
+                ..Default::default()
+            }
         }
     }
 }
@@ -255,16 +273,17 @@ pub fn migrate_projects_to_canonical() -> Result<(), String> {
 
     for project in &mut data.projects {
         match project.path().canonicalize() {
-            Ok(canonical) if canonical != project.path() => {
-                tracing::info!(
-                    event = "ui.projects.path_migrated",
-                    original = %project.path().display(),
-                    canonical = %canonical.display()
-                );
-                project.set_path(canonical);
-                changed = true;
+            Ok(canonical) => {
+                if canonical != project.path() {
+                    tracing::info!(
+                        event = "ui.projects.path_migrated",
+                        original = %project.path().display(),
+                        canonical = %canonical.display()
+                    );
+                    project.set_path(canonical);
+                    changed = true;
+                }
             }
-            Ok(_) => {}
             Err(e) => {
                 tracing::warn!(
                     event = "ui.projects.path_canonicalize_failed",
@@ -279,16 +298,17 @@ pub fn migrate_projects_to_canonical() -> Result<(), String> {
 
     if let Some(ref active) = data.active {
         match active.canonicalize() {
-            Ok(canonical) if &canonical != active => {
-                tracing::info!(
-                    event = "ui.projects.active_path_migrated",
-                    original = %active.display(),
-                    canonical = %canonical.display()
-                );
-                data.active = Some(canonical);
-                changed = true;
+            Ok(canonical) => {
+                if &canonical != active {
+                    tracing::info!(
+                        event = "ui.projects.active_path_migrated",
+                        original = %active.display(),
+                        canonical = %canonical.display()
+                    );
+                    data.active = Some(canonical);
+                    changed = true;
+                }
             }
-            Ok(_) => {}
             Err(e) => {
                 tracing::warn!(
                     event = "ui.projects.active_path_canonicalize_failed",
@@ -542,6 +562,7 @@ mod tests {
                 ),
             ],
             active: Some(PathBuf::from("/path/to/project-a")),
+            load_error: None,
         };
 
         // Serialize

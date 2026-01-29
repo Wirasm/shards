@@ -5,7 +5,7 @@
 use gpui::{Context, IntoElement, div, prelude::*, px};
 
 use crate::components::{Button, ButtonVariant, Modal};
-use crate::state::AppState;
+use crate::state::DialogState;
 use crate::theme;
 use crate::views::MainView;
 
@@ -16,15 +16,24 @@ use crate::views::MainView;
 /// - Dialog box with warning message
 /// - Cancel and Destroy buttons
 /// - Error message display (if destroy fails)
-pub fn render_confirm_dialog(state: &AppState, cx: &mut Context<MainView>) -> impl IntoElement {
-    let branch = state.confirm_target_branch.clone().unwrap_or_else(|| {
-        tracing::warn!(
-            event = "ui.confirm_dialog.missing_target_branch",
-            "Confirm dialog rendered without target branch - this is a bug"
-        );
-        "unknown".to_string()
-    });
-    let confirm_error = state.confirm_error.clone();
+///
+/// # Invalid State Handling
+/// If called with a non-`DialogState::Confirm` state, logs an error and
+/// displays "Internal error: invalid dialog state" to the user.
+pub fn render_confirm_dialog(dialog: &DialogState, cx: &mut Context<MainView>) -> impl IntoElement {
+    let (branch, confirm_error) = match dialog {
+        DialogState::Confirm { branch, error } => (branch.clone(), error.clone()),
+        _ => {
+            tracing::error!(
+                event = "ui.confirm_dialog.invalid_state",
+                "render_confirm_dialog called with non-Confirm dialog state"
+            );
+            (
+                "unknown".to_string(),
+                Some("Internal error: invalid dialog state".to_string()),
+            )
+        }
+    };
 
     Modal::new("confirm-dialog", "Destroy KILD?")
         .body(

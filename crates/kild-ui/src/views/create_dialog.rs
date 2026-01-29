@@ -6,7 +6,7 @@
 use gpui::{Context, IntoElement, div, prelude::*, px};
 
 use crate::components::{Button, ButtonVariant, Modal, TextInput};
-use crate::state::{AppState, CreateDialogField};
+use crate::state::{CreateDialogField, CreateFormState, DialogState};
 use crate::theme;
 use crate::views::MainView;
 
@@ -24,13 +24,32 @@ pub fn agent_options() -> Vec<&'static str> {
 /// - Agent selection (click to cycle)
 /// - Cancel/Create buttons
 /// - Error message display
-pub fn render_create_dialog(state: &AppState, cx: &mut Context<MainView>) -> impl IntoElement {
+///
+/// # Invalid State Handling
+/// If called with a non-`DialogState::Create` state, logs an error and
+/// displays "Internal error: invalid dialog state" to the user.
+pub fn render_create_dialog(dialog: &DialogState, cx: &mut Context<MainView>) -> impl IntoElement {
+    let (form, create_error) = match dialog {
+        DialogState::Create { form, error } => (form, error.clone()),
+        _ => {
+            tracing::error!(
+                event = "ui.create_dialog.invalid_state",
+                "render_create_dialog called with non-Create dialog state"
+            );
+            // Return a default form to avoid panic - the dialog shouldn't be visible anyway
+            (
+                &CreateFormState::default(),
+                Some("Internal error: invalid dialog state".to_string()),
+            )
+        }
+    };
+
     let agents = agent_options();
-    let current_agent = state.create_form.selected_agent();
-    let branch_name = state.create_form.branch_name.clone();
-    let note = state.create_form.note.clone();
-    let focused_field = state.create_form.focused_field.clone();
-    let create_error = state.create_error.clone();
+    let current_agent = form.selected_agent();
+    let branch_name = form.branch_name.clone();
+    let note = form.note.clone();
+    let focused_field = form.focused_field.clone();
+    let selected_agent_index = form.selected_agent_index;
 
     Modal::new("create-dialog", "Create New KILD")
         .body(
@@ -107,7 +126,7 @@ pub fn render_create_dialog(state: &AppState, cx: &mut Context<MainView>) -> imp
                                                 .text_size(px(theme::TEXT_SM))
                                                 .child(format!(
                                                     "({}/{})",
-                                                    state.create_form.selected_agent_index + 1,
+                                                    selected_agent_index + 1,
                                                     agents.len()
                                                 )),
                                         ),
