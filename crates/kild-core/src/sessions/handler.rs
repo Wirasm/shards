@@ -606,11 +606,17 @@ fn delete_remote_branch(worktree_path: &std::path::Path, branch: &str) -> Result
 /// - Whether a remote branch exists
 /// - Whether a PR exists (optional, requires gh CLI)
 ///
-/// This is a best-effort operation. If any check fails, partial information
-/// is still returned with sensible defaults. The operation never fails.
+/// # Conservative Fallback
+///
+/// If git status checks fail, the fallback is conservative (assumes dirty) to
+/// prevent accidental data loss. Check `git_status.status_check_failed` to
+/// detect this condition and show appropriate warnings.
+///
+/// PR checks uses the `kild_<branch>` naming convention since KILD creates
+/// branches with this prefix.
 ///
 /// # Arguments
-/// * `name` - Branch name or kild identifier
+/// * `name` - Branch name or kild identifier (without the `kild_` prefix)
 ///
 /// # Returns
 /// * `Ok(DestroySafetyInfo)` - Safety information (always succeeds if session found)
@@ -630,7 +636,7 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
 
     let kild_branch = format!("kild_{}", name);
 
-    // 2. Get git worktree status (best-effort)
+    // 2. Get git worktree status (conservative fallback on failure)
     let git_status = if session.worktree_path.exists() {
         match get_worktree_status(&session.worktree_path) {
             Ok(status) => {
@@ -638,7 +644,8 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
                     event = "core.session.safety_check_git_status",
                     has_uncommitted = status.has_uncommitted_changes,
                     unpushed_count = status.unpushed_commit_count,
-                    has_remote = status.has_remote_branch
+                    has_remote = status.has_remote_branch,
+                    status_check_failed = status.status_check_failed
                 );
                 status
             }
@@ -647,55 +654,69 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
                     event = "core.session.safety_check_git_failed",
                     name = name,
                     error = %e,
-                    "Failed to get git status - assuming clean"
+                    "Failed to open repository - assuming dirty to be safe"
                 );
-                Default::default()
+                // Conservative fallback: assume dirty
+                crate::git::types::WorktreeStatus {
+                    has_uncommitted_changes: true,
+                    status_check_failed: true,
+                    ..Default::default()
+                }
             }
         }
     } else {
         warn!(
             event = "core.session.safety_check_worktree_missing",
             name = name,
-            path = %session.worktree_path.display()
+            path = %session.worktree_path.display(),
+            "Worktree missing - assuming dirty to be safe"
         );
-        Default::default()
+        // Conservative fallback: assume dirty
+        crate::git::types::WorktreeStatus {
+            has_uncommitted_changes: true,
+            status_check_failed: true,
+            ..Default::default()
+        }
     };
 
     // 3. Check if PR exists (best-effort, requires gh CLI)
-    let has_pr = check_pr_exists(&session.worktree_path, &kild_branch);
+    let pr_status = check_pr_exists(&session.worktree_path, &kild_branch);
     debug!(
         event = "core.session.safety_check_pr",
         branch = kild_branch,
-        has_pr = ?has_pr
+        pr_status = ?pr_status
     );
+
+    let safety_info = DestroySafetyInfo {
+        git_status,
+        pr_status,
+    };
 
     info!(
         event = "core.session.safety_check_completed",
         name = name,
-        should_block = git_status.has_uncommitted_changes,
-        has_warnings = git_status.has_uncommitted_changes
-            || git_status.unpushed_commit_count > 0
-            || !git_status.has_remote_branch
+        should_block = safety_info.should_block(),
+        has_warnings = safety_info.has_warnings(),
+        status_check_failed = safety_info.git_status.status_check_failed
     );
 
-    Ok(DestroySafetyInfo {
-        git_status,
-        has_pr,
-        branch: name.to_string(),
-    })
+    Ok(safety_info)
 }
 
 /// Check if a PR exists for the given branch.
 ///
+/// Uses the `gh` CLI to query GitHub for PRs associated with the branch.
+/// The `gh pr view <branch>` command finds PRs in any state (open, merged, closed).
+///
 /// # Arguments
-/// * `worktree_path` - Path to the git worktree
-/// * `branch` - Branch name to check
+/// * `worktree_path` - Path to the git worktree (for gh CLI working directory)
+/// * `branch` - Branch name to check (typically `kild_<name>`)
 ///
 /// # Returns
-/// * `Some(true)` - PR exists (open, merged, or closed)
-/// * `Some(false)` - No PR found
-/// * `None` - Could not check (gh CLI unavailable or error)
-fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> Option<bool> {
+/// * `PrCheckResult::Exists` - A PR exists for this branch
+/// * `PrCheckResult::NotFound` - No PR found for this branch
+/// * `PrCheckResult::Unavailable` - Could not check (gh unavailable, auth error, network error)
+fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> PrCheckResult {
     debug!(
         event = "core.session.pr_exists_check_started",
         branch = branch
@@ -707,7 +728,7 @@ fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> Option<bool
             event = "core.session.pr_exists_check_skipped",
             reason = "worktree_missing"
         );
-        return None;
+        return PrCheckResult::Unavailable;
     }
 
     let output = std::process::Command::new("gh")
@@ -717,8 +738,8 @@ fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> Option<bool
 
     match output {
         Ok(output) if output.status.success() => {
-            // PR exists (regardless of state)
-            Some(true)
+            // PR exists (regardless of state - open, merged, or closed)
+            PrCheckResult::Exists
         }
         Ok(output) => {
             // Check if it's "no PR found" vs other error
@@ -727,24 +748,26 @@ fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> Option<bool
                 || stderr.contains("Could not resolve")
                 || stderr.contains("no open pull requests")
             {
-                Some(false)
+                PrCheckResult::NotFound
             } else {
                 // Some other error (auth, network, etc.)
-                debug!(
+                warn!(
                     event = "core.session.pr_exists_check_error",
                     branch = branch,
-                    stderr = %stderr.trim()
+                    stderr = %stderr.trim(),
+                    "gh CLI error - PR status unavailable"
                 );
-                None
+                PrCheckResult::Unavailable
             }
         }
         Err(e) => {
             // gh CLI not available or other I/O error
             debug!(
                 event = "core.session.pr_exists_check_unavailable",
-                error = %e
+                error = %e,
+                "gh CLI not available"
             );
-            None
+            PrCheckResult::Unavailable
         }
     }
 }

@@ -3,27 +3,68 @@ use crate::terminal::types::TerminalType;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Result of checking if a PR exists for a branch.
+///
+/// This is a proper enum instead of `Option<bool>` to make the semantics
+/// explicit and self-documenting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrCheckResult {
+    /// PR exists for this branch (open, merged, or closed).
+    Exists,
+    /// No PR found for this branch.
+    NotFound,
+    /// Could not check PR status.
+    ///
+    /// This happens when:
+    /// - The `gh` CLI is not installed
+    /// - The `gh` CLI is not authenticated
+    /// - Network errors occurred
+    /// - The worktree path doesn't exist
+    #[default]
+    Unavailable,
+}
+
+impl PrCheckResult {
+    /// Returns true if a PR definitely exists.
+    pub fn exists(&self) -> bool {
+        matches!(self, PrCheckResult::Exists)
+    }
+
+    /// Returns true if we confirmed no PR exists.
+    pub fn not_found(&self) -> bool {
+        matches!(self, PrCheckResult::NotFound)
+    }
+
+    /// Returns true if we couldn't check PR status.
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, PrCheckResult::Unavailable)
+    }
+}
+
 /// Safety information for a destroy operation.
 ///
 /// Contains git status information and PR check results to help users
 /// make informed decisions before destroying a kild.
+///
+/// # Degraded State
+///
+/// Check `git_status.status_check_failed` to determine if the safety info
+/// is degraded. When degraded, the fallback is conservative (assumes dirty)
+/// and a warning message is included.
 #[derive(Debug, Clone, Default)]
 pub struct DestroySafetyInfo {
     /// Git worktree status (uncommitted changes, unpushed commits, etc.)
     pub git_status: WorktreeStatus,
-    /// Whether a PR exists for this branch.
-    /// - `Some(true)`: PR exists (may be open or merged)
-    /// - `Some(false)`: No PR found
-    /// - `None`: Could not check (gh CLI unavailable or error)
-    pub has_pr: Option<bool>,
-    /// The branch name being checked.
-    pub branch: String,
+    /// PR check result for the kild's branch.
+    pub pr_status: PrCheckResult,
 }
 
 impl DestroySafetyInfo {
     /// Returns true if the destroy should be blocked (requires --force).
     ///
-    /// Currently blocks only on uncommitted changes, as these cannot be recovered.
+    /// Blocks on:
+    /// - Uncommitted changes (cannot be recovered)
+    /// - Status check failure with conservative fallback (user should verify manually)
     pub fn should_block(&self) -> bool {
         self.git_status.has_uncommitted_changes
     }
@@ -33,17 +74,29 @@ impl DestroySafetyInfo {
         self.git_status.has_uncommitted_changes
             || self.git_status.unpushed_commit_count > 0
             || !self.git_status.has_remote_branch
-            || self.has_pr == Some(false)
+            || self.pr_status.not_found()
+            || self.git_status.status_check_failed
     }
 
     /// Generate warning messages for display.
     ///
-    /// Returns a list of human-readable warning messages.
+    /// Returns a list of human-readable warning messages in severity order:
+    /// 1. Status check failures (critical - user should verify manually)
+    /// 2. Uncommitted changes (blocking)
+    /// 3. Unpushed commits (warning)
+    /// 4. Never pushed (warning)
+    /// 5. No PR found (advisory)
     pub fn warning_messages(&self) -> Vec<String> {
         let mut messages = Vec::new();
 
+        // Status check failure (critical - shown first)
+        if self.git_status.status_check_failed {
+            messages
+                .push("Git status check failed - could not verify uncommitted changes".to_string());
+        }
+
         // Uncommitted changes (blocking)
-        if self.git_status.has_uncommitted_changes {
+        if self.git_status.has_uncommitted_changes && !self.git_status.status_check_failed {
             if let Some(details) = &self.git_status.uncommitted_details {
                 let mut parts = Vec::new();
                 if details.staged_files > 0 {
@@ -74,13 +127,16 @@ impl DestroySafetyInfo {
             ));
         }
 
-        // Never pushed (warning only)
-        if !self.git_status.has_remote_branch && self.git_status.unpushed_commit_count == 0 {
+        // Never pushed (warning only) - skip if status check failed or has unpushed commits
+        if !self.git_status.has_remote_branch
+            && self.git_status.unpushed_commit_count == 0
+            && !self.git_status.status_check_failed
+        {
             messages.push("Branch has never been pushed".to_string());
         }
 
         // No PR found (advisory)
-        if self.has_pr == Some(false) {
+        if self.pr_status.not_found() {
             messages.push("No PR found for this branch".to_string());
         }
 
@@ -577,5 +633,237 @@ mod tests {
         };
 
         assert!(!session.is_worktree_valid());
+    }
+
+    // --- PrCheckResult tests ---
+
+    #[test]
+    fn test_pr_check_result_exists() {
+        let result = PrCheckResult::Exists;
+        assert!(result.exists());
+        assert!(!result.not_found());
+        assert!(!result.is_unavailable());
+    }
+
+    #[test]
+    fn test_pr_check_result_not_found() {
+        let result = PrCheckResult::NotFound;
+        assert!(!result.exists());
+        assert!(result.not_found());
+        assert!(!result.is_unavailable());
+    }
+
+    #[test]
+    fn test_pr_check_result_unavailable() {
+        let result = PrCheckResult::Unavailable;
+        assert!(!result.exists());
+        assert!(!result.not_found());
+        assert!(result.is_unavailable());
+    }
+
+    #[test]
+    fn test_pr_check_result_default() {
+        let result = PrCheckResult::default();
+        assert!(result.is_unavailable());
+    }
+
+    // --- DestroySafetyInfo tests ---
+
+    #[test]
+    fn test_should_block_on_uncommitted_changes() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(info.should_block());
+    }
+
+    #[test]
+    fn test_should_not_block_on_unpushed_only() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: false,
+                unpushed_commit_count: 5,
+                has_remote_branch: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!info.should_block());
+        assert!(info.has_warnings());
+    }
+
+    #[test]
+    fn test_should_block_on_status_check_failed() {
+        use crate::git::types::WorktreeStatus;
+
+        // When status check fails, has_uncommitted_changes defaults to true (conservative)
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: true,
+                status_check_failed: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(info.should_block());
+        assert!(info.has_warnings());
+    }
+
+    #[test]
+    fn test_has_warnings_no_pr() {
+        let info = DestroySafetyInfo {
+            pr_status: PrCheckResult::NotFound,
+            ..Default::default()
+        };
+        assert!(info.has_warnings());
+    }
+
+    #[test]
+    fn test_has_warnings_pr_unavailable_no_warning() {
+        use crate::git::types::WorktreeStatus;
+
+        // When gh CLI unavailable, we shouldn't warn about PR
+        let info = DestroySafetyInfo {
+            pr_status: PrCheckResult::Unavailable,
+            git_status: WorktreeStatus {
+                has_remote_branch: true,
+                ..Default::default()
+            },
+        };
+        assert!(!info.has_warnings());
+    }
+
+    #[test]
+    fn test_has_warnings_never_pushed() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_remote_branch: false,
+                unpushed_commit_count: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(info.has_warnings());
+    }
+
+    #[test]
+    fn test_warning_messages_uncommitted_with_details() {
+        use crate::git::types::{UncommittedDetails, WorktreeStatus};
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: true,
+                uncommitted_details: Some(UncommittedDetails {
+                    staged_files: 2,
+                    modified_files: 3,
+                    untracked_files: 1,
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let msgs = info.warning_messages();
+        assert!(!msgs.is_empty());
+        assert!(msgs[0].contains("2 staged"));
+        assert!(msgs[0].contains("3 modified"));
+        assert!(msgs[0].contains("1 untracked"));
+    }
+
+    #[test]
+    fn test_warning_messages_singular_commit() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                unpushed_commit_count: 1,
+                has_remote_branch: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let msgs = info.warning_messages();
+        assert!(msgs.iter().any(|m| m.contains("1 unpushed commit")));
+        // Ensure singular "commit" not plural "commits"
+        assert!(!msgs.iter().any(|m| m.contains("1 unpushed commits")));
+    }
+
+    #[test]
+    fn test_warning_messages_plural_commits() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                unpushed_commit_count: 3,
+                has_remote_branch: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let msgs = info.warning_messages();
+        assert!(msgs.iter().any(|m| m.contains("3 unpushed commits")));
+    }
+
+    #[test]
+    fn test_warning_messages_never_pushed_not_shown_with_unpushed() {
+        use crate::git::types::WorktreeStatus;
+
+        // When there are unpushed commits, "never pushed" is redundant
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                unpushed_commit_count: 5,
+                has_remote_branch: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let msgs = info.warning_messages();
+        assert!(!msgs.iter().any(|m| m.contains("never been pushed")));
+        assert!(msgs.iter().any(|m| m.contains("unpushed")));
+    }
+
+    #[test]
+    fn test_warning_messages_status_check_failed() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: true,
+                status_check_failed: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let msgs = info.warning_messages();
+        assert!(msgs.iter().any(|m| m.contains("Git status check failed")));
+        // Should NOT show "Uncommitted changes" message when status check failed
+        // (we show the failure message instead)
+        assert!(!msgs.iter().any(|m| m.starts_with("Uncommitted changes:")));
+    }
+
+    #[test]
+    fn test_warning_messages_no_warnings() {
+        use crate::git::types::WorktreeStatus;
+
+        let info = DestroySafetyInfo {
+            git_status: WorktreeStatus {
+                has_uncommitted_changes: false,
+                unpushed_commit_count: 0,
+                has_remote_branch: true,
+                ..Default::default()
+            },
+            pr_status: PrCheckResult::Exists,
+        };
+        assert!(!info.has_warnings());
+        assert!(info.warning_messages().is_empty());
     }
 }

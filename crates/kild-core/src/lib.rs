@@ -28,7 +28,7 @@ pub mod terminal;
 pub use config::KildConfig;
 pub use git::types::{UncommittedDetails, WorktreeStatus};
 pub use sessions::types::{
-    CompleteResult, CreateSessionRequest, DestroySafetyInfo, Session, SessionStatus,
+    CompleteResult, CreateSessionRequest, DestroySafetyInfo, PrCheckResult, Session, SessionStatus,
 };
 
 // Re-export handler modules as the primary API

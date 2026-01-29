@@ -149,8 +149,11 @@ pub fn get_diff_stats(worktree_path: &Path) -> Result<DiffStats, GitError> {
 /// - Unpushed commits (commits ahead of remote tracking branch)
 /// - Remote branch existence
 ///
-/// This is a best-effort operation. If any part fails (e.g., repository
-/// issues), partial information is still returned with sensible defaults.
+/// # Conservative Fallback
+///
+/// If status checks fail, the function returns a conservative fallback that
+/// assumes uncommitted changes exist. This prevents data loss by requiring
+/// the user to verify manually. Check `status_check_failed` to detect this.
 ///
 /// # Errors
 ///
@@ -159,27 +162,34 @@ pub fn get_worktree_status(worktree_path: &Path) -> Result<WorktreeStatus, GitEr
     let repo = Repository::open(worktree_path).map_err(|e| GitError::Git2Error { source: e })?;
 
     // 1. Check for uncommitted changes using git2 status
-    let (has_uncommitted, uncommitted_details) = check_uncommitted_changes(&repo);
+    let (uncommitted_result, status_check_failed) = check_uncommitted_changes(&repo);
 
     // 2. Count unpushed commits and check remote branch existence
     let (unpushed_count, has_remote) = count_unpushed_commits(&repo);
+
+    let has_uncommitted = uncommitted_result
+        .as_ref()
+        .map(|d| !d.is_empty())
+        .unwrap_or(true); // Conservative: assume dirty if check failed
 
     Ok(WorktreeStatus {
         has_uncommitted_changes: has_uncommitted,
         unpushed_commit_count: unpushed_count,
         has_remote_branch: has_remote,
-        uncommitted_details: if has_uncommitted {
-            Some(uncommitted_details)
-        } else {
-            None
-        },
+        uncommitted_details: uncommitted_result,
+        status_check_failed,
     })
 }
 
 /// Check for uncommitted changes in the repository.
 ///
-/// Returns (has_uncommitted_changes, details).
-fn check_uncommitted_changes(repo: &Repository) -> (bool, UncommittedDetails) {
+/// Returns (Option<details>, status_check_failed).
+/// - `Some(details)` with file counts when check succeeds
+/// - `None` when check fails (status_check_failed will be true)
+///
+/// The caller should treat `None` as "assume uncommitted changes exist"
+/// to be conservative and prevent data loss.
+fn check_uncommitted_changes(repo: &Repository) -> (Option<UncommittedDetails>, bool) {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
     opts.include_ignored(false);
@@ -190,9 +200,10 @@ fn check_uncommitted_changes(repo: &Repository) -> (bool, UncommittedDetails) {
             warn!(
                 event = "core.git.status_check_failed",
                 error = %e,
-                "Failed to get git status - assuming clean"
+                "Failed to get git status - assuming dirty to be safe"
             );
-            return (false, UncommittedDetails::default());
+            // Return None to indicate check failed, true for status_check_failed
+            return (None, true);
         }
     };
 
@@ -227,29 +238,34 @@ fn check_uncommitted_changes(repo: &Repository) -> (bool, UncommittedDetails) {
         }
     }
 
-    let has_uncommitted = staged_files > 0 || modified_files > 0 || untracked_files > 0;
     let details = UncommittedDetails {
         staged_files,
         modified_files,
         untracked_files,
     };
 
-    (has_uncommitted, details)
+    // Return Some(details) even if empty - caller uses is_empty() to check
+    (Some(details), false)
 }
 
 /// Count unpushed commits and check if remote tracking branch exists.
 ///
 /// Returns (unpushed_commit_count, has_remote_branch).
-/// If the branch has no remote tracking branch, returns (0, false).
+///
+/// Return values:
+/// - `(n, true)` - Branch has remote, n commits unpushed
+/// - `(0, false)` - Branch has no upstream (never pushed)
+/// - `(0, false)` - Detached HEAD state (no branch to push)
+/// - `(0, true)` - Error counting commits (remote exists but count failed)
 fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
     // Get current branch reference
     let head = match repo.head() {
         Ok(h) => h,
         Err(e) => {
-            debug!(
+            warn!(
                 event = "core.git.head_read_failed",
                 error = %e,
-                "Failed to read HEAD - assuming no unpushed commits"
+                "Failed to read HEAD - cannot count unpushed commits"
             );
             return (0, false);
         }
@@ -259,6 +275,7 @@ fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
     let branch_name = match head.shorthand() {
         Some(name) => name,
         None => {
+            // Detached HEAD is a normal state, not an error
             debug!(
                 event = "core.git.detached_head",
                 "Repository is in detached HEAD state"
@@ -271,10 +288,11 @@ fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
     let local_branch = match repo.find_branch(branch_name, git2::BranchType::Local) {
         Ok(b) => b,
         Err(e) => {
-            debug!(
+            warn!(
                 event = "core.git.local_branch_not_found",
                 branch = branch_name,
-                error = %e
+                error = %e,
+                "Could not find local branch"
             );
             return (0, false);
         }
@@ -285,6 +303,7 @@ fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
         Ok(u) => u,
         Err(_) => {
             // No upstream configured - branch has never been pushed
+            // This is expected for new branches, not an error
             debug!(
                 event = "core.git.no_upstream",
                 branch = branch_name,
@@ -297,12 +316,26 @@ fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
     // Get the OIDs for local and remote
     let local_oid = match head.target() {
         Some(oid) => oid,
-        None => return (0, true),
+        None => {
+            warn!(
+                event = "core.git.head_target_missing",
+                branch = branch_name,
+                "HEAD has no target OID"
+            );
+            return (0, true);
+        }
     };
 
     let upstream_oid = match upstream.get().target() {
         Some(oid) => oid,
-        None => return (0, true),
+        None => {
+            warn!(
+                event = "core.git.upstream_target_missing",
+                branch = branch_name,
+                "Upstream branch has no target OID"
+            );
+            return (0, true);
+        }
     };
 
     // Count commits in local that aren't in upstream (local..upstream reversed)
@@ -312,19 +345,28 @@ fn count_unpushed_commits(repo: &Repository) -> (usize, bool) {
             warn!(
                 event = "core.git.revwalk_init_failed",
                 error = %e,
-                "Failed to create revwalk"
+                "Failed to create revwalk - cannot count unpushed commits"
             );
             return (0, true);
         }
     };
 
     // Push the local commit and hide the upstream commit
-    if revwalk.push(local_oid).is_err() {
+    if let Err(e) = revwalk.push(local_oid) {
+        warn!(
+            event = "core.git.revwalk_push_failed",
+            error = %e,
+            "Failed to push local commit to revwalk"
+        );
         return (0, true);
     }
-    if revwalk.hide(upstream_oid).is_err() {
-        // If we can't hide upstream (e.g., diverged history), treat as 0 unpushed
-        // to avoid counting too many commits
+    if let Err(e) = revwalk.hide(upstream_oid) {
+        // Diverged history - can't accurately count, warn user
+        warn!(
+            event = "core.git.revwalk_hide_failed",
+            error = %e,
+            "Failed to hide upstream commit - history may have diverged"
+        );
         return (0, true);
     }
 
