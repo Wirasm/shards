@@ -97,8 +97,7 @@ pub fn determine_process_status(session: &Session) -> ProcessStatus {
     {
         match is_terminal_window_open(terminal_type, window_id) {
             Ok(Some(true)) => ProcessStatus::Running,
-            Ok(Some(false)) => ProcessStatus::Stopped,
-            Ok(None) => ProcessStatus::Stopped,
+            Ok(Some(false) | None) => ProcessStatus::Stopped,
             Err(e) => {
                 tracing::warn!(
                     event = "core.session.window_check_failed",
