@@ -134,7 +134,7 @@ Shows all connected displays.
 
 ### Capture Screenshot
 ```bash
-kild-peek screenshot [--window <title>] [--app <name>] [--window-id <id>] [--monitor <index>] [--crop <region>] -o <path>
+kild-peek screenshot [--window <title>] [--app <name>] [--window-id <id>] [--monitor <index>] [--crop <region>] [--wait] [--timeout <ms>] -o <path>
 ```
 
 Captures a screenshot of a window or monitor.
@@ -145,6 +145,8 @@ Captures a screenshot of a window or monitor.
 - `--window-id <id>` - Capture window by exact ID
 - `--monitor <index>` - Capture specific monitor (0 = primary)
 - `--crop <region>` - Crop to region: x,y,width,height (e.g., "0,0,400,50")
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `-o <path>` - Output file path (required for file output)
 - `--format <png|jpg>` - Image format (default: png)
 - `--quality <1-100>` - JPEG quality (default: 85)
@@ -165,6 +167,12 @@ kild-peek screenshot --app Ghostty --window "Terminal" -o "$SCRATCHPAD/precise.p
 
 # Capture by window ID (most precise)
 kild-peek screenshot --window-id 8002 -o "$SCRATCHPAD/window.png"
+
+# Wait for window to appear
+kild-peek screenshot --window "Terminal" --wait -o "$SCRATCHPAD/term.png"
+
+# Wait with custom timeout
+kild-peek screenshot --window "Terminal" --wait --timeout 5000 -o "$SCRATCHPAD/term.png"
 
 # Capture primary monitor
 kild-peek screenshot -o "$SCRATCHPAD/screen.png"
@@ -205,7 +213,7 @@ kild-peek diff "$SCRATCHPAD/a.png" "$SCRATCHPAD/b.png" --json
 
 ### Assert UI State
 ```bash
-kild-peek assert [--window <title>] [--app <name>] [--exists|--visible|--similar <baseline>] [--json]
+kild-peek assert [--window <title>] [--app <name>] [--exists|--visible|--similar <baseline>] [--wait] [--timeout <ms>] [--json]
 ```
 
 Runs assertions on UI state. Returns exit code 0 for pass, 1 for fail.
@@ -218,6 +226,8 @@ Runs assertions on UI state. Returns exit code 0 for pass, 1 for fail.
 **Flags:**
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name (can combine with `--window`)
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--threshold <0-100>` - Similarity threshold for `--similar` (default: 95)
 - `--json` - Output result as JSON
 
@@ -228,6 +238,12 @@ kild-peek assert --window "KILD" --exists
 
 # Assert window exists by app (more reliable)
 kild-peek assert --app "KILD" --exists
+
+# Wait for window to appear
+kild-peek assert --window "KILD" --exists --wait
+
+# Wait with custom timeout
+kild-peek assert --window "KILD" --exists --wait --timeout 5000
 
 # Assert window is visible
 kild-peek assert --window "Terminal" --visible
@@ -246,7 +262,7 @@ kild-peek assert --window "KILD" --exists --json
 
 ### List UI Elements
 ```bash
-kild-peek elements [--window <title>] [--app <name>] [--json]
+kild-peek elements [--window <title>] [--app <name>] [--wait] [--timeout <ms>] [--json]
 ```
 
 Lists all UI elements in a window using the macOS Accessibility API. Shows buttons, text fields, labels, and other interactive elements.
@@ -254,6 +270,8 @@ Lists all UI elements in a window using the macOS Accessibility API. Shows butto
 **Flags:**
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name (can combine with `--window`)
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--json` - Output as JSON
 
 **Examples:**
@@ -267,6 +285,12 @@ kild-peek elements --window "Terminal"
 # Precise targeting with app + window
 kild-peek elements --app Ghostty --window "Terminal"
 
+# Wait for window to appear
+kild-peek elements --app Finder --wait
+
+# Wait with custom timeout
+kild-peek elements --app Finder --wait --timeout 5000
+
 # JSON output for parsing
 kild-peek elements --app KILD --json
 ```
@@ -279,7 +303,7 @@ kild-peek elements --app KILD --json
 
 ### Find UI Element by Text
 ```bash
-kild-peek find --text <search> [--window <title>] [--app <name>] [--json]
+kild-peek find --text <search> [--window <title>] [--app <name>] [--wait] [--timeout <ms>] [--json]
 ```
 
 Finds a UI element by searching for text in its title, value, or description.
@@ -288,6 +312,8 @@ Finds a UI element by searching for text in its title, value, or description.
 - `--text <search>` - Text to search for (required)
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name (can combine with `--window`)
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--json` - Output as JSON
 
 **Examples:**
@@ -297,6 +323,9 @@ kild-peek find --app Finder --text "File"
 
 # Find "Create" button in KILD
 kild-peek find --app KILD --text "Create"
+
+# Wait for window to appear
+kild-peek find --app KILD --text "Create" --wait
 
 # JSON output
 kild-peek find --app Finder --text "Submit" --json
@@ -309,8 +338,8 @@ kild-peek find --app Finder --text "Submit" --json
 
 ### Click UI Element
 ```bash
-kild-peek click [--window <title>] [--app <name>] --at <x,y> [--json]
-kild-peek click [--window <title>] [--app <name>] --text <search> [--json]
+kild-peek click [--window <title>] [--app <name>] --at <x,y> [--wait] [--timeout <ms>] [--json]
+kild-peek click [--window <title>] [--app <name>] --text <search> [--wait] [--timeout <ms>] [--json]
 ```
 
 Clicks at specific coordinates or on an element identified by text.
@@ -324,6 +353,8 @@ Clicks at specific coordinates or on an element identified by text.
 **Flags:**
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name (can combine with `--window`)
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--json` - Output as JSON
 
 **Note:** `--at` and `--text` are mutually exclusive.
@@ -342,6 +373,9 @@ kild-peek click --app Ghostty --window "Terminal" --at 150,75
 # Click element by text
 kild-peek click --app KILD --text "Create"
 
+# Wait for window to appear
+kild-peek click --app KILD --text "Create" --wait
+
 # Click button by text
 kild-peek click --app Finder --text "Submit"
 
@@ -351,7 +385,7 @@ kild-peek click --app KILD --text "Open" --json
 
 ### Type Text
 ```bash
-kild-peek type [--window <title>] [--app <name>] <text> [--json]
+kild-peek type [--window <title>] [--app <name>] <text> [--wait] [--timeout <ms>] [--json]
 ```
 
 Types text into the focused element in the target window.
@@ -359,6 +393,8 @@ Types text into the focused element in the target window.
 **Flags:**
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--json` - Output as JSON
 
 **Examples:**
@@ -369,13 +405,16 @@ kild-peek type --window "Terminal" "hello world"
 # Type into TextEdit
 kild-peek type --app TextEdit "some text"
 
+# Wait for window to appear
+kild-peek type --app TextEdit "text" --wait
+
 # JSON output
 kild-peek type --window "Terminal" "test" --json
 ```
 
 ### Send Key Combination
 ```bash
-kild-peek key [--window <title>] [--app <name>] <key-combo> [--json]
+kild-peek key [--window <title>] [--app <name>] <key-combo> [--wait] [--timeout <ms>] [--json]
 ```
 
 Sends a key or key combination to the target window.
@@ -387,6 +426,8 @@ Sends a key or key combination to the target window.
 **Flags:**
 - `--window <title>` - Target window by title
 - `--app <name>` - Target window by app name
+- `--wait` - Wait for window to appear (polls until found or timeout)
+- `--timeout <ms>` - Timeout in milliseconds when using `--wait` (default: 30000)
 - `--json` - Output as JSON
 
 **Examples:**
@@ -399,6 +440,9 @@ kild-peek key --app Ghostty "cmd+s"
 
 # Multiple modifiers
 kild-peek key --window "Terminal" "cmd+shift+p"
+
+# Wait for window to appear
+kild-peek key --app Ghostty "enter" --wait
 
 # JSON output
 kild-peek key --app TextEdit "tab" --json
