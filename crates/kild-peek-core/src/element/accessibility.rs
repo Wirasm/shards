@@ -113,7 +113,9 @@ pub fn query_elements(pid: i32) -> Result<Vec<RawElement>, String> {
         collect_elements(*window_element, &mut elements, 0);
     }
 
-    // SAFETY: Release the app element we created.
+    // SAFETY: AXUIElementCreateApplication follows the Create Rule, returning a +1 retained
+    // reference that we own. Unlike CFString or CFArray, AXUIElementRef has no Rust TCFType
+    // wrapper for RAII, so we must manually call CFRelease. Failing to release would leak memory.
     unsafe {
         core_foundation::base::CFRelease(app_element as *mut c_void);
     }
@@ -348,9 +350,15 @@ fn get_ax_value_size(element: AXUIElementRef, attribute: &str) -> Option<(f64, f
 /// Get children (or windows) array from an AX element.
 /// Returns raw AXUIElementRef pointers and the backing CFArray.
 ///
-/// SAFETY: The returned pointers are only valid while the CFArray (second tuple element)
-/// remains alive. Caller must retain the CFArray for the lifetime of pointer usage.
-/// Do NOT release the individual element refs — they are owned by the CFArray.
+/// # Safety Contract
+///
+/// The returned `AXUIElementRef` pointers are **unretained borrows** into the CFArray's
+/// internal storage. The CFArray owns these references and will release them when dropped.
+///
+/// **Caller responsibilities:**
+/// - Keep the returned `Option<CFArray<CFType>>` alive for as long as any pointer is used
+/// - Do NOT call `CFRelease` on individual element refs (would cause double-free)
+/// - Do NOT store pointers beyond the CFArray's lifetime
 fn get_children_refs(
     element: AXUIElementRef,
     attribute: &str,
@@ -358,7 +366,9 @@ fn get_children_refs(
     let cf_attr = CFString::new(attribute);
     let mut value: core_foundation::base::CFTypeRef = ptr::null();
 
-    // SAFETY: Standard AXUIElementCopyAttributeValue call.
+    // SAFETY: AXUIElementCopyAttributeValue follows the Copy Rule, returning a +1 retained
+    // CFTypeRef on success. We must either transfer ownership to an RAII wrapper or manually
+    // release the value to avoid leaking memory.
     let result = unsafe {
         AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value)
     };
@@ -375,17 +385,22 @@ fn get_children_refs(
         return (Vec::new(), None);
     }
 
-    // SAFETY: value is a CFArrayRef from CopyAttributeValue. wrap_under_create_rule
-    // takes ownership for proper cleanup.
+    // SAFETY: value is a +1 retained CFArrayRef from CopyAttributeValue (Copy Rule).
+    // wrap_under_create_rule transfers ownership to the Rust wrapper, which will call
+    // CFRelease when dropped.
     let cf_array: CFArray<CFType> =
         unsafe { CFArray::wrap_under_create_rule(value as core_foundation::array::CFArrayRef) };
 
+    // SAFETY: The AXUIElementRef pointers extracted here are borrowed references into the
+    // CFArray's internal storage. They are NOT retained — the CFArray owns them. Callers
+    // must NOT release these refs (would cause double-free when CFArray drops). The refs
+    // are only valid while the returned CFArray remains alive.
     let refs: Vec<AXUIElementRef> = cf_array
         .iter()
         .map(|item| item.as_CFTypeRef() as AXUIElementRef)
         .collect();
 
-    // Return the array alongside refs to keep it alive
+    // Return the array alongside refs so caller keeps the CFArray alive for ref validity
     (refs, Some(cf_array))
 }
 
