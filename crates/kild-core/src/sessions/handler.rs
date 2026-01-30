@@ -444,7 +444,20 @@ pub fn complete_session(name: &str, force: bool) -> Result<CompleteResult, Sessi
         CompleteResult::RemoteDeleted
     };
 
-    // 4. Destroy the session (reuse existing logic)
+    // 4. Safety check: always block on uncommitted changes (no --force bypass for complete)
+    let safety_info = get_destroy_safety_info(name)?;
+    if safety_info.should_block() {
+        error!(
+            event = "core.session.complete_blocked",
+            name = name,
+            reason = "uncommitted_changes"
+        );
+        return Err(SessionError::UncommittedChanges {
+            name: name.to_string(),
+        });
+    }
+
+    // 5. Destroy the session (reuse existing logic)
     destroy_session(name, force)?;
 
     info!(

@@ -317,6 +317,36 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
         force = force
     );
 
+    // Pre-complete safety check (always — complete never bypasses uncommitted check)
+    if let Ok(safety_info) = session_handler::get_destroy_safety_info(branch) {
+        if safety_info.has_warnings() {
+            let warnings = safety_info.warning_messages();
+            for warning in &warnings {
+                if safety_info.should_block() {
+                    eprintln!("⚠️  {}", warning);
+                } else {
+                    println!("⚠️  {}", warning);
+                }
+            }
+        }
+
+        if safety_info.should_block() {
+            eprintln!();
+            eprintln!("❌ Cannot complete '{}' with uncommitted changes.", branch);
+            eprintln!("   Use 'kild destroy --force {}' to remove anyway.", branch);
+
+            error!(
+                event = "cli.complete_blocked",
+                branch = branch,
+                reason = "uncommitted_changes"
+            );
+
+            return Err(
+                "Uncommitted changes detected. Use 'kild destroy --force' to override.".into(),
+            );
+        }
+    }
+
     match session_handler::complete_session(branch, force) {
         Ok(result) => {
             use kild_core::CompleteResult;
