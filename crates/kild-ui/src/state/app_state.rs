@@ -1,0 +1,930 @@
+use kild_core::SessionInfo;
+use kild_core::projects::{Project, ProjectError, ProjectManager};
+
+use super::dialog::DialogState;
+use super::errors::{OperationError, OperationErrors};
+use super::selection::SelectionState;
+use super::sessions::SessionStore;
+
+/// Main application state.
+///
+/// All fields are private - access state through the facade methods below.
+/// This ensures all state mutations go through controlled methods that
+/// maintain invariants and provide a consistent API.
+pub struct AppState {
+    /// Session display data with refresh tracking.
+    sessions: SessionStore,
+
+    /// Current dialog state (mutually exclusive - only one dialog can be open).
+    dialog: DialogState,
+
+    /// Operation errors (per-branch and bulk).
+    errors: OperationErrors,
+
+    /// Kild selection state (for detail panel).
+    selection: SelectionState,
+
+    /// Project management with enforced invariants.
+    projects: ProjectManager,
+
+    /// Startup errors that should be shown to the user (migration failures, load errors).
+    startup_errors: Vec<String>,
+}
+
+impl AppState {
+    /// Create new application state, loading sessions from disk.
+    pub fn new() -> Self {
+        let mut startup_errors = Vec::new();
+
+        // Migrate projects to canonical paths (fixes case mismatch on macOS)
+        if let Err(e) = kild_core::projects::migrate_projects_to_canonical() {
+            tracing::error!(
+                event = "ui.projects.migration_failed",
+                error = %e,
+                "Project migration failed - some projects may not filter correctly"
+            );
+            startup_errors.push(format!("Project migration failed: {}", e));
+        }
+
+        // Load projects from disk (after migration)
+        let projects_data = kild_core::projects::load_projects();
+        if let Some(load_error) = projects_data.load_error {
+            startup_errors.push(load_error);
+        }
+        let projects = ProjectManager::from_data(projects_data.projects, projects_data.active);
+
+        Self {
+            sessions: SessionStore::new(),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects,
+            startup_errors,
+        }
+    }
+
+    /// Refresh sessions from disk.
+    pub fn refresh_sessions(&mut self) {
+        self.sessions.refresh();
+    }
+
+    /// Update only the process status of existing kilds without reloading from disk.
+    ///
+    /// This is faster than refresh_sessions() for status polling because it:
+    /// - Doesn't reload session files from disk (unless count mismatch detected)
+    /// - Only checks if tracked processes are still running
+    /// - Preserves the existing kild list structure
+    ///
+    /// If the session count on disk differs from the in-memory count (indicating
+    /// external create/destroy operations), triggers a full refresh instead.
+    ///
+    /// Note: This does NOT update git status or diff stats. Use `refresh_sessions()`
+    /// for a full refresh that includes git information.
+    pub fn update_statuses_only(&mut self) {
+        self.sessions.update_statuses_only();
+    }
+
+    /// Close any open dialog.
+    pub fn close_dialog(&mut self) {
+        self.dialog = DialogState::None;
+    }
+
+    /// Open the create dialog.
+    pub fn open_create_dialog(&mut self) {
+        self.dialog = DialogState::open_create();
+    }
+
+    /// Open the confirm dialog for a specific branch.
+    ///
+    /// Fetches safety information (uncommitted changes, unpushed commits, etc.)
+    /// to display warnings in the dialog.
+    pub fn open_confirm_dialog(&mut self, branch: String) {
+        // Fetch safety info (best-effort, don't block on failure)
+        let safety_info = match kild_core::session_ops::get_destroy_safety_info(&branch) {
+            Ok(info) => {
+                tracing::debug!(
+                    event = "ui.confirm_dialog.safety_info_fetched",
+                    branch = %branch,
+                    should_block = info.should_block(),
+                    has_warnings = info.has_warnings()
+                );
+                Some(info)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    event = "ui.confirm_dialog.safety_info_failed",
+                    branch = %branch,
+                    error = %e,
+                    "Failed to fetch safety info - proceeding without warnings"
+                );
+                None
+            }
+        };
+
+        self.dialog = DialogState::open_confirm(branch, safety_info);
+    }
+
+    /// Open the add project dialog.
+    pub fn open_add_project_dialog(&mut self) {
+        self.dialog = DialogState::open_add_project();
+    }
+
+    /// Set error message in the current dialog.
+    /// No-op if no dialog is open.
+    pub fn set_dialog_error(&mut self, error: String) {
+        match &mut self.dialog {
+            DialogState::None => {
+                tracing::warn!(
+                    event = "ui.state.set_dialog_error_no_dialog",
+                    "Attempted to set dialog error but no dialog is open"
+                );
+            }
+            DialogState::Create { error: e, .. } => *e = Some(error),
+            DialogState::Confirm { error: e, .. } => *e = Some(error),
+            DialogState::AddProject { error: e, .. } => *e = Some(error),
+        }
+    }
+
+    /// Clear the error for a specific branch.
+    pub fn clear_error(&mut self, branch: &str) {
+        self.errors.clear(branch);
+    }
+
+    /// Clear all bulk operation errors.
+    pub fn clear_bulk_errors(&mut self) {
+        self.errors.clear_bulk();
+    }
+
+    /// Get the project ID for the active project.
+    pub fn active_project_id(&self) -> Option<String> {
+        self.projects
+            .active_path()
+            .map(kild_core::projects::generate_project_id)
+    }
+
+    /// Get displays filtered by active project.
+    ///
+    /// Filters kilds where `session.project_id` matches the derived ID of the active project path.
+    /// Uses path-based hashing that matches kild-core's `generate_project_id`.
+    /// If no active project is set, returns all displays (unfiltered).
+    pub fn filtered_displays(&self) -> Vec<&SessionInfo> {
+        self.sessions
+            .filtered_by_project(self.active_project_id().as_deref())
+    }
+
+    /// Count kilds with Stopped status.
+    pub fn stopped_count(&self) -> usize {
+        self.sessions.stopped_count()
+    }
+
+    /// Count kilds with Running status.
+    pub fn running_count(&self) -> usize {
+        self.sessions.running_count()
+    }
+
+    /// Count kilds for a specific project (by project path).
+    pub fn kild_count_for_project(&self, project_path: &std::path::Path) -> usize {
+        let project_id = kild_core::projects::generate_project_id(project_path);
+        self.sessions.kild_count_for_project(&project_id)
+    }
+
+    /// Count total kilds across all projects.
+    pub fn total_kild_count(&self) -> usize {
+        self.sessions.total_count()
+    }
+
+    /// Get the selected kild display, if any.
+    ///
+    /// Returns `None` if no kild is selected or if the selected kild no longer
+    /// exists in the current display list (e.g., after being destroyed externally).
+    pub fn selected_kild(&self) -> Option<&SessionInfo> {
+        let id = self.selection.id()?;
+
+        match self.sessions.displays().iter().find(|d| d.session.id == id) {
+            Some(kild) => Some(kild),
+            None => {
+                tracing::debug!(
+                    event = "ui.state.stale_selection",
+                    selected_id = id,
+                    "Selected kild not found in current display list"
+                );
+                None
+            }
+        }
+    }
+
+    /// Clear selection (e.g., when kild is destroyed).
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    // =========================================================================
+    // Dialog facade methods
+    // =========================================================================
+
+    /// Get read-only reference to dialog state.
+    ///
+    /// Use this for pattern matching and reading dialog data.
+    pub fn dialog(&self) -> &DialogState {
+        &self.dialog
+    }
+
+    /// Get mutable reference to dialog state.
+    ///
+    /// Use this for direct form field mutation in keyboard handlers.
+    pub fn dialog_mut(&mut self) -> &mut DialogState {
+        &mut self.dialog
+    }
+
+    // =========================================================================
+    // Error facade methods
+    // =========================================================================
+
+    /// Set an error for a specific branch.
+    pub fn set_error(&mut self, branch: &str, error: OperationError) {
+        self.errors.set(branch, error);
+    }
+
+    /// Get the error for a specific branch, if any.
+    #[allow(dead_code)]
+    pub fn get_error(&self, branch: &str) -> Option<&OperationError> {
+        self.errors.get(branch)
+    }
+
+    /// Set bulk errors (replaces existing).
+    pub fn set_bulk_errors(&mut self, errors: Vec<OperationError>) {
+        self.errors.set_bulk(errors);
+    }
+
+    /// Get bulk operation errors.
+    pub fn bulk_errors(&self) -> &[OperationError] {
+        self.errors.bulk_errors()
+    }
+
+    /// Check if there are any bulk errors.
+    pub fn has_bulk_errors(&self) -> bool {
+        self.errors.has_bulk_errors()
+    }
+
+    /// Clone the operation errors (for capturing in closures).
+    pub fn errors_clone(&self) -> OperationErrors {
+        self.errors.clone()
+    }
+
+    // =========================================================================
+    // Error banner facade methods
+    // =========================================================================
+
+    /// Get errors that should be shown to the user in the error banner.
+    pub fn banner_errors(&self) -> &[String] {
+        &self.startup_errors
+    }
+
+    /// Check if there are any banner errors.
+    pub fn has_banner_errors(&self) -> bool {
+        !self.startup_errors.is_empty()
+    }
+
+    /// Add an error to the banner (for runtime failures the user should see).
+    pub fn push_error(&mut self, message: String) {
+        self.startup_errors.push(message);
+    }
+
+    /// Dismiss all banner errors (user acknowledged them).
+    pub fn dismiss_errors(&mut self) {
+        self.startup_errors.clear();
+    }
+
+    // =========================================================================
+    // Selection facade methods
+    // =========================================================================
+
+    /// Select a kild by ID.
+    pub fn select_kild(&mut self, id: String) {
+        self.selection.select(id);
+    }
+
+    /// Get the selected kild ID, if any.
+    pub fn selected_id(&self) -> Option<&str> {
+        self.selection.id()
+    }
+
+    /// Check if a kild is selected.
+    pub fn has_selection(&self) -> bool {
+        self.selection.has_selection()
+    }
+
+    // =========================================================================
+    // Project facade methods
+    // =========================================================================
+
+    /// Reload projects from disk, replacing in-memory state.
+    ///
+    /// Used to recover from state desync (e.g., disk write succeeded but
+    /// in-memory update failed).
+    pub fn reload_projects(&mut self) {
+        let data = kild_core::projects::load_projects();
+        if let Some(load_error) = data.load_error {
+            self.startup_errors.push(load_error);
+        }
+        self.projects = ProjectManager::from_data(data.projects, data.active);
+    }
+
+    /// Select a project by path.
+    pub fn select_project(&mut self, path: &std::path::Path) -> Result<(), ProjectError> {
+        self.projects.select(path)
+    }
+
+    /// Select "all projects" view (clears active project selection).
+    pub fn select_all_projects(&mut self) {
+        self.projects.select_all();
+    }
+
+    /// Add a project to the list.
+    pub fn add_project(&mut self, project: Project) -> Result<(), ProjectError> {
+        self.projects.add(project)
+    }
+
+    /// Remove a project by path.
+    pub fn remove_project(&mut self, path: &std::path::Path) -> Result<Project, ProjectError> {
+        self.projects.remove(path)
+    }
+
+    /// Get the active project, if any.
+    pub fn active_project(&self) -> Option<&Project> {
+        self.projects.active()
+    }
+
+    /// Get the active project's path, if any.
+    pub fn active_project_path(&self) -> Option<&std::path::Path> {
+        self.projects.active_path()
+    }
+
+    /// Iterate over all projects.
+    pub fn projects_iter(&self) -> impl Iterator<Item = &Project> {
+        self.projects.iter()
+    }
+
+    /// Check if the project list is empty.
+    pub fn projects_is_empty(&self) -> bool {
+        self.projects.is_empty()
+    }
+
+    // =========================================================================
+    // Session facade methods
+    // =========================================================================
+
+    /// Get all session displays.
+    pub fn displays(&self) -> &[SessionInfo] {
+        self.sessions.displays()
+    }
+
+    /// Get the load error from the last refresh attempt, if any.
+    pub fn load_error(&self) -> Option<&str> {
+        self.sessions.load_error()
+    }
+
+    /// Check if there are no session displays.
+    pub fn sessions_is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+
+    // =========================================================================
+    // Test-only methods
+    // =========================================================================
+
+    /// Create an AppState for testing with empty state.
+    #[cfg(test)]
+    pub fn test_new() -> Self {
+        Self {
+            sessions: SessionStore::from_data(Vec::new(), None),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects: ProjectManager::new(),
+            startup_errors: Vec::new(),
+        }
+    }
+
+    /// Create an AppState for testing with provided displays.
+    #[cfg(test)]
+    pub fn test_with_displays(displays: Vec<SessionInfo>) -> Self {
+        Self {
+            sessions: SessionStore::from_data(displays, None),
+            dialog: DialogState::None,
+            errors: OperationErrors::new(),
+            selection: SelectionState::default(),
+            projects: ProjectManager::new(),
+            startup_errors: Vec::new(),
+        }
+    }
+
+    /// Set the dialog state directly (for testing).
+    #[cfg(test)]
+    pub fn set_dialog(&mut self, dialog: DialogState) {
+        self.dialog = dialog;
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kild_core::sessions::types::SessionStatus;
+    use kild_core::{GitStatus, ProcessStatus, Session};
+    use std::path::PathBuf;
+
+    use super::super::dialog::AddProjectDialogField;
+    use super::super::dialog::AddProjectFormState;
+
+    #[test]
+    fn test_close_dialog_clears_confirm_state() {
+        let mut state = AppState::test_new();
+        state.set_dialog(DialogState::Confirm {
+            branch: "feature-branch".to_string(),
+            safety_info: None,
+            error: Some("Some error".to_string()),
+        });
+
+        state.close_dialog();
+
+        assert!(matches!(state.dialog(), DialogState::None));
+    }
+
+    #[test]
+    fn test_set_dialog_error_sets_error_on_create() {
+        let mut state = AppState::test_new();
+        state.set_dialog(DialogState::open_create());
+
+        state.set_dialog_error("Test error".to_string());
+
+        if let DialogState::Create { error, .. } = state.dialog() {
+            assert_eq!(error.as_deref(), Some("Test error"));
+        } else {
+            panic!("Expected Create dialog");
+        }
+    }
+
+    #[test]
+    fn test_set_dialog_error_sets_error_on_confirm() {
+        let mut state = AppState::test_new();
+        state.open_confirm_dialog("test-branch".to_string());
+
+        state.set_dialog_error("Destroy failed".to_string());
+
+        if let DialogState::Confirm { error, .. } = state.dialog() {
+            assert_eq!(error.as_deref(), Some("Destroy failed"));
+        } else {
+            panic!("Expected Confirm dialog");
+        }
+    }
+
+    #[test]
+    fn test_clear_error() {
+        let mut state = AppState::test_new();
+        state.set_error(
+            "branch",
+            OperationError {
+                branch: "branch".to_string(),
+                message: "error".to_string(),
+            },
+        );
+
+        state.clear_error("branch");
+
+        assert!(state.get_error("branch").is_none());
+    }
+
+    #[test]
+    fn test_close_dialog_clears_add_project_state() {
+        let mut state = AppState::test_new();
+        state.dialog = DialogState::AddProject {
+            form: AddProjectFormState {
+                path: "/some/path".to_string(),
+                name: "test".to_string(),
+                focused_field: AddProjectDialogField::Path,
+            },
+            error: Some("Error".to_string()),
+        };
+
+        state.close_dialog();
+
+        assert!(matches!(state.dialog, DialogState::None));
+    }
+
+    #[test]
+    fn test_active_project_id() {
+        let mut state = AppState::test_new();
+
+        // No active project
+        assert!(state.active_project_id().is_none());
+
+        // With active project - should return a hash, not directory name
+        let project = kild_core::projects::types::test_helpers::make_test_project(
+            PathBuf::from("/Users/test/Projects/my-project"),
+            "My Project".to_string(),
+        );
+        state.projects.add(project).unwrap();
+        // First project is automatically selected
+        let project_id = state.active_project_id();
+        assert!(project_id.is_some());
+        // Should be a hex hash, not the directory name
+        let id = project_id.unwrap();
+        assert!(!id.is_empty());
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_filtered_displays_no_active_project() {
+        let make_session = |id: &str, project_id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: project_id.to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
+            SessionInfo {
+                session: make_session("1", "project-a"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+            SessionInfo {
+                session: make_session("2", "project-b"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+        ]);
+
+        // No active project - should return all
+        let filtered = state.filtered_displays();
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn test_filtered_displays_with_active_project() {
+        // Use the actual hash for the project path
+        let project_path = PathBuf::from("/Users/test/Projects/project-a");
+        let project_id_a = kild_core::projects::generate_project_id(&project_path);
+        let project_id_b =
+            kild_core::projects::generate_project_id(&PathBuf::from("/other/project"));
+
+        let make_session = |id: &str, project_id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: project_id.to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
+            SessionInfo {
+                session: make_session("1", &project_id_a),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+            SessionInfo {
+                session: make_session("2", &project_id_b),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+            SessionInfo {
+                session: make_session("3", &project_id_a),
+                process_status: ProcessStatus::Running,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+        ]);
+
+        // Active project set - should filter
+        // Add project and select it
+        let project = kild_core::projects::types::test_helpers::make_test_project(
+            project_path.clone(),
+            "Project A".to_string(),
+        );
+        state.projects.add(project).unwrap();
+        // First project is auto-selected, so this should filter
+        let filtered = state.filtered_displays();
+        assert_eq!(filtered.len(), 2);
+        assert!(
+            filtered
+                .iter()
+                .all(|d| d.session.project_id == project_id_a)
+        );
+    }
+
+    #[test]
+    fn test_filtered_displays_returns_empty_when_no_matching_project() {
+        let make_session = |id: &str, project_id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: project_id.to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![SessionInfo {
+            session: make_session("1", "other-project-hash"),
+            process_status: ProcessStatus::Stopped,
+            git_status: GitStatus::Unknown,
+            diff_stats: None,
+        }]);
+
+        // Active project set to a different path - should return empty
+        let project = kild_core::projects::types::test_helpers::make_test_project(
+            PathBuf::from("/different/project/path"),
+            "Different Project".to_string(),
+        );
+        state.projects.add(project).unwrap();
+        let filtered = state.filtered_displays();
+        assert!(
+            filtered.is_empty(),
+            "Should return empty when no kilds match active project"
+        );
+    }
+
+    #[test]
+    fn test_selected_kild_returns_none_when_kild_removed_after_refresh() {
+        let make_session = |id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![SessionInfo {
+            session: make_session("test-id"),
+            process_status: ProcessStatus::Stopped,
+            git_status: GitStatus::Unknown,
+            diff_stats: None,
+        }]);
+        state.selection.select("test-id".to_string());
+
+        // Verify selection works initially
+        assert!(state.selected_kild().is_some());
+
+        // Simulate refresh that removes the kild (e.g., destroyed via CLI)
+        state.sessions.set_displays(vec![]);
+
+        // Selection ID still set, but selected_kild() should return None gracefully
+        assert!(state.selection.has_selection());
+        assert!(
+            state.selected_kild().is_none(),
+            "Should return None when selected kild no longer exists"
+        );
+    }
+
+    #[test]
+    fn test_selected_kild_persists_after_refresh_when_kild_still_exists() {
+        let make_session = |id: &str| Session {
+            id: id.to_string(),
+            branch: format!("branch-{}", id),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![SessionInfo {
+            session: make_session("test-id"),
+            process_status: ProcessStatus::Stopped,
+            git_status: GitStatus::Unknown,
+            diff_stats: None,
+        }]);
+        state.selection.select("test-id".to_string());
+
+        // Verify initial selection
+        assert!(state.selected_kild().is_some());
+
+        // Simulate refresh that keeps the same kild (new display list with same ID)
+        state.sessions.set_displays(vec![SessionInfo {
+            session: make_session("test-id"),
+            process_status: ProcessStatus::Running, // Status may change
+            git_status: GitStatus::Dirty,           // Git status may change
+            diff_stats: None,
+        }]);
+
+        // Selection should persist
+        let selected = state.selected_kild();
+        assert!(selected.is_some());
+        assert_eq!(selected.unwrap().session.id, "test-id");
+    }
+
+    #[test]
+    fn test_clear_selection_clears_selection() {
+        let mut state = AppState::test_new();
+        state.selection.select("test-id".to_string());
+
+        assert!(state.selection.has_selection());
+
+        state.clear_selection();
+
+        assert!(
+            !state.selection.has_selection(),
+            "clear_selection should clear the selection"
+        );
+    }
+
+    #[test]
+    fn test_destroy_should_clear_selection_when_selected_kild_destroyed() {
+        let make_session = |id: &str, branch: &str| Session {
+            id: id.to_string(),
+            branch: branch.to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
+            SessionInfo {
+                session: make_session("id-1", "branch-1"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+            SessionInfo {
+                session: make_session("id-2", "branch-2"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+        ]);
+        state.selection.select("id-1".to_string());
+
+        // Simulate destroy of selected kild - the destroy handler logic:
+        // if selected_kild().session.branch == destroyed_branch { clear_selection() }
+        let destroyed_branch = "branch-1";
+        if state
+            .selected_kild()
+            .is_some_and(|s| s.session.branch == destroyed_branch)
+        {
+            state.clear_selection();
+        }
+        state
+            .sessions
+            .displays_mut()
+            .retain(|d| d.session.branch != destroyed_branch);
+
+        // Selection should be cleared
+        assert!(
+            !state.selection.has_selection(),
+            "Selection should be cleared when selected kild is destroyed"
+        );
+    }
+
+    #[test]
+    fn test_destroy_preserves_selection_when_different_kild_destroyed() {
+        let make_session = |id: &str, branch: &str| Session {
+            id: id.to_string(),
+            branch: branch.to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            project_id: "test-project".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            process_id: None,
+            process_name: None,
+            process_start_time: None,
+            terminal_type: None,
+            terminal_window_id: None,
+            command: String::new(),
+            last_activity: None,
+            note: None,
+        };
+
+        let mut state = AppState::test_new();
+        state.sessions.set_displays(vec![
+            SessionInfo {
+                session: make_session("id-1", "branch-1"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+            SessionInfo {
+                session: make_session("id-2", "branch-2"),
+                process_status: ProcessStatus::Stopped,
+                git_status: GitStatus::Unknown,
+                diff_stats: None,
+            },
+        ]);
+        state.selection.select("id-1".to_string());
+
+        // Destroy branch-2 (not selected)
+        let destroyed_branch = "branch-2";
+        if state
+            .selected_kild()
+            .is_some_and(|s| s.session.branch == destroyed_branch)
+        {
+            state.clear_selection();
+        }
+        state
+            .sessions
+            .displays_mut()
+            .retain(|d| d.session.branch != destroyed_branch);
+
+        // Selection of branch-1 should persist
+        assert_eq!(
+            state.selection.id(),
+            Some("id-1"),
+            "Selection should persist when a different kild is destroyed"
+        );
+        assert!(state.selected_kild().is_some());
+    }
+}
