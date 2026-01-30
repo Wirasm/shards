@@ -23,6 +23,7 @@ pub mod logging;
 pub mod process;
 pub mod projects;
 pub mod sessions;
+pub mod state;
 pub mod terminal;
 
 // Re-export commonly used types at crate root for convenience
@@ -34,6 +35,7 @@ pub use sessions::types::{
     CompleteResult, CreateSessionRequest, DestroySafetyInfo, GitStatus, PrCheckResult,
     ProcessStatus, Session, SessionStatus,
 };
+pub use state::{Command, Store};
 
 // Re-export handler modules as the primary API
 pub use cleanup::handler as cleanup_ops;
