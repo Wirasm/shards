@@ -45,7 +45,7 @@ pub enum InteractionError {
     #[error("No element found with text: '{text}'")]
     ElementNotFound { text: String },
 
-    #[error("Multiple elements found with text '{text}': found {count}")]
+    #[error("Multiple elements found with text '{text}': found {count}, expected 1")]
     ElementAmbiguous { text: String, count: usize },
 
     #[error("Element has no position data")]
@@ -245,7 +245,7 @@ mod tests {
         };
         assert_eq!(
             error.to_string(),
-            "Multiple elements found with text 'OK': found 3"
+            "Multiple elements found with text 'OK': found 3, expected 1"
         );
         assert_eq!(error.error_code(), "INTERACTION_ELEMENT_AMBIGUOUS");
         assert!(error.is_user_error());

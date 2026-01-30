@@ -458,17 +458,18 @@ fn handle_elements_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
         Ok(result) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
-            } else if result.elements.is_empty() {
-                println!("No elements found in window \"{}\"", result.window);
+            } else if result.elements().is_empty() {
+                println!("No elements found in window \"{}\"", result.window());
             } else {
                 println!(
                     "Elements in \"{}\" ({} found):",
-                    result.window, result.count
+                    result.window(),
+                    result.count()
                 );
-                table::print_elements_table(&result.elements);
+                table::print_elements_table(result.elements());
             }
 
-            info!(event = "cli.elements_completed", count = result.count);
+            info!(event = "cli.elements_completed", count = result.count());
             Ok(())
         }
         Err(e) => {
@@ -499,25 +500,25 @@ fn handle_find_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 println!("{}", serde_json::to_string_pretty(&element)?);
             } else {
                 println!("Found element:");
-                println!("  Role: {}", element.role);
-                if let Some(title) = &element.title {
+                println!("  Role: {}", element.role());
+                if let Some(title) = element.title() {
                     println!("  Title: {}", title);
                 }
-                if let Some(value) = &element.value {
+                if let Some(value) = element.value() {
                     println!("  Value: {}", value);
                 }
-                if let Some(desc) = &element.description {
+                if let Some(desc) = element.description() {
                     println!("  Description: {}", desc);
                 }
-                println!("  Position: ({}, {})", element.x, element.y);
-                println!("  Size: {}x{}", element.width, element.height);
-                println!("  Enabled: {}", element.enabled);
+                println!("  Position: ({}, {})", element.x(), element.y());
+                println!("  Size: {}x{}", element.width(), element.height());
+                println!("  Enabled: {}", element.enabled());
             }
 
             info!(
                 event = "cli.find_completed",
                 text = text.as_str(),
-                role = element.role
+                role = element.role()
             );
             Ok(())
         }

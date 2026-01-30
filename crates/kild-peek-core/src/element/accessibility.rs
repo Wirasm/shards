@@ -102,7 +102,13 @@ fn read_element_properties(element: AXUIElementRef) -> Option<RawElement> {
     let description = get_string_attribute(element, kAXDescriptionAttribute);
     let position = get_position(element);
     let size = get_size(element);
-    let enabled = get_boolean_attribute(element, kAXEnabledAttribute).unwrap_or(true);
+    let enabled = get_boolean_attribute(element, kAXEnabledAttribute).unwrap_or_else(|| {
+        debug!(
+            event = "peek.core.element.enabled_default_fallback",
+            message = "enabled attribute unavailable, defaulting to true"
+        );
+        true
+    });
 
     Some(RawElement {
         role,
@@ -127,6 +133,14 @@ fn get_string_attribute(element: AXUIElementRef, attribute: &str) -> Option<Stri
     };
 
     if result != kAXErrorSuccess || value.is_null() {
+        if result != kAXErrorNoValue as AXError && result != kAXErrorAttributeUnsupported as AXError
+        {
+            debug!(
+                event = "peek.core.element.attribute_read_failed",
+                attribute = attribute,
+                error_code = result
+            );
+        }
         return None;
     }
 
@@ -155,6 +169,14 @@ fn get_boolean_attribute(element: AXUIElementRef, attribute: &str) -> Option<boo
     };
 
     if result != kAXErrorSuccess || value.is_null() {
+        if result != kAXErrorNoValue as AXError && result != kAXErrorAttributeUnsupported as AXError
+        {
+            debug!(
+                event = "peek.core.element.attribute_read_failed",
+                attribute = attribute,
+                error_code = result
+            );
+        }
         return None;
     }
 
@@ -186,12 +208,20 @@ fn get_ax_value_point(element: AXUIElementRef, attribute: &str) -> Option<(f64, 
     let cf_attr = CFString::new(attribute);
     let mut value: core_foundation::base::CFTypeRef = ptr::null();
 
-    // SAFETY: Standard AXUIElementCopyAttributeValue call.
+    // SAFETY: Standard AXUIElementCopyAttributeValue call (Copy Rule: +1 retained ref).
     let result = unsafe {
         AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value)
     };
 
     if result != kAXErrorSuccess || value.is_null() {
+        if result != kAXErrorNoValue as AXError && result != kAXErrorAttributeUnsupported as AXError
+        {
+            debug!(
+                event = "peek.core.element.attribute_read_failed",
+                attribute = attribute,
+                error_code = result
+            );
+        }
         return None;
     }
 
@@ -221,12 +251,20 @@ fn get_ax_value_size(element: AXUIElementRef, attribute: &str) -> Option<(f64, f
     let cf_attr = CFString::new(attribute);
     let mut value: core_foundation::base::CFTypeRef = ptr::null();
 
-    // SAFETY: Standard AXUIElementCopyAttributeValue call.
+    // SAFETY: Standard AXUIElementCopyAttributeValue call (Copy Rule: +1 retained ref).
     let result = unsafe {
         AXUIElementCopyAttributeValue(element, cf_attr.as_concrete_TypeRef(), &mut value)
     };
 
     if result != kAXErrorSuccess || value.is_null() {
+        if result != kAXErrorNoValue as AXError && result != kAXErrorAttributeUnsupported as AXError
+        {
+            debug!(
+                event = "peek.core.element.attribute_read_failed",
+                attribute = attribute,
+                error_code = result
+            );
+        }
         return None;
     }
 

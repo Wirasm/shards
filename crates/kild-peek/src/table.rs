@@ -179,20 +179,20 @@ pub fn print_monitors_table(monitors: &[MonitorInfo]) {
 pub fn print_elements_table(elements: &[ElementInfo]) {
     let role_width = elements
         .iter()
-        .map(|e| e.role.chars().count())
+        .map(|e| e.role().chars().count())
         .max()
         .unwrap_or(4)
         .clamp(4, 20);
     let title_width = elements
         .iter()
-        .filter_map(|e| e.title.as_ref())
+        .filter_map(|e| e.title())
         .map(|t| t.chars().count())
         .max()
         .unwrap_or(5)
         .clamp(5, 30);
     let value_width = elements
         .iter()
-        .filter_map(|e| e.value.as_ref())
+        .filter_map(|e| e.value())
         .map(|v| v.chars().count())
         .max()
         .unwrap_or(5)
@@ -238,15 +238,15 @@ pub fn print_elements_table(elements: &[ElementInfo]) {
 
     // Rows
     for elem in elements {
-        let title = elem.title.as_deref().unwrap_or("-");
-        let value = elem.value.as_deref().unwrap_or("-");
-        let pos = format!("x:{} y:{}", elem.x, elem.y);
-        let size = format!("{}x{}", elem.width, elem.height);
-        let enabled = if elem.enabled { "Yes" } else { "No" };
+        let title = elem.title().unwrap_or("-");
+        let value = elem.value().unwrap_or("-");
+        let pos = format!("x:{} y:{}", elem.x(), elem.y());
+        let size = format!("{}x{}", elem.width(), elem.height());
+        let enabled = if elem.enabled() { "Yes" } else { "No" };
 
         println!(
             "│ {:<role_width$} │ {:<title_width$} │ {:<value_width$} │ {:<pos_width$} │ {:<size_width$} │ {:<enabled_width$} │",
-            truncate(&elem.role, role_width),
+            truncate(elem.role(), role_width),
             truncate(title, title_width),
             truncate(value, value_width),
             truncate(&pos, pos_width),

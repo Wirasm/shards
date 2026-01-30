@@ -151,7 +151,10 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
 ///
 /// Subtracts window position (window.x, window.y) from element's screen coordinates
 /// to produce coordinates relative to the window's top-left corner.
-pub(crate) fn convert_raw_to_element_info(raw: accessibility::RawElement, window: &WindowInfo) -> ElementInfo {
+pub(crate) fn convert_raw_to_element_info(
+    raw: accessibility::RawElement,
+    window: &WindowInfo,
+) -> ElementInfo {
     let (x, y) = match raw.position {
         Some((abs_x, abs_y)) => {
             let rel_x = abs_x as i32 - window.x();

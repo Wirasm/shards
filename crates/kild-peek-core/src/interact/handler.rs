@@ -478,9 +478,9 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
         "click_text",
         serde_json::json!({
             "text": &request.text,
-            "element_role": &element.role,
-            "element_x": element.x,
-            "element_y": element.y,
+            "element_role": element.role(),
+            "element_x": element.x(),
+            "element_y": element.y(),
             "center_x": center_x,
             "center_y": center_y,
             "screen_x": screen_x,
