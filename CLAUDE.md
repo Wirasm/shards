@@ -165,11 +165,12 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `process/` - PID tracking and process info
 - `logging/` - Tracing initialization with JSON output
 - `events/` - App lifecycle event helpers
+- `state/` - Command pattern for business operations (Command enum, Store trait)
 
 **Key modules in kild-ui:**
 - `theme.rs` - Centralized color palette, typography, and spacing constants (Tallinn Night brand system)
 - `components/` - Reusable UI components (Button, StatusIndicator, Modal, TextInput with themed variants)
-- `state/` - Type-safe state modules with encapsulated AppState facade (app_state.rs, dialog.rs, errors.rs, selection.rs, sessions.rs)
+- `state/` - Type-safe state modules with encapsulated AppState facade (app_state.rs, dialog.rs, errors.rs, selection.rs, sessions.rs, ui_commands.rs)
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
 - `views/` - GPUI components (main view with 3-column layout: sidebar, kild list, detail panel)
 - `watcher.rs` - File system watcher for instant UI updates on session changes
@@ -188,6 +189,8 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 **Module pattern:** Each domain starts with `errors.rs`, `types.rs`, `mod.rs`. Additional files vary by domain (e.g., `operations.rs`/`handler.rs` for sessions, `manager.rs`/`persistence.rs` for projects).
 
 **CLI interaction:** Commands delegate directly to `kild-core` handlers. No business logic in CLI layer.
+
+**Command pattern:** Business operations are defined as `Command` enum variants in `kild-core/state/commands.rs`. The `Store` trait in `kild-core/state/store.rs` provides the dispatch contract. UI-specific state mutations use `UICommand` enum in `kild-ui/state/ui_commands.rs`.
 
 ## Code Style Preferences
 
