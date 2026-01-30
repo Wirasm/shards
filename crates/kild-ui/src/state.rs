@@ -89,9 +89,6 @@ impl DialogState {
     }
 }
 
-/// Type alias for backward compatibility within the UI.
-pub type KildDisplay = SessionInfo;
-
 /// Error from a kild operation, with the branch name for context.
 #[derive(Clone, Debug)]
 pub struct OperationError {
@@ -207,12 +204,12 @@ impl SelectionState {
 ///
 /// Provides a clean API for managing kild displays, filtering by project,
 /// and tracking refresh timestamps. Encapsulates:
-/// - `displays`: The list of KildDisplay items
+/// - `displays`: The list of SessionInfo items
 /// - `load_error`: Error from last refresh attempt
 /// - `last_refresh`: Timestamp of last successful refresh
 pub struct SessionStore {
     /// List of kild displays (private to enforce invariants).
-    displays: Vec<KildDisplay>,
+    displays: Vec<SessionInfo>,
     /// Error from last refresh attempt, if any.
     load_error: Option<String>,
     /// Timestamp of last successful status refresh.
@@ -232,7 +229,7 @@ impl SessionStore {
 
     /// Create a session store with provided data (for testing).
     #[cfg(test)]
-    pub fn from_data(displays: Vec<KildDisplay>, load_error: Option<String>) -> Self {
+    pub fn from_data(displays: Vec<SessionInfo>, load_error: Option<String>) -> Self {
         Self {
             displays,
             load_error,
@@ -242,13 +239,13 @@ impl SessionStore {
 
     /// Set displays directly (for testing).
     #[cfg(test)]
-    pub fn set_displays(&mut self, displays: Vec<KildDisplay>) {
+    pub fn set_displays(&mut self, displays: Vec<SessionInfo>) {
         self.displays = displays;
     }
 
     /// Get mutable access to displays (for testing status updates).
     #[cfg(test)]
-    pub fn displays_mut(&mut self) -> &mut Vec<KildDisplay> {
+    pub fn displays_mut(&mut self) -> &mut Vec<SessionInfo> {
         &mut self.displays
     }
 
@@ -303,7 +300,7 @@ impl SessionStore {
     }
 
     /// Get all displays.
-    pub fn displays(&self) -> &[KildDisplay] {
+    pub fn displays(&self) -> &[SessionInfo] {
         &self.displays
     }
 
@@ -311,7 +308,7 @@ impl SessionStore {
     ///
     /// Returns all displays where `session.project_id` matches the given ID.
     /// If `project_id` is `None`, returns all displays (unfiltered).
-    pub fn filtered_by_project(&self, project_id: Option<&str>) -> Vec<&KildDisplay> {
+    pub fn filtered_by_project(&self, project_id: Option<&str>) -> Vec<&SessionInfo> {
         match project_id {
             Some(id) => self
                 .displays
@@ -632,7 +629,7 @@ impl AppState {
     /// Filters kilds where `session.project_id` matches the derived ID of the active project path.
     /// Uses path-based hashing that matches kild-core's `generate_project_id`.
     /// If no active project is set, returns all displays (unfiltered).
-    pub fn filtered_displays(&self) -> Vec<&KildDisplay> {
+    pub fn filtered_displays(&self) -> Vec<&SessionInfo> {
         self.sessions
             .filtered_by_project(self.active_project_id().as_deref())
     }
@@ -662,7 +659,7 @@ impl AppState {
     ///
     /// Returns `None` if no kild is selected or if the selected kild no longer
     /// exists in the current display list (e.g., after being destroyed externally).
-    pub fn selected_kild(&self) -> Option<&KildDisplay> {
+    pub fn selected_kild(&self) -> Option<&SessionInfo> {
         let id = self.selection.id()?;
 
         match self.sessions.displays().iter().find(|d| d.session.id == id) {
@@ -840,7 +837,7 @@ impl AppState {
     // =========================================================================
 
     /// Get all session displays.
-    pub fn displays(&self) -> &[KildDisplay] {
+    pub fn displays(&self) -> &[SessionInfo] {
         self.sessions.displays()
     }
 
@@ -873,7 +870,7 @@ impl AppState {
 
     /// Create an AppState for testing with provided displays.
     #[cfg(test)]
-    pub fn test_with_displays(displays: Vec<KildDisplay>) -> Self {
+    pub fn test_with_displays(displays: Vec<SessionInfo>) -> Self {
         Self {
             sessions: SessionStore::from_data(displays, None),
             dialog: DialogState::None,
@@ -1067,7 +1064,7 @@ mod tests {
             note: None,
         };
 
-        let display = KildDisplay::from_session(session);
+        let display = SessionInfo::from_session(session);
         assert_eq!(display.process_status, ProcessStatus::Stopped);
         // Non-existent path should result in Unknown git status
         assert_eq!(display.git_status, GitStatus::Unknown);
@@ -1101,7 +1098,7 @@ mod tests {
             note: None,
         };
 
-        let display = KildDisplay::from_session(session);
+        let display = SessionInfo::from_session(session);
         // With window detection fallback, should attempt to check window
         // In test environment without Ghostty running, will fall back to Stopped
         assert!(
@@ -1172,7 +1169,7 @@ mod tests {
             note: None,
         };
 
-        let display = KildDisplay::from_session(session);
+        let display = SessionInfo::from_session(session);
 
         assert_eq!(display.git_status, GitStatus::Dirty);
         assert!(
@@ -1477,19 +1474,19 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: session_with_dead_pid,
                 process_status: ProcessStatus::Running, // Start as Running (incorrect)
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: session_with_live_pid,
                 process_status: ProcessStatus::Stopped, // Start as Stopped (incorrect)
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: session_no_pid,
                 process_status: ProcessStatus::Stopped, // Start as Stopped (correct)
                 git_status: GitStatus::Unknown,
@@ -1570,31 +1567,31 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: make_session("1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("2", "branch-2"),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("3", "branch-3"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("4", "branch-4"),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("5", "branch-5"),
                 process_status: ProcessStatus::Unknown,
                 git_status: GitStatus::Unknown,
@@ -1674,13 +1671,13 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: make_session("1", "project-a"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("2", "project-b"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
@@ -1726,19 +1723,19 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: make_session("1", &project_id_a),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("2", &project_id_b),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("3", &project_id_a),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
@@ -1789,7 +1786,7 @@ mod tests {
         };
 
         let mut state = AppState::test_new();
-        state.sessions.set_displays(vec![KildDisplay {
+        state.sessions.set_displays(vec![SessionInfo {
             session: make_session("1", "other-project-hash"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
@@ -1835,7 +1832,7 @@ mod tests {
         };
 
         let mut state = AppState::test_new();
-        state.sessions.set_displays(vec![KildDisplay {
+        state.sessions.set_displays(vec![SessionInfo {
             session: make_session("test-id"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
@@ -1883,7 +1880,7 @@ mod tests {
         };
 
         let mut state = AppState::test_new();
-        state.sessions.set_displays(vec![KildDisplay {
+        state.sessions.set_displays(vec![SessionInfo {
             session: make_session("test-id"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
@@ -1895,7 +1892,7 @@ mod tests {
         assert!(state.selected_kild().is_some());
 
         // Simulate refresh that keeps the same kild (new display list with same ID)
-        state.sessions.set_displays(vec![KildDisplay {
+        state.sessions.set_displays(vec![SessionInfo {
             session: make_session("test-id"),
             process_status: ProcessStatus::Running, // Status may change
             git_status: GitStatus::Dirty,           // Git status may change
@@ -1950,13 +1947,13 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: make_session("id-1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("id-2", "branch-2"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
@@ -2013,13 +2010,13 @@ mod tests {
 
         let mut state = AppState::test_new();
         state.sessions.set_displays(vec![
-            KildDisplay {
+            SessionInfo {
                 session: make_session("id-1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
                 diff_stats: None,
             },
-            KildDisplay {
+            SessionInfo {
                 session: make_session("id-2", "branch-2"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
