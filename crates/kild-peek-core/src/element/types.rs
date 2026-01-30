@@ -86,20 +86,24 @@ impl ElementInfo {
 /// Request to list all elements in a window
 #[derive(Debug, Clone)]
 pub struct ElementsRequest {
-    pub target: InteractionTarget,
+    target: InteractionTarget,
 }
 
 impl ElementsRequest {
     pub fn new(target: InteractionTarget) -> Self {
         Self { target }
     }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
 }
 
 /// Request to find a specific element by text
 #[derive(Debug, Clone)]
 pub struct FindRequest {
-    pub target: InteractionTarget,
-    pub text: String,
+    target: InteractionTarget,
+    text: String,
 }
 
 impl FindRequest {
@@ -108,6 +112,14 @@ impl FindRequest {
             target,
             text: text.into(),
         }
+    }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -245,7 +257,7 @@ mod tests {
         let req = ElementsRequest::new(InteractionTarget::App {
             app: "Finder".to_string(),
         });
-        match &req.target {
+        match req.target() {
             InteractionTarget::App { app } => assert_eq!(app, "Finder"),
             _ => panic!("Expected App target"),
         }
@@ -259,7 +271,7 @@ mod tests {
             },
             "Submit",
         );
-        assert_eq!(req.text, "Submit");
+        assert_eq!(req.text(), "Submit");
     }
 
     #[test]

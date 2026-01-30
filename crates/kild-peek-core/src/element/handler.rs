@@ -57,12 +57,12 @@ fn map_window_error(error: WindowError) -> ElementError {
 pub fn list_elements(request: &ElementsRequest) -> Result<ElementsResult, ElementError> {
     info!(
         event = "peek.core.element.list_started",
-        target = ?request.target
+        target = ?request.target()
     );
 
     check_accessibility_permission()?;
 
-    let window = find_window_by_target(&request.target)?;
+    let window = find_window_by_target(request.target())?;
 
     if window.is_minimized() {
         return Err(ElementError::WindowMinimized {
@@ -77,7 +77,7 @@ pub fn list_elements(request: &ElementsRequest) -> Result<ElementsResult, Elemen
 
     // Convert RawElement → ElementInfo (screen-absolute → window-relative coordinates)
     let elements: Vec<ElementInfo> = raw_elements
-        .into_iter()
+        .iter()
         .map(|raw| convert_raw_to_element_info(raw, &window))
         .collect();
 
@@ -94,40 +94,40 @@ pub fn list_elements(request: &ElementsRequest) -> Result<ElementsResult, Elemen
 pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> {
     info!(
         event = "peek.core.element.find_started",
-        text = &request.text,
-        target = ?request.target
+        text = request.text(),
+        target = ?request.target()
     );
 
-    if request.text.is_empty() {
+    if request.text().is_empty() {
         return Err(ElementError::ElementNotFound {
             text: String::new(),
         });
     }
 
     // List all elements then filter
-    let elements_request = ElementsRequest::new(request.target.clone());
+    let elements_request = ElementsRequest::new(request.target().clone());
     let result = list_elements(&elements_request)?;
 
     let matches: Vec<&ElementInfo> = result
         .elements()
         .iter()
-        .filter(|e| e.matches_text(&request.text))
+        .filter(|e| e.matches_text(request.text()))
         .collect();
 
     match matches.len() {
         0 => {
             info!(
                 event = "peek.core.element.find_not_found",
-                text = &request.text
+                text = request.text()
             );
             Err(ElementError::ElementNotFound {
-                text: request.text.clone(),
+                text: request.text().to_string(),
             })
         }
         1 => {
             info!(
                 event = "peek.core.element.find_completed",
-                text = &request.text,
+                text = request.text(),
                 role = matches[0].role()
             );
             Ok(matches[0].clone())
@@ -135,11 +135,11 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
         count => {
             warn!(
                 event = "peek.core.element.find_ambiguous",
-                text = &request.text,
+                text = request.text(),
                 count = count
             );
             Err(ElementError::ElementAmbiguous {
-                text: request.text.clone(),
+                text: request.text().to_string(),
                 count,
             })
         }
@@ -152,10 +152,10 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
 /// Subtracts window position (window.x, window.y) from element's screen coordinates
 /// to produce coordinates relative to the window's top-left corner.
 pub(crate) fn convert_raw_to_element_info(
-    raw: accessibility::RawElement,
+    raw: &accessibility::RawElement,
     window: &WindowInfo,
 ) -> ElementInfo {
-    let (x, y) = match raw.position {
+    let (x, y) = match raw.position() {
         Some((abs_x, abs_y)) => {
             let rel_x = abs_x as i32 - window.x();
             let rel_y = abs_y as i32 - window.y();
@@ -164,21 +164,21 @@ pub(crate) fn convert_raw_to_element_info(
         None => (0, 0),
     };
 
-    let (width, height) = match raw.size {
+    let (width, height) = match raw.size() {
         Some((w, h)) => (w as u32, h as u32),
         None => (0, 0),
     };
 
     ElementInfo::new(
-        raw.role,
-        raw.title,
-        raw.value,
-        raw.description,
+        raw.role().to_string(),
+        raw.title().map(String::from),
+        raw.value().map(String::from),
+        raw.description().map(String::from),
         x,
         y,
         width,
         height,
-        raw.enabled,
+        raw.enabled(),
     )
 }
 
@@ -201,17 +201,17 @@ mod tests {
             Some(1234),
         );
 
-        let raw = RawElement {
-            role: "AXButton".to_string(),
-            title: Some("OK".to_string()),
-            value: None,
-            description: None,
-            position: Some((250.0, 350.0)),
-            size: Some((80.0, 30.0)),
-            enabled: true,
-        };
+        let raw = RawElement::new(
+            "AXButton".to_string(),
+            Some("OK".to_string()),
+            None,
+            None,
+            Some((250.0, 350.0)),
+            Some((80.0, 30.0)),
+            true,
+        );
 
-        let elem = convert_raw_to_element_info(raw, &window);
+        let elem = convert_raw_to_element_info(&raw, &window);
         assert_eq!(elem.role(), "AXButton");
         assert_eq!(elem.title(), Some("OK"));
         // 250 - 100 = 150 (screen x - window x)
@@ -237,17 +237,9 @@ mod tests {
             None,
         );
 
-        let raw = RawElement {
-            role: "AXGroup".to_string(),
-            title: None,
-            value: None,
-            description: None,
-            position: None,
-            size: None,
-            enabled: true,
-        };
+        let raw = RawElement::new("AXGroup".to_string(), None, None, None, None, None, true);
 
-        let elem = convert_raw_to_element_info(raw, &window);
+        let elem = convert_raw_to_element_info(&raw, &window);
         assert_eq!(elem.x(), 0);
         assert_eq!(elem.y(), 0);
         assert_eq!(elem.width(), 0);

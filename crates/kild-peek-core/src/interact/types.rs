@@ -61,8 +61,8 @@ impl KeyComboRequest {
 /// Request to click an element identified by text content
 #[derive(Debug, Clone)]
 pub struct ClickTextRequest {
-    pub target: InteractionTarget,
-    pub text: String,
+    target: InteractionTarget,
+    text: String,
 }
 
 impl ClickTextRequest {
@@ -71,6 +71,14 @@ impl ClickTextRequest {
             target,
             text: text.into(),
         }
+    }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -204,8 +212,8 @@ mod tests {
             },
             "Submit",
         );
-        assert_eq!(req.text, "Submit");
-        match &req.target {
+        assert_eq!(req.text(), "Submit");
+        match req.target() {
             InteractionTarget::App { app } => assert_eq!(app, "Finder"),
             _ => panic!("Expected App target"),
         }
@@ -219,7 +227,7 @@ mod tests {
             },
             String::from("Create"),
         );
-        assert_eq!(req.text, "Create");
+        assert_eq!(req.text(), "Create");
     }
 
     #[test]

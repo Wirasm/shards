@@ -23,15 +23,67 @@ const AX_MESSAGING_TIMEOUT: f32 = 1.0;
 /// Raw element data from the Accessibility API
 #[derive(Debug, Clone)]
 pub struct RawElement {
-    pub role: String,
-    pub title: Option<String>,
-    pub value: Option<String>,
-    pub description: Option<String>,
+    role: String,
+    title: Option<String>,
+    value: Option<String>,
+    description: Option<String>,
     /// Screen-absolute position
-    pub position: Option<(f64, f64)>,
+    position: Option<(f64, f64)>,
     /// Element size
-    pub size: Option<(f64, f64)>,
-    pub enabled: bool,
+    size: Option<(f64, f64)>,
+    enabled: bool,
+}
+
+impl RawElement {
+    /// Create a new RawElement. Internal use only.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        role: String,
+        title: Option<String>,
+        value: Option<String>,
+        description: Option<String>,
+        position: Option<(f64, f64)>,
+        size: Option<(f64, f64)>,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            role,
+            title,
+            value,
+            description,
+            position,
+            size,
+            enabled,
+        }
+    }
+
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    pub fn value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn position(&self) -> Option<(f64, f64)> {
+        self.position
+    }
+
+    pub fn size(&self) -> Option<(f64, f64)> {
+        self.size
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
 }
 
 /// Query all UI elements from an application by PID
@@ -110,7 +162,7 @@ fn read_element_properties(element: AXUIElementRef) -> Option<RawElement> {
         true
     });
 
-    Some(RawElement {
+    Some(RawElement::new(
         role,
         title,
         value,
@@ -118,7 +170,7 @@ fn read_element_properties(element: AXUIElementRef) -> Option<RawElement> {
         position,
         size,
         enabled,
-    })
+    ))
 }
 
 /// Get a string attribute from an AX element
@@ -343,15 +395,15 @@ mod tests {
 
     #[test]
     fn test_raw_element_debug() {
-        let elem = RawElement {
-            role: "AXButton".to_string(),
-            title: Some("OK".to_string()),
-            value: None,
-            description: None,
-            position: Some((100.0, 200.0)),
-            size: Some((80.0, 30.0)),
-            enabled: true,
-        };
+        let elem = RawElement::new(
+            "AXButton".to_string(),
+            Some("OK".to_string()),
+            None,
+            None,
+            Some((100.0, 200.0)),
+            Some((80.0, 30.0)),
+            true,
+        );
         let debug_str = format!("{:?}", elem);
         assert!(debug_str.contains("AXButton"));
         assert!(debug_str.contains("OK"));
@@ -359,19 +411,39 @@ mod tests {
 
     #[test]
     fn test_raw_element_clone() {
-        let elem = RawElement {
-            role: "AXTextField".to_string(),
-            title: None,
-            value: Some("hello".to_string()),
-            description: Some("text input".to_string()),
-            position: None,
-            size: None,
-            enabled: false,
-        };
+        let elem = RawElement::new(
+            "AXTextField".to_string(),
+            None,
+            Some("hello".to_string()),
+            Some("text input".to_string()),
+            None,
+            None,
+            false,
+        );
         let cloned = elem.clone();
-        assert_eq!(cloned.role, "AXTextField");
-        assert_eq!(cloned.value.as_deref(), Some("hello"));
-        assert!(!cloned.enabled);
+        assert_eq!(cloned.role(), "AXTextField");
+        assert_eq!(cloned.value(), Some("hello"));
+        assert!(!cloned.enabled());
+    }
+
+    #[test]
+    fn test_raw_element_getters() {
+        let elem = RawElement::new(
+            "AXButton".to_string(),
+            Some("Submit".to_string()),
+            Some("value".to_string()),
+            Some("desc".to_string()),
+            Some((10.0, 20.0)),
+            Some((100.0, 50.0)),
+            true,
+        );
+        assert_eq!(elem.role(), "AXButton");
+        assert_eq!(elem.title(), Some("Submit"));
+        assert_eq!(elem.value(), Some("value"));
+        assert_eq!(elem.description(), Some("desc"));
+        assert_eq!(elem.position(), Some((10.0, 20.0)));
+        assert_eq!(elem.size(), Some((100.0, 50.0)));
+        assert!(elem.enabled());
     }
 
     #[test]

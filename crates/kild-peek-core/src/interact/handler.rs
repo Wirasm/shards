@@ -368,14 +368,14 @@ pub fn send_key_combo(request: &KeyComboRequest) -> Result<InteractionResult, In
 pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, InteractionError> {
     info!(
         event = "peek.core.interact.click_text_started",
-        text = &request.text,
-        target = ?request.target
+        text = request.text(),
+        target = ?request.target()
     );
 
     check_accessibility_permission()?;
 
     // Find the window (without focusing yet)
-    let window = find_window_by_target(&request.target)?;
+    let window = find_window_by_target(request.target())?;
 
     if window.is_minimized() {
         return Err(InteractionError::WindowMinimized {
@@ -391,26 +391,26 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
 
     // Convert RawElement → ElementInfo (screen-absolute → window-relative coordinates)
     let elements: Vec<crate::element::ElementInfo> = raw_elements
-        .into_iter()
+        .iter()
         .map(|raw| crate::element::handler::convert_raw_to_element_info(raw, &window))
         .collect();
 
     // Find matching elements
     let matches: Vec<&crate::element::ElementInfo> = elements
         .iter()
-        .filter(|e| e.matches_text(&request.text))
+        .filter(|e| e.matches_text(request.text()))
         .collect();
 
     let element = match matches.len() {
         0 => {
             return Err(InteractionError::ElementNotFound {
-                text: request.text.clone(),
+                text: request.text().to_string(),
             });
         }
         1 => matches[0],
         count => {
             return Err(InteractionError::ElementAmbiguous {
-                text: request.text.clone(),
+                text: request.text().to_string(),
                 count,
             });
         }
@@ -460,7 +460,7 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
         event = "peek.core.interact.click_text_posting",
         screen_x = screen_x,
         screen_y = screen_y,
-        text = &request.text
+        text = request.text()
     );
     mouse_down.post(CGEventTapLocation::HID);
     thread::sleep(MOUSE_EVENT_DELAY);
@@ -468,7 +468,7 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
 
     info!(
         event = "peek.core.interact.click_text_completed",
-        text = &request.text,
+        text = request.text(),
         center_x = center_x,
         center_y = center_y,
         window_title = window.title()
@@ -477,7 +477,7 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
     Ok(InteractionResult::success(
         "click_text",
         serde_json::json!({
-            "text": &request.text,
+            "text": request.text(),
             "element_role": element.role(),
             "element_x": element.x(),
             "element_y": element.y(),
