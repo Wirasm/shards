@@ -1015,34 +1015,197 @@ mod tests {
     }
 
     #[test]
-    fn test_find_window_by_title_with_wait_timeout() {
-        // Use a very short timeout with a non-existent window
-        let result = find_window_by_title_with_wait("NONEXISTENT_WINDOW_UNIQUE_12345", 200);
+    fn test_poll_until_found_returns_immediately_on_success() {
+        let window = WindowInfo::new(
+            1,
+            "Test".to_string(),
+            "TestApp".to_string(),
+            0,
+            0,
+            800,
+            600,
+            false,
+            None,
+        );
+
+        let start = Instant::now();
+        let result = poll_until_found(
+            5000,
+            || Ok(window.clone()),
+            |e| e,
+            || WindowError::WaitTimeoutByTitle {
+                title: "Test".to_string(),
+                timeout_ms: 5000,
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "Should return immediately on first success"
+        );
+    }
+
+    #[test]
+    fn test_poll_until_found_retries_and_succeeds() {
+        use std::sync::{Arc, Mutex};
+        let attempts = Arc::new(Mutex::new(0u32));
+        let attempts_clone = attempts.clone();
+
+        let window = WindowInfo::new(
+            1,
+            "Test".to_string(),
+            "TestApp".to_string(),
+            0,
+            0,
+            800,
+            600,
+            false,
+            None,
+        );
+
+        let start = Instant::now();
+        let result = poll_until_found(
+            2000,
+            move || {
+                let mut count = attempts_clone.lock().unwrap();
+                *count += 1;
+                if *count < 3 {
+                    Err(WindowError::WindowNotFound {
+                        title: "Test".to_string(),
+                    })
+                } else {
+                    Ok(window.clone())
+                }
+            },
+            |e| e,
+            || WindowError::WaitTimeoutByTitle {
+                title: "Test".to_string(),
+                timeout_ms: 2000,
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(*attempts.lock().unwrap(), 3);
+        // Should have slept at least 200ms (2 retries * 100ms interval)
+        assert!(start.elapsed() >= Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_poll_until_found_propagates_non_retryable_errors() {
+        let start = Instant::now();
+        let result = poll_until_found(
+            5000,
+            || {
+                Err(WindowError::EnumerationFailed {
+                    message: "permission denied".to_string(),
+                })
+            },
+            |e| e,
+            || WindowError::WaitTimeoutByTitle {
+                title: "Test".to_string(),
+                timeout_ms: 5000,
+            },
+        );
+
+        // Should fail immediately, not retry for 5 seconds
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "Non-retryable errors should propagate immediately"
+        );
+        assert!(matches!(result, Err(WindowError::EnumerationFailed { .. })));
+    }
+
+    #[test]
+    fn test_poll_until_found_respects_timeout() {
+        let start = Instant::now();
+        let result = poll_until_found(
+            300,
+            || {
+                Err(WindowError::WindowNotFound {
+                    title: "Test".to_string(),
+                })
+            },
+            |e| e,
+            || WindowError::WaitTimeoutByTitle {
+                title: "Test".to_string(),
+                timeout_ms: 300,
+            },
+        );
+
+        let elapsed = start.elapsed();
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_TITLE");
-        }
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "Should wait at least the timeout duration, got {:?}",
+            elapsed
+        );
+        assert!(
+            elapsed < Duration::from_millis(600),
+            "Should not overshoot timeout significantly, got {:?}",
+            elapsed
+        );
+        assert!(matches!(
+            result,
+            Err(WindowError::WaitTimeoutByTitle { .. })
+        ));
+    }
+
+    #[test]
+    fn test_find_window_by_title_with_wait_timeout() {
+        let start = Instant::now();
+        let result = find_window_by_title_with_wait("NONEXISTENT_WINDOW_UNIQUE_12345", 200);
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            "WINDOW_WAIT_TIMEOUT_BY_TITLE"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "Should wait at least the timeout duration, got {:?}",
+            elapsed
+        );
     }
 
     #[test]
     fn test_find_window_by_app_with_wait_timeout() {
+        let start = Instant::now();
         let result = find_window_by_app_with_wait("NONEXISTENT_APP_UNIQUE_12345", 200);
+        let elapsed = start.elapsed();
+
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP");
-        }
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            "WINDOW_WAIT_TIMEOUT_BY_APP"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "Should wait at least the timeout duration, got {:?}",
+            elapsed
+        );
     }
 
     #[test]
     fn test_find_window_by_app_and_title_with_wait_timeout() {
+        let start = Instant::now();
         let result = find_window_by_app_and_title_with_wait(
             "NONEXISTENT_APP_UNIQUE_12345",
             "NONEXISTENT_TITLE",
             200,
         );
+        let elapsed = start.elapsed();
+
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert_eq!(e.error_code(), "WINDOW_WAIT_TIMEOUT_BY_APP_AND_TITLE");
-        }
+        assert_eq!(
+            result.unwrap_err().error_code(),
+            "WINDOW_WAIT_TIMEOUT_BY_APP_AND_TITLE"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(200),
+            "Should wait at least the timeout duration, got {:?}",
+            elapsed
+        );
     }
 }

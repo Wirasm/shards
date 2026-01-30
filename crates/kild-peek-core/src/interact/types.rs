@@ -14,10 +14,10 @@ pub enum InteractionTarget {
 /// Request to click at coordinates within a window
 #[derive(Debug, Clone)]
 pub struct ClickRequest {
-    pub target: InteractionTarget,
-    pub x: i32,
-    pub y: i32,
-    pub timeout_ms: Option<u64>,
+    target: InteractionTarget,
+    x: i32,
+    y: i32,
+    timeout_ms: Option<u64>,
 }
 
 impl ClickRequest {
@@ -34,14 +34,30 @@ impl ClickRequest {
         self.timeout_ms = Some(timeout_ms);
         self
     }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
+
+    pub fn x(&self) -> i32 {
+        self.x
+    }
+
+    pub fn y(&self) -> i32 {
+        self.y
+    }
+
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.timeout_ms
+    }
 }
 
 /// Request to type text into the focused element
 #[derive(Debug, Clone)]
 pub struct TypeRequest {
-    pub target: InteractionTarget,
-    pub text: String,
-    pub timeout_ms: Option<u64>,
+    target: InteractionTarget,
+    text: String,
+    timeout_ms: Option<u64>,
 }
 
 impl TypeRequest {
@@ -57,15 +73,27 @@ impl TypeRequest {
         self.timeout_ms = Some(timeout_ms);
         self
     }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.timeout_ms
+    }
 }
 
 /// Request to send a key combination
 #[derive(Debug, Clone)]
 pub struct KeyComboRequest {
-    pub target: InteractionTarget,
+    target: InteractionTarget,
     /// Key combination string, e.g., "cmd+s", "enter", "cmd+shift+p"
-    pub combo: String,
-    pub timeout_ms: Option<u64>,
+    combo: String,
+    timeout_ms: Option<u64>,
 }
 
 impl KeyComboRequest {
@@ -80,6 +108,18 @@ impl KeyComboRequest {
     pub fn with_wait(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
+    }
+
+    pub fn target(&self) -> &InteractionTarget {
+        &self.target
+    }
+
+    pub fn combo(&self) -> &str {
+        &self.combo
+    }
+
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.timeout_ms
     }
 }
 
@@ -160,9 +200,9 @@ mod tests {
             100,
             50,
         );
-        assert_eq!(req.x, 100);
-        assert_eq!(req.y, 50);
-        match &req.target {
+        assert_eq!(req.x(), 100);
+        assert_eq!(req.y(), 50);
+        match req.target() {
             InteractionTarget::Window { title } => assert_eq!(title, "Terminal"),
             _ => panic!("Expected Window target"),
         }
@@ -176,8 +216,8 @@ mod tests {
             },
             "hello world",
         );
-        assert_eq!(req.text, "hello world");
-        match &req.target {
+        assert_eq!(req.text(), "hello world");
+        match req.target() {
             InteractionTarget::App { app } => assert_eq!(app, "TextEdit"),
             _ => panic!("Expected App target"),
         }
@@ -192,8 +232,8 @@ mod tests {
             },
             "cmd+s",
         );
-        assert_eq!(req.combo, "cmd+s");
-        match &req.target {
+        assert_eq!(req.combo(), "cmd+s");
+        match req.target() {
             InteractionTarget::AppAndWindow { app, title } => {
                 assert_eq!(app, "Ghostty");
                 assert_eq!(title, "Terminal");
@@ -285,7 +325,7 @@ mod tests {
             100,
             50,
         );
-        assert!(req.timeout_ms.is_none());
+        assert!(req.timeout_ms().is_none());
     }
 
     #[test]
@@ -298,7 +338,7 @@ mod tests {
             50,
         )
         .with_wait(5000);
-        assert_eq!(req.timeout_ms, Some(5000));
+        assert_eq!(req.timeout_ms(), Some(5000));
     }
 
     #[test]
@@ -310,7 +350,7 @@ mod tests {
             "hello",
         )
         .with_wait(3000);
-        assert_eq!(req.timeout_ms, Some(3000));
+        assert_eq!(req.timeout_ms(), Some(3000));
     }
 
     #[test]
@@ -322,7 +362,7 @@ mod tests {
             "cmd+s",
         )
         .with_wait(10000);
-        assert_eq!(req.timeout_ms, Some(10000));
+        assert_eq!(req.timeout_ms(), Some(10000));
     }
 
     #[test]
