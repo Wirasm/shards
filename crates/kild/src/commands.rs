@@ -318,7 +318,19 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
     );
 
     // Pre-complete safety check (always — complete never bypasses uncommitted check)
-    if let Ok(safety_info) = session_handler::get_destroy_safety_info(branch) {
+    let safety_info = match session_handler::get_destroy_safety_info(branch) {
+        Ok(info) => Some(info),
+        Err(e) => {
+            warn!(
+                event = "cli.complete_safety_check_failed",
+                branch = branch,
+                error = %e
+            );
+            None
+        }
+    };
+
+    if let Some(safety_info) = &safety_info {
         if safety_info.has_warnings() {
             let warnings = safety_info.warning_messages();
             for warning in &warnings {
