@@ -76,27 +76,20 @@ fn find_window_by_target(
     target: &InteractionTarget,
     timeout_ms: Option<u64>,
 ) -> Result<WindowInfo, InteractionError> {
-    let result = match target {
-        InteractionTarget::Window { title } => {
-            if let Some(timeout) = timeout_ms {
-                find_window_by_title_with_wait(title, timeout)
-            } else {
-                find_window_by_title(title)
-            }
+    let result = match (target, timeout_ms) {
+        (InteractionTarget::Window { title }, Some(timeout)) => {
+            find_window_by_title_with_wait(title, timeout)
         }
-        InteractionTarget::App { app } => {
-            if let Some(timeout) = timeout_ms {
-                find_window_by_app_with_wait(app, timeout)
-            } else {
-                find_window_by_app(app)
-            }
+        (InteractionTarget::Window { title }, None) => find_window_by_title(title),
+        (InteractionTarget::App { app }, Some(timeout)) => {
+            find_window_by_app_with_wait(app, timeout)
         }
-        InteractionTarget::AppAndWindow { app, title } => {
-            if let Some(timeout) = timeout_ms {
-                find_window_by_app_and_title_with_wait(app, title, timeout)
-            } else {
-                find_window_by_app_and_title(app, title)
-            }
+        (InteractionTarget::App { app }, None) => find_window_by_app(app),
+        (InteractionTarget::AppAndWindow { app, title }, Some(timeout)) => {
+            find_window_by_app_and_title_with_wait(app, title, timeout)
+        }
+        (InteractionTarget::AppAndWindow { app, title }, None) => {
+            find_window_by_app_and_title(app, title)
         }
     };
     result.map_err(map_window_error)
@@ -213,17 +206,18 @@ fn create_and_post_mouse_click(
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|()| InteractionError::EventSourceFailed)?;
 
-    let (down_type, up_type, button) = match modifier {
-        ClickModifier::None | ClickModifier::Double => (
-            CGEventType::LeftMouseDown,
-            CGEventType::LeftMouseUp,
-            CGMouseButton::Left,
-        ),
-        ClickModifier::Right => (
+    let (down_type, up_type, button) = if modifier == ClickModifier::Right {
+        (
             CGEventType::RightMouseDown,
             CGEventType::RightMouseUp,
             CGMouseButton::Right,
-        ),
+        )
+    } else {
+        (
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseUp,
+            CGMouseButton::Left,
+        )
     };
 
     let mouse_down =
@@ -491,20 +485,20 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
         .filter(|e| e.matches_text(request.text()))
         .collect();
 
-    let element = match matches.len() {
-        0 => {
-            return Err(InteractionError::ElementNotFound {
-                text: request.text().to_string(),
-            });
-        }
-        1 => matches[0],
-        count => {
-            return Err(InteractionError::ElementAmbiguous {
-                text: request.text().to_string(),
-                count,
-            });
-        }
-    };
+    if matches.is_empty() {
+        return Err(InteractionError::ElementNotFound {
+            text: request.text().to_string(),
+        });
+    }
+
+    if matches.len() > 1 {
+        return Err(InteractionError::ElementAmbiguous {
+            text: request.text().to_string(),
+            count: matches.len(),
+        });
+    }
+
+    let element = matches[0];
 
     // Element must have non-zero width or height (reject invisible/zero-size elements)
     if element.width() == 0 && element.height() == 0 {
@@ -565,6 +559,7 @@ pub fn click_text(request: &ClickTextRequest) -> Result<InteractionResult, Inter
 ///
 /// Performs a drag-and-drop sequence: mouse down at source, drag to destination,
 /// mouse up at destination. Uses `LeftMouseDragged` event type between down and up.
+/// Events are spaced by 25ms delays to allow the system to process the drag.
 ///
 /// # Errors
 ///
@@ -675,8 +670,9 @@ pub fn drag(request: &DragRequest) -> Result<InteractionResult, InteractionError
 
 /// Scroll within a window
 ///
-/// Sends a scroll wheel event to the target window. Optionally moves the mouse
-/// to a specific position first (via `--at`). Uses line-based scrolling.
+/// If coordinates are provided via `at_x`/`at_y`, moves the mouse to that
+/// position first (to control scroll location), then sends the scroll event.
+/// Uses line-based scrolling.
 ///
 /// # Errors
 ///
@@ -693,6 +689,10 @@ pub fn scroll(request: &ScrollRequest) -> Result<InteractionResult, InteractionE
     );
 
     check_accessibility_permission()?;
+
+    if request.delta_x() == 0 && request.delta_y() == 0 {
+        return Err(InteractionError::ScrollEventFailed);
+    }
 
     let window = resolve_and_focus_window(request.target(), request.timeout_ms())?;
 
@@ -721,6 +721,7 @@ pub fn scroll(request: &ScrollRequest) -> Result<InteractionResult, InteractionE
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|()| InteractionError::EventSourceFailed)?;
 
+    // wheel_count: 1 for vertical-only scroll, 2 when horizontal scrolling is also needed
     let wheel_count = if request.delta_x() == 0 { 1 } else { 2 };
 
     let scroll_event = CGEvent::new_scroll_event(
@@ -863,20 +864,20 @@ pub fn hover_text(request: &HoverTextRequest) -> Result<InteractionResult, Inter
         .filter(|e| e.matches_text(request.text()))
         .collect();
 
-    let element = match matches.len() {
-        0 => {
-            return Err(InteractionError::ElementNotFound {
-                text: request.text().to_string(),
-            });
-        }
-        1 => matches[0],
-        count => {
-            return Err(InteractionError::ElementAmbiguous {
-                text: request.text().to_string(),
-                count,
-            });
-        }
-    };
+    if matches.is_empty() {
+        return Err(InteractionError::ElementNotFound {
+            text: request.text().to_string(),
+        });
+    }
+
+    if matches.len() > 1 {
+        return Err(InteractionError::ElementAmbiguous {
+            text: request.text().to_string(),
+            count: matches.len(),
+        });
+    }
+
+    let element = matches[0];
 
     if element.width() == 0 && element.height() == 0 {
         return Err(InteractionError::ElementNoPosition);

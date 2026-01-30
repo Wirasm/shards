@@ -402,23 +402,17 @@ fn parse_interaction_target(
     let window_title = matches.get_one::<String>("window");
     let app_name = matches.get_one::<String>("app");
 
-    if app_name.is_none() && window_title.is_none() {
-        return Err("At least one of --window or --app is required".into());
-    }
-
-    let target = match (app_name, window_title) {
-        (Some(app), Some(title)) => InteractionTarget::AppAndWindow {
+    match (app_name, window_title) {
+        (Some(app), Some(title)) => Ok(InteractionTarget::AppAndWindow {
             app: app.clone(),
             title: title.clone(),
-        },
-        (Some(app), None) => InteractionTarget::App { app: app.clone() },
-        (None, Some(title)) => InteractionTarget::Window {
+        }),
+        (Some(app), None) => Ok(InteractionTarget::App { app: app.clone() }),
+        (None, Some(title)) => Ok(InteractionTarget::Window {
             title: title.clone(),
-        },
-        (None, None) => unreachable!("already checked both are not None"),
-    };
-
-    Ok(target)
+        }),
+        (None, None) => Err("At least one of --window or --app is required".into()),
+    }
 }
 
 fn parse_coordinates(at_str: &str) -> Result<(i32, i32), Box<dyn std::error::Error>> {
@@ -551,23 +545,14 @@ fn handle_find_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     }
 }
 
-/// Parse click modifier from --right/--double flags
-fn parse_click_modifier(matches: &ArgMatches) -> ClickModifier {
+/// Parse click modifier from --right/--double flags and return (modifier, user-facing label)
+fn parse_click_modifier(matches: &ArgMatches) -> (ClickModifier, &'static str) {
     if matches.get_flag("right") {
-        ClickModifier::Right
+        (ClickModifier::Right, "Right-clicked")
     } else if matches.get_flag("double") {
-        ClickModifier::Double
+        (ClickModifier::Double, "Double-clicked")
     } else {
-        ClickModifier::None
-    }
-}
-
-/// Human-readable label for click modifier
-fn click_modifier_label(modifier: ClickModifier) -> &'static str {
-    match modifier {
-        ClickModifier::None => "Clicked",
-        ClickModifier::Right => "Right-clicked",
-        ClickModifier::Double => "Double-clicked",
+        (ClickModifier::None, "Clicked")
     }
 }
 
@@ -579,7 +564,7 @@ fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
     let wait_flag = matches.get_flag("wait");
     let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
     let wait_timeout = wait_flag.then_some(timeout_ms);
-    let modifier = parse_click_modifier(matches);
+    let (modifier, label) = parse_click_modifier(matches);
 
     // Must have either --at or --text
     if at_str.is_none() && text_str.is_none() {
@@ -588,7 +573,7 @@ fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
 
     // Dispatch to text-based or coordinate-based click
     if let Some(text) = text_str {
-        return handle_click_text(target, text, json_output, wait_timeout, modifier);
+        return handle_click_text(target, text, json_output, wait_timeout, modifier, label);
     }
 
     let at_str = at_str.unwrap();
@@ -614,7 +599,6 @@ fn handle_click_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let label = click_modifier_label(modifier);
                 println!("{} at ({}, {})", label, x, y);
                 if let Some(details) = &result.details {
                     if let Some(window) = details.get("window") {
@@ -645,6 +629,7 @@ fn handle_click_text(
     json_output: bool,
     timeout_ms: Option<u64>,
     modifier: ClickModifier,
+    label: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         event = "cli.interact.click_text_started",
@@ -664,7 +649,6 @@ fn handle_click_text(
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let label = click_modifier_label(modifier);
                 println!("{} element with text \"{}\"", label, text);
                 if let Some(details) = &result.details {
                     if let Some(window) = details.get("window") {
@@ -863,17 +847,21 @@ fn handle_scroll_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 
     // delta_y: positive = scroll down, negative = scroll up
-    let delta_y = match (down, up) {
-        (Some(&d), None) => d,
-        (None, Some(&u)) => -u,
-        _ => 0,
+    let delta_y = if let Some(&lines) = down {
+        lines
+    } else if let Some(&lines) = up {
+        -lines
+    } else {
+        0
     };
 
     // delta_x: positive = scroll right, negative = scroll left
-    let delta_x = match (scroll_right, left) {
-        (Some(&r), None) => r,
-        (None, Some(&l)) => -l,
-        _ => 0,
+    let delta_x = if let Some(&lines) = scroll_right {
+        lines
+    } else if let Some(&lines) = left {
+        -lines
+    } else {
+        0
     };
 
     let at_str = matches.get_one::<String>("at");
@@ -1144,12 +1132,15 @@ fn resolve_window_title_impl(
     window_title: Option<&String>,
     timeout_ms: Option<u64>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // Early returns for simple cases
     if app_name.is_none() && window_title.is_none() {
         return Ok(String::new());
     }
 
-    if let (None, Some(title), None) = (app_name, window_title, timeout_ms) {
+    // If only window title provided and no wait, return title directly
+    if app_name.is_none()
+        && timeout_ms.is_none()
+        && let Some(title) = window_title
+    {
         return Ok(title.clone());
     }
 
