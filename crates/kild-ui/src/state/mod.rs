@@ -1,11 +1,8 @@
 //! Application state for kild-ui.
 //!
-//! Centralized state management for the GUI. AppState is composed of
-//! specialized modules that encapsulate related state:
-//! - `DialogState`: Mutually exclusive dialog states (create, confirm, add project)
-//! - `OperationErrors`: Per-branch and bulk operation error tracking
-//! - `SelectionState`: Kild selection for detail panel
-//! - `SessionStore`: Session display data with refresh tracking
+//! Centralized state management for the GUI. The main type is `AppState`,
+//! which provides a facade over internal state modules. Use `AppState` methods
+//! to interact with state; internal modules are implementation details.
 
 pub mod app_state;
 pub mod dialog;
