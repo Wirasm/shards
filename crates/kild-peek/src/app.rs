@@ -188,6 +188,12 @@ pub fn build_cli() -> Command {
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
+                    Arg::new("tree")
+                        .long("tree")
+                        .help("Display elements as indented tree hierarchy")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
                     Arg::new("wait")
                         .long("wait")
                         .help("Wait for window to appear (polls until found or timeout)")
@@ -222,6 +228,12 @@ pub fn build_cli() -> Command {
                         .long("text")
                         .required(true)
                         .help("Text to search for in element title, value, or description"),
+                )
+                .arg(
+                    Arg::new("regex")
+                        .long("regex")
+                        .help("Treat --text value as a regex pattern")
+                        .action(ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("json")
@@ -2000,5 +2012,77 @@ mod tests {
         let hover_matches = matches.subcommand_matches("hover").unwrap();
         assert!(hover_matches.get_flag("wait"));
         assert_eq!(*hover_matches.get_one::<u64>("timeout").unwrap(), 3000);
+    }
+
+    #[test]
+    fn test_cli_elements_tree_flag() {
+        let app = build_cli();
+        let matches =
+            app.try_get_matches_from(vec!["kild-peek", "elements", "--app", "Finder", "--tree"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let elements_matches = matches.subcommand_matches("elements").unwrap();
+        assert!(elements_matches.get_flag("tree"));
+    }
+
+    #[test]
+    fn test_cli_elements_tree_with_json() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "kild-peek",
+            "elements",
+            "--app",
+            "Finder",
+            "--tree",
+            "--json",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let elements_matches = matches.subcommand_matches("elements").unwrap();
+        assert!(elements_matches.get_flag("tree"));
+        assert!(elements_matches.get_flag("json"));
+    }
+
+    #[test]
+    fn test_cli_find_regex_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "kild-peek",
+            "find",
+            "--app",
+            "Finder",
+            "--text",
+            "^File$",
+            "--regex",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let find_matches = matches.subcommand_matches("find").unwrap();
+        assert!(find_matches.get_flag("regex"));
+        assert_eq!(find_matches.get_one::<String>("text").unwrap(), "^File$");
+    }
+
+    #[test]
+    fn test_cli_find_regex_with_json() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec![
+            "kild-peek",
+            "find",
+            "--app",
+            "Finder",
+            "--text",
+            "Create|Destroy",
+            "--regex",
+            "--json",
+        ]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let find_matches = matches.subcommand_matches("find").unwrap();
+        assert!(find_matches.get_flag("regex"));
+        assert!(find_matches.get_flag("json"));
     }
 }

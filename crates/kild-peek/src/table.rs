@@ -275,6 +275,97 @@ pub fn print_elements_table(elements: &[ElementInfo]) {
     println!("\nTotal: {} element(s)", elements.len());
 }
 
+/// Print elements as an indented tree hierarchy using box-drawing characters.
+///
+/// Elements are expected in depth-first traversal order (as returned by the
+/// Accessibility API). Uses a look-ahead approach—scanning forward from each
+/// element—to determine sibling relationships without parent tracking or tree
+/// reconstruction from the flat list (`└──` vs `├──`).
+pub fn print_elements_tree(elements: &[ElementInfo]) {
+    if elements.is_empty() {
+        return;
+    }
+
+    for (i, elem) in elements.iter().enumerate() {
+        let depth = elem.depth();
+
+        if depth == 0 {
+            // Root-level element: no connector
+            print_tree_node(elem, "");
+        } else {
+            // Determine connector: └── if last sibling, ├── otherwise
+            let is_last = is_last_sibling(elements, i, depth);
+            let connector = if is_last { "└── " } else { "├── " };
+
+            // Build indent prefix from ancestor levels
+            let indent = build_tree_indent(elements, i, depth);
+
+            print_tree_node(elem, &format!("{}{}", indent, connector));
+        }
+    }
+
+    println!("\nTotal: {} element(s)", elements.len());
+}
+
+/// Check if element at `index` is the last sibling at the given `depth`.
+///
+/// A sibling is the next element at the same depth that shares the same parent.
+/// We scan forward until we find an element at the same or lesser depth.
+fn is_last_sibling(elements: &[ElementInfo], index: usize, depth: usize) -> bool {
+    elements[index + 1..]
+        .iter()
+        .find(|elem| elem.depth() <= depth)
+        .is_none_or(|elem| elem.depth() < depth)
+}
+
+/// Build the indent prefix for a tree node at the given depth.
+///
+/// For each ancestor level (1..depth), we check whether that ancestor still
+/// has siblings coming. If yes, draw "│   "; if no, draw "    ".
+fn build_tree_indent(elements: &[ElementInfo], index: usize, depth: usize) -> String {
+    let mut indent = String::new();
+    for level in 1..depth {
+        // Check if there's a future element at this ancestor level
+        let ancestor_has_more = has_future_sibling_at_level(elements, index, level);
+        if ancestor_has_more {
+            indent.push_str("│   ");
+        } else {
+            indent.push_str("    ");
+        }
+    }
+    indent
+}
+
+/// Check if there's a future element at the given level after the current index.
+fn has_future_sibling_at_level(elements: &[ElementInfo], index: usize, level: usize) -> bool {
+    elements[index + 1..]
+        .iter()
+        .find(|elem| elem.depth() <= level)
+        .is_some_and(|elem| elem.depth() == level)
+}
+
+/// Print a single tree node with the given prefix.
+fn print_tree_node(elem: &ElementInfo, prefix: &str) {
+    let mut line = format!("{}{}", prefix, elem.role());
+
+    // Show title if present
+    if let Some(title) = elem.title() {
+        line.push_str(&format!(" \"{}\"", title));
+    }
+
+    // Show size if non-zero
+    if elem.width() > 0 || elem.height() > 0 {
+        line.push_str(&format!(" [{}x{}]", elem.width(), elem.height()));
+    }
+
+    // Show disabled marker
+    if !elem.enabled() {
+        line.push_str(" (disabled)");
+    }
+
+    println!("{}", line);
+}
+
 /// Truncate a string to a maximum display width, adding "..." if truncated.
 ///
 /// Uses character count (not byte count) to safely handle UTF-8 strings
@@ -306,6 +397,266 @@ mod tests {
         assert_eq!(truncate("", 5), "     ");
         assert_eq!(truncate("abc", 3), "abc");
         assert_eq!(truncate("abcd", 3), "...");
+    }
+
+    #[test]
+    fn test_is_last_sibling_basic() {
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                1,
+            ),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                1,
+            ),
+        ];
+        // First child at depth 1 is not last
+        assert!(!is_last_sibling(&elements, 1, 1));
+        // Second child at depth 1 is last
+        assert!(is_last_sibling(&elements, 2, 1));
+    }
+
+    #[test]
+    fn test_is_last_sibling_nested() {
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                2,
+            ),
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+        ];
+        // AXGroup at index 1 is NOT last at depth 1 (index 3 is at depth 1 too)
+        assert!(!is_last_sibling(&elements, 1, 1));
+        // AXButton at index 2 IS last at depth 2 (next element goes back to depth 1)
+        assert!(is_last_sibling(&elements, 2, 2));
+        // AXGroup at index 3 IS last at depth 1
+        assert!(is_last_sibling(&elements, 3, 1));
+    }
+
+    #[test]
+    fn test_build_tree_indent_depth_1() {
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                1,
+            ),
+        ];
+        // Depth 1 has no ancestor indents (level 1..1 is empty)
+        assert_eq!(build_tree_indent(&elements, 1, 1), "");
+    }
+
+    #[test]
+    fn test_build_tree_indent_depth_2_with_sibling() {
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                2,
+            ),
+            // Another element at depth 1 means the depth-1 ancestor has siblings
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+        ];
+        // At index 2 (depth 2), ancestor at level 1 still has siblings
+        assert_eq!(build_tree_indent(&elements, 2, 2), "│   ");
+    }
+
+    #[test]
+    fn test_build_tree_indent_depth_2_no_sibling() {
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                2,
+            ),
+        ];
+        // At index 2 (depth 2), ancestor at level 1 has no more siblings
+        assert_eq!(build_tree_indent(&elements, 2, 2), "    ");
+    }
+
+    #[test]
+    fn test_tree_depth_gap() {
+        // Depth gap: 0 → 2 (missing depth 1) — should not panic
+        let elements = vec![
+            ElementInfo::new(
+                "AXWindow".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                0,
+            ),
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                2,
+            ),
+        ];
+        // Verify helpers don't panic on depth gaps
+        assert!(is_last_sibling(&elements, 1, 2));
+        assert_eq!(build_tree_indent(&elements, 1, 2), "    ");
+        // Full render should not panic
+        print_elements_tree(&elements);
+    }
+
+    #[test]
+    fn test_tree_no_root_element() {
+        // All elements at depth > 0
+        let elements = vec![
+            ElementInfo::new(
+                "AXButton".to_string(),
+                None,
+                None,
+                None,
+                0,
+                0,
+                0,
+                0,
+                true,
+                1,
+            ),
+            ElementInfo::new("AXGroup".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+        ];
+        // Should not panic — elements get connectors even without a depth-0 root
+        assert!(!is_last_sibling(&elements, 0, 1));
+        assert!(is_last_sibling(&elements, 1, 1));
+        print_elements_tree(&elements);
+    }
+
+    #[test]
+    fn test_tree_deep_nesting() {
+        let elements = vec![
+            ElementInfo::new("L0".to_string(), None, None, None, 0, 0, 0, 0, true, 0),
+            ElementInfo::new("L1".to_string(), None, None, None, 0, 0, 0, 0, true, 1),
+            ElementInfo::new("L2".to_string(), None, None, None, 0, 0, 0, 0, true, 2),
+            ElementInfo::new("L3".to_string(), None, None, None, 0, 0, 0, 0, true, 3),
+            ElementInfo::new("L4".to_string(), None, None, None, 0, 0, 0, 0, true, 4),
+            ElementInfo::new("L5".to_string(), None, None, None, 0, 0, 0, 0, true, 5),
+        ];
+        let indent = build_tree_indent(&elements, 5, 5);
+        // 4 ancestor levels (1..5), each "    " (no siblings), = 16 chars
+        assert_eq!(indent.len(), 16);
+        print_elements_tree(&elements);
     }
 
     #[test]

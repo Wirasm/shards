@@ -103,10 +103,7 @@ fn apply_app_filter(
     let app_lower = app.to_lowercase();
     windows
         .into_iter()
-        .filter(|w| {
-            let name = w.app_name().to_lowercase();
-            name == app_lower || name.contains(&app_lower)
-        })
+        .filter(|w| w.app_name().to_lowercase().contains(&app_lower))
         .collect()
 }
 
@@ -444,12 +441,14 @@ fn parse_coordinates(at_str: &str) -> Result<(i32, i32), Box<dyn std::error::Err
 fn handle_elements_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let target = parse_interaction_target(matches)?;
     let json_output = matches.get_flag("json");
+    let tree_output = matches.get_flag("tree");
     let wait_flag = matches.get_flag("wait");
     let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
 
     info!(
         event = "cli.elements_started",
         target = ?target,
+        tree = tree_output,
         wait = wait_flag,
         timeout_ms = timeout_ms
     );
@@ -472,7 +471,11 @@ fn handle_elements_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
                     result.window(),
                     result.count()
                 );
-                table::print_elements_table(result.elements());
+                if tree_output {
+                    table::print_elements_tree(result.elements());
+                } else {
+                    table::print_elements_table(result.elements());
+                }
             }
 
             info!(event = "cli.elements_completed", count = result.count());
@@ -491,22 +494,26 @@ fn handle_find_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     let target = parse_interaction_target(matches)?;
     let text = matches.get_one::<String>("text").unwrap();
     let json_output = matches.get_flag("json");
+    let regex_flag = matches.get_flag("regex");
     let wait_flag = matches.get_flag("wait");
     let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
 
     info!(
         event = "cli.find_started",
         text = text.as_str(),
+        regex = regex_flag,
         target = ?target,
         wait = wait_flag,
         timeout_ms = timeout_ms
     );
 
-    let request = if wait_flag {
-        FindRequest::new(target, text).with_wait(timeout_ms)
-    } else {
-        FindRequest::new(target, text)
-    };
+    let mut request = FindRequest::new(target, text);
+    if regex_flag {
+        request = request.with_regex();
+    }
+    if wait_flag {
+        request = request.with_wait(timeout_ms);
+    }
 
     match find_element(&request) {
         Ok(element) => {
@@ -847,22 +854,10 @@ fn handle_scroll_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 
     // delta_y: positive = scroll down, negative = scroll up
-    let delta_y = if let Some(&lines) = down {
-        lines
-    } else if let Some(&lines) = up {
-        -lines
-    } else {
-        0
-    };
+    let delta_y = down.copied().unwrap_or(0) - up.copied().unwrap_or(0);
 
     // delta_x: positive = scroll right, negative = scroll left
-    let delta_x = if let Some(&lines) = scroll_right {
-        lines
-    } else if let Some(&lines) = left {
-        -lines
-    } else {
-        0
-    };
+    let delta_x = scroll_right.copied().unwrap_or(0) - left.copied().unwrap_or(0);
 
     let at_str = matches.get_one::<String>("at");
 
@@ -893,12 +888,14 @@ fn handle_scroll_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
                 let mut parts = Vec::new();
                 if delta_y > 0 {
                     parts.push(format!("{} lines down", delta_y));
-                } else if delta_y < 0 {
+                }
+                if delta_y < 0 {
                     parts.push(format!("{} lines up", -delta_y));
                 }
                 if delta_x > 0 {
                     parts.push(format!("{} lines right", delta_x));
-                } else if delta_x < 0 {
+                }
+                if delta_x < 0 {
                     parts.push(format!("{} lines left", -delta_x));
                 }
                 println!("Scrolled {}", parts.join(", "));
@@ -1060,20 +1057,21 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     }
 
     // Determine which assertion to run
-    let assertion = match (exists_flag, visible_flag, similar_path) {
-        (true, _, _) => Assertion::window_exists(&resolved_title),
-        (_, true, _) => Assertion::window_visible(&resolved_title),
-        (_, _, Some(baseline_path)) => build_similar_assertion_with_wait(
+    let assertion = if exists_flag {
+        Assertion::window_exists(&resolved_title)
+    } else if visible_flag {
+        Assertion::window_visible(&resolved_title)
+    } else if let Some(baseline_path) = similar_path {
+        build_similar_assertion_with_wait(
             app_name,
             window_title,
             baseline_path,
             threshold,
             wait_flag,
             timeout_ms,
-        )?,
-        (false, false, None) => {
-            return Err("One of --exists, --visible, or --similar must be specified".into());
-        }
+        )?
+    } else {
+        return Err("One of --exists, --visible, or --similar must be specified".into());
     };
 
     info!(event = "cli.assert_started", assertion = ?assertion);
@@ -1136,7 +1134,7 @@ fn resolve_window_title_impl(
         return Ok(String::new());
     }
 
-    // If only window title provided and no wait, return title directly
+    // If only window title provided and no wait, return title directly without lookup
     if app_name.is_none()
         && timeout_ms.is_none()
         && let Some(title) = window_title

@@ -43,6 +43,9 @@ pub enum ElementError {
         title: String,
         timeout_ms: u64,
     },
+
+    #[error("Invalid regex pattern '{pattern}': {reason}")]
+    InvalidRegex { pattern: String, reason: String },
 }
 
 impl PeekError for ElementError {
@@ -62,6 +65,7 @@ impl PeekError for ElementError {
             ElementError::WaitTimeoutByAppAndTitle { .. } => {
                 "ELEMENT_WAIT_TIMEOUT_BY_APP_AND_TITLE"
             }
+            ElementError::InvalidRegex { .. } => "ELEMENT_INVALID_REGEX",
         }
     }
 
@@ -79,6 +83,7 @@ impl PeekError for ElementError {
                 | ElementError::WaitTimeoutByTitle { .. }
                 | ElementError::WaitTimeoutByApp { .. }
                 | ElementError::WaitTimeoutByAppAndTitle { .. }
+                | ElementError::InvalidRegex { .. }
         )
     }
 }
@@ -236,6 +241,20 @@ mod tests {
             text: "test".to_string(),
         };
         assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn test_invalid_regex_error() {
+        let error = ElementError::InvalidRegex {
+            pattern: "[invalid".to_string(),
+            reason: "unclosed character class".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Invalid regex pattern '[invalid': unclosed character class"
+        );
+        assert_eq!(error.error_code(), "ELEMENT_INVALID_REGEX");
+        assert!(error.is_user_error());
     }
 
     #[test]
