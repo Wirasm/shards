@@ -2,7 +2,7 @@ use tracing::{info, warn};
 
 use super::accessibility;
 use super::errors::ElementError;
-use super::types::{ElementInfo, ElementsRequest, ElementsResult, FindRequest};
+use super::types::{ElementInfo, ElementsRequest, ElementsResult, FindMode, FindRequest};
 use crate::interact::InteractionTarget;
 use crate::window::{
     WindowError, WindowInfo, find_window_by_app, find_window_by_app_and_title,
@@ -128,9 +128,15 @@ pub fn list_elements(request: &ElementsRequest) -> Result<ElementsResult, Elemen
 
 /// Find a specific element by text content
 pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> {
+    let mode_label = match request.mode() {
+        FindMode::Substring => "substring",
+        FindMode::Regex => "regex",
+    };
+
     info!(
         event = "peek.core.element.find_started",
         text = request.text(),
+        mode = mode_label,
         target = ?request.target()
     );
 
@@ -139,6 +145,18 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
             text: String::new(),
         });
     }
+
+    // Compile regex once if in regex mode
+    let compiled_regex = match request.mode() {
+        FindMode::Regex => {
+            let re = regex::Regex::new(request.text()).map_err(|e| ElementError::InvalidRegex {
+                pattern: request.text().to_string(),
+                reason: e.to_string(),
+            })?;
+            Some(re)
+        }
+        FindMode::Substring => None,
+    };
 
     // List all elements then filter
     let mut elements_request = ElementsRequest::new(request.target().clone());
@@ -150,7 +168,10 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
     let matches: Vec<&ElementInfo> = result
         .elements()
         .iter()
-        .filter(|e| e.matches_text(request.text()))
+        .filter(|e| match &compiled_regex {
+            Some(re) => e.matches_regex(re),
+            None => e.matches_text(request.text()),
+        })
         .collect();
 
     match matches.len() {
@@ -218,6 +239,7 @@ pub(crate) fn convert_raw_to_element_info(
         width,
         height,
         raw.enabled(),
+        raw.depth(),
     )
 }
 
@@ -248,6 +270,7 @@ mod tests {
             Some((250.0, 350.0)),
             Some((80.0, 30.0)),
             true,
+            0,
         );
 
         let elem = convert_raw_to_element_info(&raw, &window);
@@ -260,6 +283,7 @@ mod tests {
         assert_eq!(elem.width(), 80);
         assert_eq!(elem.height(), 30);
         assert!(elem.enabled());
+        assert_eq!(elem.depth(), 0);
     }
 
     #[test]
@@ -276,13 +300,14 @@ mod tests {
             None,
         );
 
-        let raw = RawElement::new("AXGroup".to_string(), None, None, None, None, None, true);
+        let raw = RawElement::new("AXGroup".to_string(), None, None, None, None, None, true, 1);
 
         let elem = convert_raw_to_element_info(&raw, &window);
         assert_eq!(elem.x(), 0);
         assert_eq!(elem.y(), 0);
         assert_eq!(elem.width(), 0);
         assert_eq!(elem.height(), 0);
+        assert_eq!(elem.depth(), 1);
     }
 
     #[test]
@@ -394,6 +419,7 @@ mod tests {
             Some((50.0, 100.0)),
             Some((80.0, 30.0)),
             true,
+            0,
         );
 
         let elem = convert_raw_to_element_info(&raw, &window);
@@ -426,6 +452,7 @@ mod tests {
             Some((100.0, 200.0)),
             Some((500.0, 0.0)),
             true,
+            0,
         );
 
         let elem = convert_raw_to_element_info(&raw, &window);

@@ -14,6 +14,8 @@ pub struct ElementInfo {
     width: u32,
     height: u32,
     enabled: bool,
+    /// Depth in the accessibility tree (0 = window-level)
+    depth: usize,
 }
 
 impl ElementInfo {
@@ -29,6 +31,7 @@ impl ElementInfo {
         width: u32,
         height: u32,
         enabled: bool,
+        depth: usize,
     ) -> Self {
         debug_assert!(!role.is_empty(), "Element role must not be empty");
         Self {
@@ -41,6 +44,7 @@ impl ElementInfo {
             width,
             height,
             enabled,
+            depth,
         }
     }
 
@@ -71,6 +75,9 @@ impl ElementInfo {
     pub fn enabled(&self) -> bool {
         self.enabled
     }
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
 
     /// Check if any text field contains the given substring (case-insensitive)
     pub fn matches_text(&self, text: &str) -> bool {
@@ -79,6 +86,12 @@ impl ElementInfo {
             opt.as_ref()
                 .is_some_and(|s| s.to_lowercase().contains(&text_lower))
         };
+        check(&self.title) || check(&self.value) || check(&self.description)
+    }
+
+    /// Check if any text field matches the given regex pattern (case-sensitive by default)
+    pub fn matches_regex(&self, pattern: &regex::Regex) -> bool {
+        let check = |opt: &Option<String>| opt.as_ref().is_some_and(|s| pattern.is_match(s));
         check(&self.title) || check(&self.value) || check(&self.description)
     }
 }
@@ -112,12 +125,23 @@ impl ElementsRequest {
     }
 }
 
+/// How to match element text in find operations
+#[derive(Debug, Clone, Default)]
+pub enum FindMode {
+    /// Case-insensitive substring match (default)
+    #[default]
+    Substring,
+    /// Regex pattern match (case-sensitive by default)
+    Regex,
+}
+
 /// Request to find a specific element by text
 #[derive(Debug, Clone)]
 pub struct FindRequest {
     target: InteractionTarget,
     text: String,
     timeout_ms: Option<u64>,
+    mode: FindMode,
 }
 
 impl FindRequest {
@@ -126,11 +150,17 @@ impl FindRequest {
             target,
             text: text.into(),
             timeout_ms: None,
+            mode: FindMode::default(),
         }
     }
 
     pub fn with_wait(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
+        self
+    }
+
+    pub fn with_regex(mut self) -> Self {
+        self.mode = FindMode::Regex;
         self
     }
 
@@ -144,6 +174,10 @@ impl FindRequest {
 
     pub fn timeout_ms(&self) -> Option<u64> {
         self.timeout_ms
+    }
+
+    pub fn mode(&self) -> &FindMode {
+        &self.mode
     }
 }
 
@@ -194,6 +228,7 @@ mod tests {
             80,
             30,
             true,
+            5,
         );
         assert_eq!(elem.role(), "AXButton");
         assert_eq!(elem.title(), Some("Submit"));
@@ -204,6 +239,7 @@ mod tests {
         assert_eq!(elem.width(), 80);
         assert_eq!(elem.height(), 30);
         assert!(elem.enabled());
+        assert_eq!(elem.depth(), 5);
     }
 
     #[test]
@@ -218,6 +254,7 @@ mod tests {
             80,
             30,
             true,
+            0,
         );
         assert!(elem.matches_text("submit"));
         assert!(elem.matches_text("Submit"));
@@ -237,6 +274,7 @@ mod tests {
             200,
             30,
             true,
+            0,
         );
         assert!(elem.matches_text("hello"));
         assert!(elem.matches_text("WORLD"));
@@ -255,6 +293,7 @@ mod tests {
             20,
             20,
             true,
+            0,
         );
         assert!(elem.matches_text("close"));
         assert!(!elem.matches_text("open"));
@@ -272,6 +311,7 @@ mod tests {
             100,
             100,
             true,
+            0,
         );
         assert!(!elem.matches_text("anything"));
     }
@@ -311,6 +351,7 @@ mod tests {
                 50,
                 30,
                 true,
+                0,
             ),
             ElementInfo::new(
                 "AXButton".to_string(),
@@ -322,6 +363,7 @@ mod tests {
                 50,
                 30,
                 true,
+                0,
             ),
         ];
         let result = ElementsResult::new(elements, "Test Window".to_string());
@@ -342,12 +384,14 @@ mod tests {
             50,
             30,
             true,
+            2,
         );
         let json = serde_json::to_string(&elem).unwrap();
         assert!(json.contains("\"role\":\"AXButton\""));
         assert!(json.contains("\"title\":\"OK\""));
         assert!(json.contains("\"x\":10"));
         assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"depth\":2"));
     }
 
     #[test]
@@ -370,6 +414,7 @@ mod tests {
             80,
             30,
             true,
+            0,
         );
         // Case-insensitive matching with accented characters
         assert!(elem.matches_text("café"));
@@ -390,6 +435,7 @@ mod tests {
             80,
             30,
             true,
+            0,
         );
         assert!(elem.matches_text("Save"));
         assert!(elem.matches_text("💾"));
@@ -408,6 +454,7 @@ mod tests {
             200,
             30,
             true,
+            0,
         );
         assert!(elem.matches_text("日本語"));
         assert!(elem.matches_text("text"));
@@ -455,6 +502,114 @@ mod tests {
     }
 
     #[test]
+    fn test_matches_regex_exact_match() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("File".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+            0,
+        );
+        let pattern = regex::Regex::new("^File$").unwrap();
+        assert!(elem.matches_regex(&pattern));
+
+        let pattern_partial = regex::Regex::new("^Fi$").unwrap();
+        assert!(!elem.matches_regex(&pattern_partial));
+    }
+
+    #[test]
+    fn test_matches_regex_alternation() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("Create".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+            0,
+        );
+        let pattern = regex::Regex::new("Create|Destroy").unwrap();
+        assert!(elem.matches_regex(&pattern));
+
+        let no_match = regex::Regex::new("Open|Close").unwrap();
+        assert!(!elem.matches_regex(&no_match));
+    }
+
+    #[test]
+    fn test_matches_regex_case_sensitive() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("Submit".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+            0,
+        );
+        let case_exact = regex::Regex::new("Submit").unwrap();
+        assert!(elem.matches_regex(&case_exact));
+
+        let case_wrong = regex::Regex::new("submit").unwrap();
+        assert!(!elem.matches_regex(&case_wrong));
+
+        // Case-insensitive via (?i) prefix
+        let case_insensitive = regex::Regex::new("(?i)submit").unwrap();
+        assert!(elem.matches_regex(&case_insensitive));
+    }
+
+    #[test]
+    fn test_matches_regex_checks_all_fields() {
+        let elem = ElementInfo::new(
+            "AXTextField".to_string(),
+            None,
+            Some("hello world".to_string()),
+            Some("input field".to_string()),
+            0,
+            0,
+            200,
+            30,
+            true,
+            0,
+        );
+        // Matches value
+        let value_pattern = regex::Regex::new("hello").unwrap();
+        assert!(elem.matches_regex(&value_pattern));
+
+        // Matches description
+        let desc_pattern = regex::Regex::new("input").unwrap();
+        assert!(elem.matches_regex(&desc_pattern));
+    }
+
+    #[test]
+    fn test_matches_regex_no_text_fields() {
+        let elem = ElementInfo::new(
+            "AXGroup".to_string(),
+            None,
+            None,
+            None,
+            0,
+            0,
+            100,
+            100,
+            true,
+            0,
+        );
+        let pattern = regex::Regex::new(".*").unwrap();
+        assert!(!elem.matches_regex(&pattern));
+    }
+
+    #[test]
     fn test_element_info_matches_text_empty_search() {
         let elem = ElementInfo::new(
             "AXButton".to_string(),
@@ -466,6 +621,7 @@ mod tests {
             80,
             30,
             true,
+            0,
         );
         // Empty string matches everything (contains("") is always true)
         assert!(elem.matches_text(""));

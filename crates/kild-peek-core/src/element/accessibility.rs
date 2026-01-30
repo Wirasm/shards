@@ -32,6 +32,8 @@ pub struct RawElement {
     /// Element size
     size: Option<(f64, f64)>,
     enabled: bool,
+    /// Depth in the accessibility tree (0 = window-level)
+    depth: usize,
 }
 
 impl RawElement {
@@ -45,6 +47,7 @@ impl RawElement {
         position: Option<(f64, f64)>,
         size: Option<(f64, f64)>,
         enabled: bool,
+        depth: usize,
     ) -> Self {
         Self {
             role,
@@ -54,6 +57,7 @@ impl RawElement {
             position,
             size,
             enabled,
+            depth,
         }
     }
 
@@ -83,6 +87,10 @@ impl RawElement {
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
     }
 }
 
@@ -130,7 +138,7 @@ fn collect_elements(element: AXUIElementRef, out: &mut Vec<RawElement>, depth: u
     }
 
     // Read this element's properties
-    match read_element_properties(element) {
+    match read_element_properties(element, depth) {
         Some(raw) => out.push(raw),
         None => {
             debug!(
@@ -148,7 +156,7 @@ fn collect_elements(element: AXUIElementRef, out: &mut Vec<RawElement>, depth: u
 }
 
 /// Read all properties from a single AX element
-fn read_element_properties(element: AXUIElementRef) -> Option<RawElement> {
+fn read_element_properties(element: AXUIElementRef, depth: usize) -> Option<RawElement> {
     let role = get_string_attribute(element, kAXRoleAttribute)?;
 
     let title = get_string_attribute(element, kAXTitleAttribute);
@@ -172,6 +180,7 @@ fn read_element_properties(element: AXUIElementRef) -> Option<RawElement> {
         position,
         size,
         enabled,
+        depth,
     ))
 }
 
@@ -418,6 +427,7 @@ mod tests {
             Some((100.0, 200.0)),
             Some((80.0, 30.0)),
             true,
+            0,
         );
         let debug_str = format!("{:?}", elem);
         assert!(debug_str.contains("AXButton"));
@@ -434,11 +444,13 @@ mod tests {
             None,
             None,
             false,
+            2,
         );
         let cloned = elem.clone();
         assert_eq!(cloned.role(), "AXTextField");
         assert_eq!(cloned.value(), Some("hello"));
         assert!(!cloned.enabled());
+        assert_eq!(cloned.depth(), 2);
     }
 
     #[test]
@@ -451,6 +463,7 @@ mod tests {
             Some((10.0, 20.0)),
             Some((100.0, 50.0)),
             true,
+            3,
         );
         assert_eq!(elem.role(), "AXButton");
         assert_eq!(elem.title(), Some("Submit"));
@@ -459,6 +472,7 @@ mod tests {
         assert_eq!(elem.position(), Some((10.0, 20.0)));
         assert_eq!(elem.size(), Some((100.0, 50.0)));
         assert!(elem.enabled());
+        assert_eq!(elem.depth(), 3);
     }
 
     #[test]

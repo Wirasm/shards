@@ -444,12 +444,14 @@ fn parse_coordinates(at_str: &str) -> Result<(i32, i32), Box<dyn std::error::Err
 fn handle_elements_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let target = parse_interaction_target(matches)?;
     let json_output = matches.get_flag("json");
+    let tree_output = matches.get_flag("tree");
     let wait_flag = matches.get_flag("wait");
     let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
 
     info!(
         event = "cli.elements_started",
         target = ?target,
+        tree = tree_output,
         wait = wait_flag,
         timeout_ms = timeout_ms
     );
@@ -472,7 +474,11 @@ fn handle_elements_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
                     result.window(),
                     result.count()
                 );
-                table::print_elements_table(result.elements());
+                if tree_output {
+                    table::print_elements_tree(result.elements());
+                } else {
+                    table::print_elements_table(result.elements());
+                }
             }
 
             info!(event = "cli.elements_completed", count = result.count());
@@ -491,22 +497,26 @@ fn handle_find_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     let target = parse_interaction_target(matches)?;
     let text = matches.get_one::<String>("text").unwrap();
     let json_output = matches.get_flag("json");
+    let regex_flag = matches.get_flag("regex");
     let wait_flag = matches.get_flag("wait");
     let timeout_ms = *matches.get_one::<u64>("timeout").unwrap_or(&30000);
 
     info!(
         event = "cli.find_started",
         text = text.as_str(),
+        regex = regex_flag,
         target = ?target,
         wait = wait_flag,
         timeout_ms = timeout_ms
     );
 
-    let request = if wait_flag {
-        FindRequest::new(target, text).with_wait(timeout_ms)
-    } else {
-        FindRequest::new(target, text)
-    };
+    let mut request = FindRequest::new(target, text);
+    if regex_flag {
+        request = request.with_regex();
+    }
+    if wait_flag {
+        request = request.with_wait(timeout_ms);
+    }
 
     match find_element(&request) {
         Ok(element) => {

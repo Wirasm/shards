@@ -5,4 +5,4 @@ mod types;
 
 pub use errors::ElementError;
 pub use handler::{find_element, list_elements};
-pub use types::{ElementInfo, ElementsRequest, ElementsResult, FindRequest};
+pub use types::{ElementInfo, ElementsRequest, ElementsResult, FindMode, FindRequest};
