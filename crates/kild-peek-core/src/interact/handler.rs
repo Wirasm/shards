@@ -617,4 +617,35 @@ mod tests {
             _ => panic!("Expected WindowLookupFailed"),
         }
     }
+
+    // Integration tests requiring accessibility permissions
+    #[test]
+    #[ignore]
+    fn test_click_text_integration() {
+        // This test requires accessibility permission and a running app
+        // Run manually: cargo test --all -- --ignored test_click_text_integration
+        // WARNING: This will actually click on a UI element!
+
+        let request = ClickTextRequest::new(
+            InteractionTarget::App {
+                app: "Finder".to_string(),
+            },
+            "File",
+        );
+        let result = click_text(&request);
+        match result {
+            Ok(result) => {
+                assert!(result.success);
+            }
+            Err(InteractionError::AccessibilityPermissionDenied) => {
+                // Expected if running without accessibility permission
+            }
+            Err(InteractionError::ElementNotFound { .. }) => {
+                // "File" menu might not exist if Finder isn't focused
+            }
+            Err(e) => {
+                panic!("Unexpected error: {:?}", e);
+            }
+        }
+    }
 }

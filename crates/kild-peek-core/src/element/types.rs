@@ -333,4 +333,77 @@ mod tests {
         assert!(json.contains("\"count\":0"));
         assert!(json.contains("\"window\":\"Window\""));
     }
+
+    #[test]
+    fn test_element_info_matches_text_unicode_accented() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("Café résumé".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+        );
+        // Case-insensitive matching with accented characters
+        assert!(elem.matches_text("café"));
+        assert!(elem.matches_text("CAFÉ"));
+        assert!(elem.matches_text("résumé"));
+        assert!(elem.matches_text("RÉSUMÉ"));
+    }
+
+    #[test]
+    fn test_element_info_matches_text_unicode_emoji() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("Save 💾".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+        );
+        assert!(elem.matches_text("Save"));
+        assert!(elem.matches_text("💾"));
+        assert!(elem.matches_text("Save 💾"));
+    }
+
+    #[test]
+    fn test_element_info_matches_text_mixed_unicode_ascii() {
+        let elem = ElementInfo::new(
+            "AXStaticText".to_string(),
+            None,
+            Some("日本語 text mixed".to_string()),
+            None,
+            0,
+            0,
+            200,
+            30,
+            true,
+        );
+        assert!(elem.matches_text("日本語"));
+        assert!(elem.matches_text("text"));
+        assert!(elem.matches_text("mixed"));
+    }
+
+    #[test]
+    fn test_element_info_matches_text_empty_search() {
+        let elem = ElementInfo::new(
+            "AXButton".to_string(),
+            Some("Submit".to_string()),
+            None,
+            None,
+            0,
+            0,
+            80,
+            30,
+            true,
+        );
+        // Empty string matches everything (contains("") is always true)
+        assert!(elem.matches_text(""));
+    }
 }

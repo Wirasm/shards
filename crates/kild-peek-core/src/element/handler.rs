@@ -280,4 +280,123 @@ mod tests {
             _ => panic!("Expected WindowLookupFailed"),
         }
     }
+
+    #[test]
+    fn test_convert_raw_to_element_info_negative_window_coords() {
+        // Window positioned off-screen (negative coordinates)
+        let window = WindowInfo::new(
+            1,
+            "OffScreen".to_string(),
+            "TestApp".to_string(),
+            -100,
+            -50,
+            800,
+            600,
+            false,
+            Some(1234),
+        );
+
+        let raw = RawElement::new(
+            "AXButton".to_string(),
+            Some("OK".to_string()),
+            None,
+            None,
+            Some((50.0, 100.0)),
+            Some((80.0, 30.0)),
+            true,
+        );
+
+        let elem = convert_raw_to_element_info(&raw, &window);
+        // 50 - (-100) = 150 (screen x - window x)
+        assert_eq!(elem.x(), 150);
+        // 100 - (-50) = 150 (screen y - window y)
+        assert_eq!(elem.y(), 150);
+    }
+
+    #[test]
+    fn test_convert_raw_to_element_info_partial_zero_size() {
+        // Horizontal divider: width > 0, height = 0
+        let window = WindowInfo::new(
+            1,
+            "Test".to_string(),
+            "TestApp".to_string(),
+            0,
+            0,
+            800,
+            600,
+            false,
+            Some(1234),
+        );
+
+        let raw = RawElement::new(
+            "AXSplitter".to_string(),
+            None,
+            None,
+            None,
+            Some((100.0, 200.0)),
+            Some((500.0, 0.0)),
+            true,
+        );
+
+        let elem = convert_raw_to_element_info(&raw, &window);
+        assert_eq!(elem.width(), 500);
+        assert_eq!(elem.height(), 0);
+        // Element is still valid, just has zero height
+    }
+
+    // Integration tests requiring accessibility permissions
+    #[test]
+    #[ignore]
+    fn test_list_elements_integration() {
+        // This test requires accessibility permission and a running app
+        // Run manually: cargo test --all -- --ignored test_list_elements_integration
+        use crate::interact::InteractionTarget;
+
+        let request = ElementsRequest::new(InteractionTarget::App {
+            app: "Finder".to_string(),
+        });
+        let result = list_elements(&request);
+        // Just verify it returns something or a meaningful error
+        match result {
+            Ok(elements) => {
+                assert!(elements.count() > 0, "Expected at least one element");
+            }
+            Err(ElementError::AccessibilityPermissionDenied) => {
+                // Expected if running without accessibility permission
+            }
+            Err(e) => {
+                panic!("Unexpected error: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_find_element_integration() {
+        // This test requires accessibility permission and Finder running
+        // Run manually: cargo test --all -- --ignored test_find_element_integration
+        use crate::interact::InteractionTarget;
+
+        let request = FindRequest::new(
+            InteractionTarget::App {
+                app: "Finder".to_string(),
+            },
+            "File",
+        );
+        let result = find_element(&request);
+        match result {
+            Ok(elem) => {
+                assert!(!elem.role().is_empty());
+            }
+            Err(ElementError::AccessibilityPermissionDenied) => {
+                // Expected if running without accessibility permission
+            }
+            Err(ElementError::ElementNotFound { .. }) => {
+                // "File" menu might not exist if Finder isn't focused
+            }
+            Err(e) => {
+                panic!("Unexpected error: {:?}", e);
+            }
+        }
+    }
 }

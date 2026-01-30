@@ -173,4 +173,15 @@ mod tests {
         };
         assert!(error.source().is_none());
     }
+
+    #[test]
+    fn test_element_not_found_empty_text() {
+        // Edge case: empty text search returns ElementNotFound with empty text
+        let error = ElementError::ElementNotFound {
+            text: String::new(),
+        };
+        assert_eq!(error.to_string(), "No element found with text: ''");
+        assert_eq!(error.error_code(), "ELEMENT_NOT_FOUND");
+        assert!(error.is_user_error());
+    }
 }
