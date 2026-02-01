@@ -1,3 +1,4 @@
+use super::events::Event;
 use super::types::Command;
 
 /// Trait for dispatching business commands.
@@ -13,9 +14,11 @@ use super::types::Command;
 ///   the branch already exists). Callers must avoid duplicate dispatches.
 /// - **Error handling**: Implementations define their own error type. Errors
 ///   should distinguish user errors (invalid input) from system errors (IO failure).
+/// - **Events**: On success, dispatch returns a `Vec<Event>` describing what
+///   changed. Callers can use these to react without polling or disk re-reads.
 pub trait Store {
     type Error;
-    fn dispatch(&mut self, cmd: Command) -> Result<(), Self::Error>;
+    fn dispatch(&mut self, cmd: Command) -> Result<Vec<Event>, Self::Error>;
 }
 
 #[cfg(test)]
@@ -27,12 +30,14 @@ mod tests {
         struct TestStore;
         impl Store for TestStore {
             type Error = String;
-            fn dispatch(&mut self, _cmd: Command) -> Result<(), String> {
-                Ok(())
+            fn dispatch(&mut self, _cmd: Command) -> Result<Vec<Event>, String> {
+                Ok(vec![])
             }
         }
         let mut store = TestStore;
-        assert!(store.dispatch(Command::RefreshSessions).is_ok());
+        let result = store.dispatch(Command::RefreshSessions);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[test]
@@ -40,7 +45,7 @@ mod tests {
         struct FailingStore;
         impl Store for FailingStore {
             type Error = String;
-            fn dispatch(&mut self, _cmd: Command) -> Result<(), String> {
+            fn dispatch(&mut self, _cmd: Command) -> Result<Vec<Event>, String> {
                 Err("not implemented".to_string())
             }
         }
