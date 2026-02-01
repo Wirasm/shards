@@ -10,3 +10,4 @@
 build/
 
 .kild/config.toml
+.claude/PRPs/
