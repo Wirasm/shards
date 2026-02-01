@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum Command {
     /// Create a new kild session with a git worktree and agent.
     CreateKild {
-        /// Branch name for the new kild (will be prefixed with `kild_`).
+        /// Branch name for the new kild (will be prefixed with `kild/`).
         branch: String,
         /// Agent to launch. Uses default from config if `None`.
         agent: Option<String>,

@@ -16,6 +16,26 @@ pub fn sanitize_for_path(s: &str) -> String {
     s.replace('/', "-")
 }
 
+/// The git branch namespace prefix used by KILD for worktree branches.
+pub const KILD_BRANCH_PREFIX: &str = "kild/";
+
+/// Constructs the KILD branch name for a given user branch name.
+///
+/// Example: `"my-feature"` → `"kild/my-feature"`
+pub fn kild_branch_name(branch: &str) -> String {
+    format!("kild/{branch}")
+}
+
+/// Constructs the worktree admin name (flat, filesystem-safe) for a given user branch name.
+///
+/// The admin name is used for the `.git/worktrees/<name>` directory, which does not
+/// support slashes. This is decoupled from the branch name via `WorktreeAddOptions::reference()`.
+///
+/// Example: `"feature/auth"` → `"kild-feature-auth"`
+pub fn kild_worktree_admin_name(branch: &str) -> String {
+    format!("kild-{}", sanitize_for_path(branch))
+}
+
 pub fn calculate_worktree_path(base_dir: &Path, project_name: &str, branch: &str) -> PathBuf {
     let safe_branch = sanitize_for_path(branch);
     base_dir
@@ -536,6 +556,31 @@ mod tests {
         assert!(!should_use_current_branch("main", "feature-branch"));
         assert!(!should_use_current_branch("feature-branch", "main"));
         assert!(should_use_current_branch("issue-33", "issue-33"));
+    }
+
+    #[test]
+    fn test_kild_branch_name() {
+        assert_eq!(kild_branch_name("my-feature"), "kild/my-feature");
+        assert_eq!(kild_branch_name("feature/auth"), "kild/feature/auth");
+        assert_eq!(kild_branch_name("simple"), "kild/simple");
+    }
+
+    #[test]
+    fn test_kild_worktree_admin_name() {
+        assert_eq!(kild_worktree_admin_name("my-feature"), "kild-my-feature");
+        assert_eq!(
+            kild_worktree_admin_name("feature/auth"),
+            "kild-feature-auth"
+        );
+        assert_eq!(
+            kild_worktree_admin_name("bugfix/auth/login"),
+            "kild-bugfix-auth-login"
+        );
+    }
+
+    #[test]
+    fn test_kild_branch_prefix_constant() {
+        assert_eq!(KILD_BRANCH_PREFIX, "kild/");
     }
 
     // --- get_diff_stats tests ---

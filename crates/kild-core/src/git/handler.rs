@@ -1,4 +1,4 @@
-use git2::{BranchType, Repository};
+use git2::{BranchType, Repository, WorktreeAddOptions};
 use std::path::Path;
 use tracing::{debug, error, info, warn};
 
@@ -133,13 +133,6 @@ pub fn create_worktree(
 
     let repo = Repository::open(&project.path).map_err(git2_error)?;
 
-    // Check current branch for smart worktree naming
-    let current_branch = operations::get_current_branch(&repo)?;
-    let use_current = current_branch
-        .as_ref()
-        .map(|cb| operations::should_use_current_branch(cb, &validated_branch))
-        .unwrap_or(false);
-
     let worktree_path =
         operations::calculate_worktree_path(base_dir, &project.name, &validated_branch);
 
@@ -162,51 +155,52 @@ pub fn create_worktree(
         std::fs::create_dir_all(parent).map_err(io_error)?;
     }
 
-    // Check if branch exists
-    let branch_exists = repo
-        .find_branch(&validated_branch, BranchType::Local)
-        .is_ok();
+    // Branch name: kild/<user_branch> (git-native namespace)
+    let kild_branch = operations::kild_branch_name(&validated_branch);
+
+    // Check if kild branch already exists (e.g. recreating a destroyed kild)
+    let branch_exists = repo.find_branch(&kild_branch, BranchType::Local).is_ok();
 
     debug!(
         event = "core.git.branch.check_completed",
         project_id = project.id,
-        branch = validated_branch,
+        branch = kild_branch,
         exists = branch_exists
     );
 
-    // Only create branch if it doesn't exist
     if !branch_exists {
         debug!(
             event = "core.git.branch.create_started",
             project_id = project.id,
-            branch = validated_branch
+            branch = kild_branch
         );
 
-        // Create new branch from HEAD
-        let head = repo.head().map_err(|e| GitError::Git2Error { source: e })?;
-        let head_commit = head
-            .peel_to_commit()
-            .map_err(|e| GitError::Git2Error { source: e })?;
+        let head = repo.head().map_err(git2_error)?;
+        let head_commit = head.peel_to_commit().map_err(git2_error)?;
 
-        repo.branch(&validated_branch, &head_commit, false)
-            .map_err(|e| GitError::Git2Error { source: e })?;
+        repo.branch(&kild_branch, &head_commit, false)
+            .map_err(git2_error)?;
 
         debug!(
             event = "core.git.branch.create_completed",
             project_id = project.id,
-            branch = validated_branch
+            branch = kild_branch
         );
     }
 
-    // Create worktree - use smart naming based on current branch
-    // Sanitize branch name for worktree directory (.git/worktrees/<name> treats / as path separator)
-    let worktree_name = if use_current {
-        operations::sanitize_for_path(&validated_branch)
-    } else {
-        format!("kild_{}", operations::sanitize_for_path(&validated_branch))
-    };
-    repo.worktree(&worktree_name, &worktree_path, None)
-        .map_err(|e| GitError::Git2Error { source: e })?;
+    // Worktree admin name: kild-<sanitized_branch> (filesystem-safe, flat)
+    // Decoupled from branch name via WorktreeAddOptions::reference()
+    let worktree_name = operations::kild_worktree_admin_name(&validated_branch);
+    let branch_ref = repo
+        .find_branch(&kild_branch, BranchType::Local)
+        .map_err(git2_error)?;
+    let reference = branch_ref.into_reference();
+
+    let mut opts = WorktreeAddOptions::new();
+    opts.reference(Some(&reference));
+
+    repo.worktree(&worktree_name, &worktree_path, Some(&opts))
+        .map_err(git2_error)?;
 
     let worktree_info = WorktreeInfo::new(
         worktree_path.clone(),
@@ -217,22 +211,9 @@ pub fn create_worktree(
     info!(
         event = "core.git.worktree.create_completed",
         project_id = project.id,
-        branch = validated_branch,
-        worktree_path = %worktree_path.display()
-    );
-
-    info!(
-        event = "core.git.worktree.branch_decision",
-        project_id = project.id,
-        requested_branch = validated_branch,
-        current_branch = current_branch.as_deref().unwrap_or("none"),
-        used_current = use_current,
+        branch = kild_branch,
         worktree_name = worktree_name,
-        reason = if use_current {
-            "current_branch_matches"
-        } else {
-            "current_branch_different"
-        }
+        worktree_path = %worktree_path.display()
     );
 
     // Copy include pattern files if configured
@@ -429,7 +410,8 @@ pub fn remove_worktree_by_path(worktree_path: &Path) -> Result<(), GitError> {
 
         // Delete associated branch if it exists and follows worktree naming pattern
         if let Some(ref branch_name) = branch_name
-            && branch_name.starts_with("kild_")
+            && (branch_name.starts_with(operations::KILD_BRANCH_PREFIX)
+                || branch_name.starts_with("kild_"))
         {
             match repo.find_branch(branch_name, BranchType::Local) {
                 Ok(mut branch) => match branch.delete() {
