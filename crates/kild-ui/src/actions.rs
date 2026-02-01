@@ -120,7 +120,16 @@ pub fn destroy_kild(branch: &str, force: bool) -> Result<(), String> {
         force = force
     );
 
-    let config = KildConfig::load_hierarchy().unwrap_or_default();
+    let config = match KildConfig::load_hierarchy() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(
+                event = "ui.destroy_kild.config_load_failed",
+                error = %e
+            );
+            return Err(format!("Failed to load config: {e}"));
+        }
+    };
     let mut store = CoreStore::new(config);
 
     match store.dispatch(Command::DestroyKild {
@@ -167,7 +176,16 @@ pub fn open_kild(branch: &str, agent: Option<String>) -> Result<Session, String>
 pub fn stop_kild(branch: &str) -> Result<(), String> {
     tracing::info!(event = "ui.stop_kild.started", branch = branch);
 
-    let config = KildConfig::load_hierarchy().unwrap_or_default();
+    let config = match KildConfig::load_hierarchy() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(
+                event = "ui.stop_kild.config_load_failed",
+                error = %e
+            );
+            return Err(format!("Failed to load config: {e}"));
+        }
+    };
     let mut store = CoreStore::new(config);
 
     match store.dispatch(Command::StopKild {

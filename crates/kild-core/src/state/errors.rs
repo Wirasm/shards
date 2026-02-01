@@ -1,4 +1,4 @@
-use crate::errors::KildError;
+use crate::errors::{ConfigError, KildError};
 use crate::projects::errors::ProjectError;
 use crate::sessions::errors::SessionError;
 
@@ -8,8 +8,10 @@ pub enum DispatchError {
     Session(#[from] SessionError),
     #[error(transparent)]
     Project(#[from] ProjectError),
-    #[error("Config error: {0}")]
-    Config(String),
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error("Command not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl KildError for DispatchError {
@@ -17,7 +19,8 @@ impl KildError for DispatchError {
         match self {
             DispatchError::Session(e) => e.error_code(),
             DispatchError::Project(e) => e.error_code(),
-            DispatchError::Config(_) => "DISPATCH_CONFIG_ERROR",
+            DispatchError::Config(e) => e.error_code(),
+            DispatchError::NotImplemented(_) => "DISPATCH_NOT_IMPLEMENTED",
         }
     }
 
@@ -25,7 +28,8 @@ impl KildError for DispatchError {
         match self {
             DispatchError::Session(e) => e.is_user_error(),
             DispatchError::Project(e) => e.is_user_error(),
-            DispatchError::Config(_) => true,
+            DispatchError::Config(e) => e.is_user_error(),
+            DispatchError::NotImplemented(_) => false,
         }
     }
 }
@@ -55,11 +59,40 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_error_config() {
-        let err = DispatchError::Config("bad config".to_string());
-        assert_eq!(err.error_code(), "DISPATCH_CONFIG_ERROR");
-        assert!(err.is_user_error());
-        assert_eq!(err.to_string(), "Config error: bad config");
+    fn test_dispatch_error_from_config_error() {
+        let config_err = crate::errors::ConfigError::ConfigParseError {
+            message: "invalid TOML".to_string(),
+        };
+        let dispatch_err = DispatchError::from(config_err);
+        assert_eq!(dispatch_err.error_code(), "CONFIG_PARSE_ERROR");
+        assert!(dispatch_err.is_user_error());
+        assert_eq!(
+            dispatch_err.to_string(),
+            "Failed to parse config file: invalid TOML"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_error_config_delegates_error_code() {
+        let err = DispatchError::Config(crate::errors::ConfigError::InvalidAgent {
+            agent: "bad".to_string(),
+        });
+        assert_eq!(err.error_code(), "INVALID_AGENT");
+    }
+
+    #[test]
+    fn test_dispatch_error_config_io_is_not_user_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let err = DispatchError::Config(crate::errors::ConfigError::IoError { source: io_err });
+        assert!(!err.is_user_error());
+    }
+
+    #[test]
+    fn test_dispatch_error_not_implemented() {
+        let err = DispatchError::NotImplemented("AddProject".to_string());
+        assert_eq!(err.error_code(), "DISPATCH_NOT_IMPLEMENTED");
+        assert!(!err.is_user_error());
+        assert_eq!(err.to_string(), "Command not implemented: AddProject");
     }
 
     #[test]

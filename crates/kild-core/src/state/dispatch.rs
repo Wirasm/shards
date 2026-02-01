@@ -9,8 +9,11 @@ use crate::state::types::Command;
 
 /// Default Store implementation that routes commands to kild-core handlers.
 ///
-/// Loads config on construction. Session operations delegate to `sessions::handler`.
-/// Project operations are not yet wired (logged and return Ok).
+/// Holds a `KildConfig` used only by the `CreateKild` command. Other session
+/// commands (`DestroyKild`, `OpenKild`, `StopKild`, `CompleteKild`) load their
+/// own config internally via their handlers.
+///
+/// Project operations are not yet wired and return `NotImplemented` errors.
 pub struct CoreStore {
     config: KildConfig,
 }
@@ -63,14 +66,14 @@ impl Store for CoreStore {
                 session_ops::list_sessions()?;
                 Ok(())
             }
-            Command::AddProject { .. }
-            | Command::RemoveProject { .. }
-            | Command::SelectProject { .. } => {
-                debug!(
-                    event = "core.state.dispatch_skipped",
-                    reason = "project commands not yet wired"
-                );
-                Ok(())
+            Command::AddProject { .. } => {
+                Err(DispatchError::NotImplemented("AddProject".to_string()))
+            }
+            Command::RemoveProject { .. } => {
+                Err(DispatchError::NotImplemented("RemoveProject".to_string()))
+            }
+            Command::SelectProject { .. } => {
+                Err(DispatchError::NotImplemented("SelectProject".to_string()))
             }
         };
 
@@ -97,37 +100,73 @@ mod tests {
     }
 
     #[test]
-    fn test_core_store_add_project_returns_ok() {
+    fn test_core_store_add_project_returns_not_implemented() {
         let mut store = CoreStore::new(KildConfig::default());
         let result = store.dispatch(Command::AddProject {
             path: PathBuf::from("/tmp/project"),
             name: "Test".to_string(),
         });
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Command not implemented: AddProject"
+        );
     }
 
     #[test]
-    fn test_core_store_remove_project_returns_ok() {
+    fn test_core_store_remove_project_returns_not_implemented() {
         let mut store = CoreStore::new(KildConfig::default());
         let result = store.dispatch(Command::RemoveProject {
             path: PathBuf::from("/tmp/project"),
         });
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Command not implemented: RemoveProject"
+        );
     }
 
     #[test]
-    fn test_core_store_select_project_returns_ok() {
+    fn test_core_store_select_project_returns_not_implemented() {
         let mut store = CoreStore::new(KildConfig::default());
         let result = store.dispatch(Command::SelectProject {
             path: Some(PathBuf::from("/tmp/project")),
         });
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Command not implemented: SelectProject"
+        );
     }
 
     #[test]
-    fn test_core_store_select_project_none_returns_ok() {
+    fn test_core_store_select_project_none_returns_not_implemented() {
         let mut store = CoreStore::new(KildConfig::default());
         let result = store.dispatch(Command::SelectProject { path: None });
-        assert!(result.is_ok());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_request_with_project_path() {
+        let request = CreateSessionRequest::with_project_path(
+            "test-branch".to_string(),
+            Some("claude".to_string()),
+            Some("a note".to_string()),
+            PathBuf::from("/tmp/project"),
+        );
+        assert_eq!(request.branch, "test-branch");
+        assert_eq!(request.agent, Some("claude".to_string()));
+        assert_eq!(request.note, Some("a note".to_string()));
+        assert_eq!(request.project_path, Some(PathBuf::from("/tmp/project")));
+    }
+
+    #[test]
+    fn test_create_request_without_project_path() {
+        let request =
+            CreateSessionRequest::new("test-branch".to_string(), Some("claude".to_string()), None);
+        assert_eq!(request.branch, "test-branch");
+        assert_eq!(request.agent, Some("claude".to_string()));
+        assert_eq!(request.note, None);
+        assert_eq!(request.project_path, None);
     }
 }
