@@ -23,7 +23,7 @@ KILD is built around git worktrees. Let git handle what git does best:
 - **Surface git errors to users** for actionable issues (conflicts, uncommitted changes, branch already exists)
 - **Handle expected failures gracefully** (missing directories during cleanup, worktree already removed)
 - **Trust git's natural guardrails** (e.g., git2 refuses to remove worktree with uncommitted changes - surface this, don't bypass it)
-- **Branch naming:** KILD creates `kild_<branch>` branches automatically for isolation. Slashes in branch names (e.g., `feature/foo`) are supported and sanitized to hyphens for filesystem paths
+- **Branch naming:** KILD creates `kild/<branch>` branches automatically for isolation using git-native namespacing. The worktree admin name (`kild-<branch>`) is filesystem-safe and decoupled from the branch name via `WorktreeAddOptions::reference()`
 
 ## Code Quality Standards
 

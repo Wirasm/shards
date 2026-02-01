@@ -12,7 +12,7 @@ KILD eliminates context switching between scattered terminals when working with 
 
 ## Features
 
-- **Isolated Worktrees**: Each kild gets its own Git worktree with unique `kild_<branch>` branch
+- **Isolated Worktrees**: Each kild gets its own Git worktree with unique `kild/<branch>` branch
 - **Native Terminal Integration**: Launches AI agents in native terminal windows
 - **Session Tracking**: Persistent registry tracks all active kilds
 - **Cross-Platform**: Works on macOS, Linux, and Windows

@@ -413,7 +413,7 @@ pub fn complete_session(name: &str, force: bool) -> Result<CompleteResult, Sessi
             }
         })?;
 
-    let kild_branch = format!("kild_{}", name);
+    let kild_branch = git::operations::kild_branch_name(name);
 
     // 2. Check if PR was merged (determines if we need to delete remote)
     let pr_merged = check_pr_merged(&session.worktree_path, &kild_branch);
@@ -620,11 +620,11 @@ fn delete_remote_branch(worktree_path: &std::path::Path, branch: &str) -> Result
 /// prevent accidental data loss. Check `git_status.status_check_failed` to
 /// detect this condition and show appropriate warnings.
 ///
-/// PR checks uses the `kild_<branch>` naming convention since KILD creates
+/// PR checks uses the `kild/<branch>` naming convention since KILD creates
 /// branches with this prefix.
 ///
 /// # Arguments
-/// * `name` - Branch name or kild identifier (without the `kild_` prefix)
+/// * `name` - Branch name or kild identifier (without the `kild/` prefix)
 ///
 /// # Returns
 /// * `Ok(DestroySafetyInfo)` - Safety information (always succeeds if session found)
@@ -642,7 +642,7 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
             }
         })?;
 
-    let kild_branch = format!("kild_{}", name);
+    let kild_branch = git::operations::kild_branch_name(name);
 
     // 2. Get git worktree status (conservative fallback on failure)
     let git_status = if session.worktree_path.exists() {
@@ -718,7 +718,7 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
 ///
 /// # Arguments
 /// * `worktree_path` - Path to the git worktree (for gh CLI working directory)
-/// * `branch` - Branch name to check (typically `kild_<name>`)
+/// * `branch` - Branch name to check (typically `kild/<name>`)
 ///
 /// # Returns
 /// * `PrCheckResult::Exists` - A PR exists for this branch
