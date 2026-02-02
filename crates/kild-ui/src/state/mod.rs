@@ -7,6 +7,7 @@
 pub mod app_state;
 pub mod dialog;
 pub mod errors;
+pub mod loading;
 pub mod selection;
 pub mod sessions;
 pub mod ui_commands;

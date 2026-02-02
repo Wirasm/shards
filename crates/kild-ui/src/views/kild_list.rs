@@ -128,6 +128,14 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
             let errors = state.errors_clone();
             let selected_kild_id = state.selected_id().map(|s| s.to_string());
 
+            // Pre-compute loading state for each branch to avoid repeated lookups in render loop
+            let mut loading_branches = std::collections::HashSet::new();
+            for display in &displays {
+                if state.is_loading(&display.session.branch) {
+                    loading_branches.insert(display.session.branch.clone());
+                }
+            }
+
             div().flex_1().h_full().child(
                 uniform_list(
                     "kild-list",
@@ -150,6 +158,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
 
                                 // Show Open button when stopped, Stop button when running
                                 let is_running = display.process_status == ProcessStatus::Running;
+                                let is_loading = loading_branches.contains(&branch);
 
                                 // Clone data for use in closures
                                 let branch_for_open = branch.clone();
@@ -346,9 +355,11 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                             // Open button [▶] - shown when NOT running - Success variant
                                             .when(!is_running, |row| {
                                                 let br = branch_for_open.clone();
+                                                let label = if is_loading { "..." } else { "▶" };
                                                 row.child(
-                                                    Button::new(("open-btn", ix), "▶")
+                                                    Button::new(("open-btn", ix), label)
                                                         .variant(ButtonVariant::Success)
+                                                        .disabled(is_loading)
                                                         .on_click(cx.listener(
                                                             move |view, _, _, cx| {
                                                                 view.on_open_click(&br, cx);
@@ -359,9 +370,11 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                             // Stop button [⏹] - shown when running - Warning variant
                                             .when(is_running, |row| {
                                                 let br = branch_for_stop.clone();
+                                                let label = if is_loading { "..." } else { "⏹" };
                                                 row.child(
-                                                    Button::new(("stop-btn", ix), "⏹")
+                                                    Button::new(("stop-btn", ix), label)
                                                         .variant(ButtonVariant::Warning)
+                                                        .disabled(is_loading)
                                                         .on_click(cx.listener(
                                                             move |view, _, _, cx| {
                                                                 view.on_stop_click(&br, cx);
@@ -374,6 +387,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                                 let br = branch_for_destroy.clone();
                                                 Button::new(("destroy-btn", ix), "×")
                                                     .variant(ButtonVariant::Danger)
+                                                    .disabled(is_loading)
                                                     .on_click(cx.listener(move |view, _, _, cx| {
                                                         view.on_destroy_click(&br, cx);
                                                     }))

@@ -264,6 +264,10 @@ impl MainView {
     /// Spawns the blocking create_kild operation on the background executor
     /// so the UI remains responsive during git worktree creation and terminal spawn.
     pub fn on_dialog_submit(&mut self, cx: &mut Context<Self>) {
+        if self.state.is_dialog_loading() {
+            return;
+        }
+
         // Extract form data from dialog state
         let crate::state::DialogState::Create { form, .. } = self.state.dialog() else {
             tracing::error!(
@@ -292,11 +296,19 @@ impl MainView {
             );
         }
 
+        self.state.set_dialog_loading();
+        cx.notify();
+
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let result = cx
                 .background_executor()
                 .spawn(async move { actions::create_kild(branch, agent, note, project_path) })
                 .await;
+
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
+                view.state.clear_dialog_loading();
+            });
 
             if let Err(e) = this.update(cx, |view, cx| {
                 match result {
@@ -359,6 +371,10 @@ impl MainView {
     /// Spawns the blocking destroy_kild operation on the background executor
     /// so the UI remains responsive during worktree removal and process termination.
     pub fn on_confirm_destroy(&mut self, cx: &mut Context<Self>) {
+        if self.state.is_dialog_loading() {
+            return;
+        }
+
         // Extract branch and safety_info from dialog state
         let crate::state::DialogState::Confirm {
             branch,
@@ -377,11 +393,19 @@ impl MainView {
             .map(|s| s.should_block())
             .unwrap_or(false);
 
+        self.state.set_dialog_loading();
+        cx.notify();
+
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let result = cx
                 .background_executor()
                 .spawn(async move { actions::destroy_kild(branch, force) })
                 .await;
+
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
+                view.state.clear_dialog_loading();
+            });
 
             if let Err(e) = this.update(cx, |view, cx| {
                 match result {
@@ -419,8 +443,13 @@ impl MainView {
     ///
     /// Spawns the blocking open_kild operation on the background executor.
     pub fn on_open_click(&mut self, branch: &str, cx: &mut Context<Self>) {
+        if self.state.is_loading(branch) {
+            return;
+        }
         tracing::info!(event = "ui.open_clicked", branch = branch);
         self.state.clear_error(branch);
+        self.state.set_loading(branch);
+        cx.notify();
         let branch = branch.to_string();
 
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
@@ -430,9 +459,16 @@ impl MainView {
                 .spawn(async move { actions::open_kild(branch_for_action, None) })
                 .await;
 
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
+                view.state.clear_loading(&branch);
+            });
+
             if let Err(e) = this.update(cx, |view, cx| {
                 match result {
-                    Ok(events) => view.state.apply_events(&events),
+                    Ok(events) => {
+                        view.state.apply_events(&events);
+                    }
                     Err(e) => {
                         tracing::warn!(event = "ui.open_click.error_displayed", branch = %branch, error = %e);
                         view.state.set_error(
@@ -459,8 +495,13 @@ impl MainView {
     ///
     /// Spawns the blocking stop_kild operation on the background executor.
     pub fn on_stop_click(&mut self, branch: &str, cx: &mut Context<Self>) {
+        if self.state.is_loading(branch) {
+            return;
+        }
         tracing::info!(event = "ui.stop_clicked", branch = branch);
         self.state.clear_error(branch);
+        self.state.set_loading(branch);
+        cx.notify();
         let branch = branch.to_string();
 
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
@@ -470,9 +511,16 @@ impl MainView {
                 .spawn(async move { actions::stop_kild(branch_for_action) })
                 .await;
 
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
+                view.state.clear_loading(&branch);
+            });
+
             if let Err(e) = this.update(cx, |view, cx| {
                 match result {
-                    Ok(events) => view.state.apply_events(&events),
+                    Ok(events) => {
+                        view.state.apply_events(&events);
+                    }
                     Err(e) => {
                         tracing::warn!(event = "ui.stop_click.error_displayed", branch = %branch, error = %e);
                         view.state.set_error(
@@ -509,7 +557,12 @@ impl MainView {
             + Send
             + 'static,
     {
+        if self.state.is_bulk_loading() {
+            return;
+        }
         self.state.clear_bulk_errors();
+        self.state.set_bulk_loading();
+        cx.notify();
         let displays = self.state.displays().to_vec();
 
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
@@ -517,6 +570,11 @@ impl MainView {
                 .background_executor()
                 .spawn(async move { operation(&displays) })
                 .await;
+
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
+                view.state.clear_bulk_loading();
+            });
 
             if let Err(e) = this.update(cx, |view, cx| {
                 let (count, errors) = result;
@@ -1036,7 +1094,7 @@ impl Render for MainView {
                                     format!("Open All ({})", stopped_count),
                                 )
                                 .variant(ButtonVariant::Success)
-                                .disabled(stopped_count == 0)
+                                .disabled(stopped_count == 0 || self.state.is_bulk_loading())
                                 .on_click(cx.listener(
                                     |view, _, _, cx| {
                                         view.on_open_all_click(cx);
@@ -1050,7 +1108,7 @@ impl Render for MainView {
                                     format!("Stop All ({})", running_count),
                                 )
                                 .variant(ButtonVariant::Warning)
-                                .disabled(running_count == 0)
+                                .disabled(running_count == 0 || self.state.is_bulk_loading())
                                 .on_click(cx.listener(
                                     |view, _, _, cx| {
                                         view.on_stop_all_click(cx);
@@ -1192,11 +1250,16 @@ impl Render for MainView {
             )
             // Dialog rendering (based on current dialog state)
             .when(self.state.dialog().is_create(), |this| {
-                this.child(create_dialog::render_create_dialog(self.state.dialog(), cx))
+                this.child(create_dialog::render_create_dialog(
+                    self.state.dialog(),
+                    self.state.is_dialog_loading(),
+                    cx,
+                ))
             })
             .when(self.state.dialog().is_confirm(), |this| {
                 this.child(confirm_dialog::render_confirm_dialog(
                     self.state.dialog(),
+                    self.state.is_dialog_loading(),
                     cx,
                 ))
             })
