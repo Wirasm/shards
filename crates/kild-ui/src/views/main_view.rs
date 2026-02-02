@@ -305,8 +305,12 @@ impl MainView {
                 .spawn(async move { actions::create_kild(branch, agent, note, project_path) })
                 .await;
 
-            if let Err(e) = this.update(cx, |view, cx| {
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
                 view.state.clear_dialog_loading();
+            });
+
+            if let Err(e) = this.update(cx, |view, cx| {
                 match result {
                     Ok(events) => view.state.apply_events(&events),
                     Err(e) => {
@@ -398,8 +402,12 @@ impl MainView {
                 .spawn(async move { actions::destroy_kild(branch, force) })
                 .await;
 
-            if let Err(e) = this.update(cx, |view, cx| {
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
                 view.state.clear_dialog_loading();
+            });
+
+            if let Err(e) = this.update(cx, |view, cx| {
                 match result {
                     Ok(events) => view.state.apply_events(&events),
                     Err(e) => {
@@ -439,8 +447,8 @@ impl MainView {
             return;
         }
         tracing::info!(event = "ui.open_clicked", branch = branch);
-        self.state
-            .set_loading(branch, crate::state::Operation::Opening);
+        self.state.clear_error(branch);
+        self.state.set_loading(branch);
         cx.notify();
         let branch = branch.to_string();
 
@@ -451,11 +459,14 @@ impl MainView {
                 .spawn(async move { actions::open_kild(branch_for_action, None) })
                 .await;
 
-            if let Err(e) = this.update(cx, |view, cx| {
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
                 view.state.clear_loading(&branch);
+            });
+
+            if let Err(e) = this.update(cx, |view, cx| {
                 match result {
                     Ok(events) => {
-                        view.state.clear_error(&branch);
                         view.state.apply_events(&events);
                     }
                     Err(e) => {
@@ -488,8 +499,8 @@ impl MainView {
             return;
         }
         tracing::info!(event = "ui.stop_clicked", branch = branch);
-        self.state
-            .set_loading(branch, crate::state::Operation::Stopping);
+        self.state.clear_error(branch);
+        self.state.set_loading(branch);
         cx.notify();
         let branch = branch.to_string();
 
@@ -500,11 +511,14 @@ impl MainView {
                 .spawn(async move { actions::stop_kild(branch_for_action) })
                 .await;
 
-            if let Err(e) = this.update(cx, |view, cx| {
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
                 view.state.clear_loading(&branch);
+            });
+
+            if let Err(e) = this.update(cx, |view, cx| {
                 match result {
                     Ok(events) => {
-                        view.state.clear_error(&branch);
                         view.state.apply_events(&events);
                     }
                     Err(e) => {
@@ -557,8 +571,12 @@ impl MainView {
                 .spawn(async move { operation(&displays) })
                 .await;
 
-            if let Err(e) = this.update(cx, |view, cx| {
+            // Always clear loading state, even if view was dropped
+            let _ = this.update(cx, |view, _cx| {
                 view.state.clear_bulk_loading();
+            });
+
+            if let Err(e) = this.update(cx, |view, cx| {
                 let (count, errors) = result;
                 for error in &errors {
                     tracing::warn!(

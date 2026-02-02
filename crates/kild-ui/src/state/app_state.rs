@@ -3,7 +3,7 @@ use kild_core::projects::{Project, ProjectError, ProjectManager};
 
 use super::dialog::DialogState;
 use super::errors::{OperationError, OperationErrors};
-use super::loading::{LoadingState, Operation};
+use super::loading::LoadingState;
 use super::selection::SelectionState;
 use super::sessions::SessionStore;
 
@@ -361,8 +361,8 @@ impl AppState {
     // =========================================================================
 
     /// Mark a branch as having an in-flight operation.
-    pub fn set_loading(&mut self, branch: &str, op: Operation) {
-        self.loading.set_branch(branch, op);
+    pub fn set_loading(&mut self, branch: &str) {
+        self.loading.set_branch(branch);
     }
 
     /// Clear the in-flight operation for a branch.
@@ -1195,5 +1195,112 @@ mod tests {
         }]);
 
         assert!(!state.has_selection());
+    }
+
+    // --- Loading facade tests ---
+
+    #[test]
+    fn test_loading_facade_branch() {
+        let mut state = AppState::test_new();
+
+        assert!(!state.is_loading("branch-1"));
+        state.set_loading("branch-1");
+        assert!(state.is_loading("branch-1"));
+        assert!(!state.is_loading("branch-2"));
+        state.clear_loading("branch-1");
+        assert!(!state.is_loading("branch-1"));
+    }
+
+    #[test]
+    fn test_loading_facade_bulk() {
+        let mut state = AppState::test_new();
+
+        assert!(!state.is_bulk_loading());
+        state.set_bulk_loading();
+        assert!(state.is_bulk_loading());
+        state.clear_bulk_loading();
+        assert!(!state.is_bulk_loading());
+    }
+
+    #[test]
+    fn test_loading_facade_dialog() {
+        let mut state = AppState::test_new();
+
+        assert!(!state.is_dialog_loading());
+        state.set_dialog_loading();
+        assert!(state.is_dialog_loading());
+        state.clear_dialog_loading();
+        assert!(!state.is_dialog_loading());
+    }
+
+    #[test]
+    fn test_multiple_branches_load_independently() {
+        let mut state = AppState::test_new();
+
+        state.set_loading("branch-1");
+        state.set_loading("branch-2");
+
+        assert!(state.is_loading("branch-1"));
+        assert!(state.is_loading("branch-2"));
+
+        state.clear_loading("branch-1");
+        assert!(!state.is_loading("branch-1"));
+        assert!(state.is_loading("branch-2"));
+    }
+
+    #[test]
+    fn test_loading_dimensions_independent() {
+        let mut state = AppState::test_new();
+
+        state.set_bulk_loading();
+        assert!(!state.is_loading("branch-1"));
+        assert!(!state.is_dialog_loading());
+
+        state.set_loading("branch-1");
+        assert!(!state.is_dialog_loading());
+
+        state.set_dialog_loading();
+        state.clear_bulk_loading();
+        assert!(state.is_loading("branch-1"));
+        assert!(state.is_dialog_loading());
+    }
+
+    #[test]
+    fn test_set_loading_does_not_clear_existing_error() {
+        let mut state = AppState::test_new();
+        state.set_error(
+            "branch-1",
+            OperationError {
+                branch: "branch-1".to_string(),
+                message: "Previous error".to_string(),
+            },
+        );
+
+        state.set_loading("branch-1");
+
+        assert!(state.get_error("branch-1").is_some());
+        assert_eq!(
+            state.get_error("branch-1").unwrap().message,
+            "Previous error"
+        );
+    }
+
+    #[test]
+    fn test_error_persists_through_loading_lifecycle() {
+        let mut state = AppState::test_new();
+        state.set_error(
+            "branch-1",
+            OperationError {
+                branch: "branch-1".to_string(),
+                message: "Error message".to_string(),
+            },
+        );
+
+        // Error persists through loading set/clear cycle
+        state.set_loading("branch-1");
+        assert!(state.get_error("branch-1").is_some());
+
+        state.clear_loading("branch-1");
+        assert!(state.get_error("branch-1").is_some());
     }
 }
