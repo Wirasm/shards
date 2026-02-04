@@ -10,5 +10,6 @@
 build/
 
 .kild/config.toml
-.claude/PRPs/
+.claude/PRPs/*
+!.claude/PRPs/branding/
 .archon/
