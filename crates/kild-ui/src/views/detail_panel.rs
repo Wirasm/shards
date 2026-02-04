@@ -25,11 +25,11 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
 
     let session = &kild.session;
     let branch = session.branch.clone();
-    let agent = if session.agents.len() > 1 {
+    let agent = if session.agent_count() > 1 {
         session
-            .agents
+            .agents()
             .iter()
-            .map(|a| a.agent.as_str())
+            .map(|a| a.agent())
             .collect::<Vec<_>>()
             .join(", ")
     } else {
@@ -65,14 +65,12 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
     let branch_for_editor = branch.clone();
     let branch_for_focus = branch.clone();
     let terminal_type_for_focus = session
-        .agents
-        .last()
-        .and_then(|a| a.terminal_type.clone())
+        .latest_agent()
+        .and_then(|a| a.terminal_type().cloned())
         .or_else(|| session.terminal_type.clone());
     let window_id_for_focus = session
-        .agents
-        .last()
-        .and_then(|a| a.terminal_window_id.clone())
+        .latest_agent()
+        .and_then(|a| a.terminal_window_id().map(|s| s.to_string()))
         .or_else(|| session.terminal_window_id.clone());
     let branch_for_action = branch.clone();
     let branch_for_destroy = branch.clone();

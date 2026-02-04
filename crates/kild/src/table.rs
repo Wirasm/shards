@@ -52,17 +52,17 @@ impl TableFormatter {
 
     fn print_row(&self, session: &Session) {
         let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
-        let process_status = if !session.agents.is_empty() {
+        let process_status = if session.has_agents() {
             let running = session
-                .agents
+                .agents()
                 .iter()
                 .filter(|a| {
-                    a.process_id.is_some_and(|pid| {
+                    a.process_id().is_some_and(|pid| {
                         matches!(kild_core::process::is_process_running(pid), Ok(true))
                     })
                 })
                 .count();
-            let total = session.agents.len();
+            let total = session.agent_count();
             format!("Run({}/{})", running, total)
         } else {
             session.process_id.map_or("No PID".to_string(), |pid| {
@@ -87,11 +87,13 @@ impl TableFormatter {
             "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             truncate(&session.branch, self.branch_width),
             truncate(
-                &if session.agents.len() > 1 {
+                &if session.agent_count() > 1 {
                     format!(
                         "{} (+{})",
-                        session.agents.last().map_or(&session.agent, |a| &a.agent),
-                        session.agents.len() - 1
+                        session
+                            .latest_agent()
+                            .map_or(session.agent.as_str(), |a| a.agent()),
+                        session.agent_count() - 1
                     )
                 } else {
                     session.agent.clone()

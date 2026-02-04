@@ -63,9 +63,9 @@ pub fn get_health_single_session(branch: &str) -> Result<KildHealth, HealthError
 fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth {
     // Find first running agent for metrics (multi-agent path)
     let running_pid = session
-        .agents
+        .agents()
         .iter()
-        .filter_map(|a| a.process_id)
+        .filter_map(|a| a.process_id())
         .find(|&pid| matches!(process::is_process_running(pid), Ok(true)));
 
     let (process_metrics, process_running) = if let Some(pid) = running_pid {

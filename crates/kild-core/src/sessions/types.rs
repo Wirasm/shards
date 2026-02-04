@@ -248,8 +248,10 @@ pub struct Session {
     ///
     /// Populated by `kild create` (initial agent) and `kild open` (additional agents).
     /// `kild stop` clears this vec. Each open operation appends an entry.
-    ///
     /// Empty for sessions created before multi-agent tracking was added.
+    ///
+    /// Prefer accessor methods (`agents()`, `add_agent()`, `clear_agents()`,
+    /// `latest_agent()`, `has_agents()`, `agent_count()`) over direct field access.
     #[serde(default)]
     pub agents: Vec<AgentProcess>,
 }
@@ -258,16 +260,89 @@ pub struct Session {
 ///
 /// Multiple agents can run concurrently in the same kild via `kild open`.
 /// Each open operation appends an `AgentProcess` to the session's `agents` vec.
+///
+/// Invariant: `process_id`, `process_name`, and `process_start_time` must all
+/// be `Some` or all be `None`. This ensures PID reuse protection always has
+/// the metadata it needs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentProcess {
-    pub agent: String,
-    pub process_id: Option<u32>,
-    pub process_name: Option<String>,
-    pub process_start_time: Option<u64>,
-    pub terminal_type: Option<TerminalType>,
-    pub terminal_window_id: Option<String>,
-    pub command: String,
-    pub opened_at: String,
+    agent: String,
+    process_id: Option<u32>,
+    process_name: Option<String>,
+    process_start_time: Option<u64>,
+    terminal_type: Option<TerminalType>,
+    terminal_window_id: Option<String>,
+    command: String,
+    opened_at: String,
+}
+
+impl AgentProcess {
+    /// Create a new agent process with validated metadata.
+    ///
+    /// Returns `InvalidProcessMetadata` if process tracking fields are
+    /// inconsistent (e.g., `process_id` is `Some` but `process_name` is `None`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        agent: String,
+        process_id: Option<u32>,
+        process_name: Option<String>,
+        process_start_time: Option<u64>,
+        terminal_type: Option<TerminalType>,
+        terminal_window_id: Option<String>,
+        command: String,
+        opened_at: String,
+    ) -> Result<Self, super::errors::SessionError> {
+        // Validate: process_id, process_name, process_start_time must all be present or all absent
+        let has_pid = process_id.is_some();
+        let has_name = process_name.is_some();
+        let has_time = process_start_time.is_some();
+        if has_pid != has_name || has_pid != has_time {
+            return Err(super::errors::SessionError::InvalidProcessMetadata);
+        }
+
+        Ok(Self {
+            agent,
+            process_id,
+            process_name,
+            process_start_time,
+            terminal_type,
+            terminal_window_id,
+            command,
+            opened_at,
+        })
+    }
+
+    pub fn agent(&self) -> &str {
+        &self.agent
+    }
+
+    pub fn process_id(&self) -> Option<u32> {
+        self.process_id
+    }
+
+    pub fn process_name(&self) -> Option<&str> {
+        self.process_name.as_deref()
+    }
+
+    pub fn process_start_time(&self) -> Option<u64> {
+        self.process_start_time
+    }
+
+    pub fn terminal_type(&self) -> Option<&TerminalType> {
+        self.terminal_type.as_ref()
+    }
+
+    pub fn terminal_window_id(&self) -> Option<&str> {
+        self.terminal_window_id.as_deref()
+    }
+
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub fn opened_at(&self) -> &str {
+        &self.opened_at
+    }
 }
 
 impl Session {
@@ -281,6 +356,41 @@ impl Session {
     /// display orphaned status indicators in the UI.
     pub fn is_worktree_valid(&self) -> bool {
         self.worktree_path.exists()
+    }
+
+    /// All tracked agent processes in this session.
+    pub fn agents(&self) -> &[AgentProcess] {
+        &self.agents
+    }
+
+    /// Whether this session has any tracked agents.
+    pub fn has_agents(&self) -> bool {
+        !self.agents.is_empty()
+    }
+
+    /// Number of tracked agents.
+    pub fn agent_count(&self) -> usize {
+        self.agents.len()
+    }
+
+    /// The most recently opened agent (last in the vec).
+    pub fn latest_agent(&self) -> Option<&AgentProcess> {
+        self.agents.last()
+    }
+
+    /// Append an agent to this session's tracking vec.
+    pub fn add_agent(&mut self, agent: AgentProcess) {
+        self.agents.push(agent);
+    }
+
+    /// Remove all tracked agents (called during stop/destroy).
+    pub fn clear_agents(&mut self) {
+        self.agents.clear();
+    }
+
+    /// Set the initial agents vec (called during session creation).
+    pub fn set_agents(&mut self, agents: Vec<AgentProcess>) {
+        self.agents = agents;
     }
 }
 
@@ -949,17 +1059,73 @@ mod tests {
     // --- AgentProcess and multi-agent tests ---
 
     #[test]
+    fn test_agent_process_rejects_inconsistent_process_metadata() {
+        // pid without name/time
+        let result = AgentProcess::new(
+            "claude".to_string(),
+            Some(12345),
+            None,
+            None,
+            None,
+            None,
+            "cmd".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+        );
+        assert!(result.is_err());
+
+        // pid + name without time
+        let result = AgentProcess::new(
+            "claude".to_string(),
+            Some(12345),
+            Some("claude-code".to_string()),
+            None,
+            None,
+            None,
+            "cmd".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+        );
+        assert!(result.is_err());
+
+        // all None is valid
+        let result = AgentProcess::new(
+            "claude".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            "cmd".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+        );
+        assert!(result.is_ok());
+
+        // all Some is valid
+        let result = AgentProcess::new(
+            "claude".to_string(),
+            Some(12345),
+            Some("claude-code".to_string()),
+            Some(1705318200),
+            None,
+            None,
+            "cmd".to_string(),
+            "2024-01-01T00:00:00Z".to_string(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_agent_process_serialization_roundtrip() {
-        let agent = AgentProcess {
-            agent: "claude".to_string(),
-            process_id: Some(12345),
-            process_name: Some("claude-code".to_string()),
-            process_start_time: Some(1705318200),
-            terminal_type: Some(TerminalType::Ghostty),
-            terminal_window_id: Some("kild-test".to_string()),
-            command: "claude-code".to_string(),
-            opened_at: "2024-01-15T10:30:00Z".to_string(),
-        };
+        let agent = AgentProcess::new(
+            "claude".to_string(),
+            Some(12345),
+            Some("claude-code".to_string()),
+            Some(1705318200),
+            Some(TerminalType::Ghostty),
+            Some("kild-test".to_string()),
+            "claude-code".to_string(),
+            "2024-01-15T10:30:00Z".to_string(),
+        )
+        .unwrap();
         let json = serde_json::to_string(&agent).unwrap();
         let deserialized: AgentProcess = serde_json::from_str(&json).unwrap();
         assert_eq!(agent, deserialized);
@@ -985,7 +1151,7 @@ mod tests {
             "command": "claude-code"
         }"#;
         let session: Session = serde_json::from_str(json).unwrap();
-        assert!(session.agents.is_empty());
+        assert!(!session.has_agents());
     }
 
     #[test]
@@ -1010,32 +1176,34 @@ mod tests {
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
             agents: vec![
-                AgentProcess {
-                    agent: "claude".to_string(),
-                    process_id: Some(12345),
-                    process_name: Some("claude-code".to_string()),
-                    process_start_time: Some(1234567890),
-                    terminal_type: Some(TerminalType::Ghostty),
-                    terminal_window_id: Some("kild-test".to_string()),
-                    command: "claude-code".to_string(),
-                    opened_at: "2024-01-01T00:00:00Z".to_string(),
-                },
-                AgentProcess {
-                    agent: "kiro".to_string(),
-                    process_id: Some(67890),
-                    process_name: Some("kiro-cli".to_string()),
-                    process_start_time: Some(1234567900),
-                    terminal_type: Some(TerminalType::Ghostty),
-                    terminal_window_id: Some("kild-test-2".to_string()),
-                    command: "kiro-cli chat".to_string(),
-                    opened_at: "2024-01-01T00:01:00Z".to_string(),
-                },
+                AgentProcess::new(
+                    "claude".to_string(),
+                    Some(12345),
+                    Some("claude-code".to_string()),
+                    Some(1234567890),
+                    Some(TerminalType::Ghostty),
+                    Some("kild-test".to_string()),
+                    "claude-code".to_string(),
+                    "2024-01-01T00:00:00Z".to_string(),
+                )
+                .unwrap(),
+                AgentProcess::new(
+                    "kiro".to_string(),
+                    Some(67890),
+                    Some("kiro-cli".to_string()),
+                    Some(1234567900),
+                    Some(TerminalType::Ghostty),
+                    Some("kild-test-2".to_string()),
+                    "kiro-cli chat".to_string(),
+                    "2024-01-01T00:01:00Z".to_string(),
+                )
+                .unwrap(),
             ],
         };
         let json = serde_json::to_string_pretty(&session).unwrap();
         let deserialized: Session = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.agents.len(), 2);
-        assert_eq!(deserialized.agents[0].agent, "claude");
-        assert_eq!(deserialized.agents[1].agent, "kiro");
+        assert_eq!(deserialized.agent_count(), 2);
+        assert_eq!(deserialized.agents()[0].agent(), "claude");
+        assert_eq!(deserialized.agents()[1].agent(), "kiro");
     }
 }

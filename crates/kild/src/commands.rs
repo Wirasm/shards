@@ -861,19 +861,19 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
     };
 
     // 2. Get terminal type and window ID (prefer latest agent from agents vec)
-    let (term_type_ref, window_id_ref) = if let Some(latest) = session.agents.last() {
+    let (term_type, window_id) = if let Some(latest) = session.latest_agent() {
         (
-            latest.terminal_type.as_ref(),
-            latest.terminal_window_id.as_ref(),
+            latest.terminal_type().cloned(),
+            latest.terminal_window_id().map(|s| s.to_string()),
         )
     } else {
         (
-            session.terminal_type.as_ref(),
-            session.terminal_window_id.as_ref(),
+            session.terminal_type.clone(),
+            session.terminal_window_id.clone(),
         )
     };
 
-    let terminal_type = term_type_ref.ok_or_else(|| {
+    let terminal_type = term_type.ok_or_else(|| {
         eprintln!("❌ No terminal type recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -883,7 +883,7 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
         "No terminal type recorded for this kild"
     })?;
 
-    let window_id = window_id_ref.ok_or_else(|| {
+    let window_id = window_id.ok_or_else(|| {
         eprintln!("❌ No window ID recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -894,7 +894,7 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
     })?;
 
     // 3. Focus the terminal window
-    match kild_core::terminal_ops::focus_terminal(terminal_type, window_id) {
+    match kild_core::terminal_ops::focus_terminal(&terminal_type, &window_id) {
         Ok(()) => {
             println!("✅ Focused kild '{}' terminal window", branch);
             info!(event = "cli.focus_completed", branch = branch);
@@ -1116,20 +1116,28 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
             // Display agents
-            if !session.agents.is_empty() {
+            if session.has_agents() {
                 println!(
                     "│ Agents:      {:<47} │",
-                    format!("{} agent(s)", session.agents.len())
+                    format!("{} agent(s)", session.agent_count())
                 );
-                for (i, agent_proc) in session.agents.iter().enumerate() {
-                    let status = agent_proc.process_id.map_or("No PID".to_string(), |pid| {
+                for (i, agent_proc) in session.agents().iter().enumerate() {
+                    let status = agent_proc.process_id().map_or("No PID".to_string(), |pid| {
                         match process::is_process_running(pid) {
                             Ok(true) => format!("Running (PID: {})", pid),
                             Ok(false) => format!("Stopped (PID: {})", pid),
-                            Err(_) => format!("Error (PID: {})", pid),
+                            Err(e) => {
+                                warn!(
+                                    event = "cli.status.process_check_failed",
+                                    pid = pid,
+                                    agent = agent_proc.agent(),
+                                    error = %e
+                                );
+                                format!("Unknown (PID: {})", pid)
+                            }
                         }
                     });
-                    println!("│   {}. {:<6} {:<38} │", i + 1, agent_proc.agent, status);
+                    println!("│   {}. {:<6} {:<38} │", i + 1, agent_proc.agent(), status);
                 }
             } else {
                 // Fallback: singular field display for old sessions

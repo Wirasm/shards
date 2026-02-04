@@ -170,16 +170,16 @@ pub fn create_session(
     } else {
         spawn_result.command_executed.clone()
     };
-    let initial_agent = AgentProcess {
-        agent: validated.agent.clone(),
-        process_id: spawn_result.process_id,
-        process_name: spawn_result.process_name.clone(),
-        process_start_time: spawn_result.process_start_time,
-        terminal_type: Some(spawn_result.terminal_type.clone()),
-        terminal_window_id: spawn_result.terminal_window_id.clone(),
-        command: command.clone(),
-        opened_at: now.clone(),
-    };
+    let initial_agent = AgentProcess::new(
+        validated.agent.clone(),
+        spawn_result.process_id,
+        spawn_result.process_name.clone(),
+        spawn_result.process_start_time,
+        Some(spawn_result.terminal_type.clone()),
+        spawn_result.terminal_window_id.clone(),
+        command.clone(),
+        now.clone(),
+    )?;
     let session = Session {
         id: session_id.clone(),
         project_id: project.id,
@@ -295,34 +295,34 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     );
 
     // 2. Close all terminal windows and kill all processes
-    if !session.agents.is_empty() {
+    if session.has_agents() {
         // Multi-agent path: close all terminal windows (fire-and-forget)
-        for agent_proc in &session.agents {
+        for agent_proc in session.agents() {
             if let (Some(terminal_type), Some(window_id)) =
-                (&agent_proc.terminal_type, &agent_proc.terminal_window_id)
+                (agent_proc.terminal_type(), agent_proc.terminal_window_id())
             {
                 info!(
                     event = "core.session.destroy_close_terminal",
                     terminal_type = ?terminal_type,
-                    agent = agent_proc.agent,
+                    agent = agent_proc.agent(),
                 );
-                terminal::handler::close_terminal(terminal_type, Some(window_id.as_str()));
+                terminal::handler::close_terminal(terminal_type, Some(window_id));
             }
         }
 
         // Kill all tracked processes
         let mut kill_errors: Vec<(u32, String)> = Vec::new();
-        for agent_proc in &session.agents {
-            if let Some(pid) = agent_proc.process_id {
+        for agent_proc in session.agents() {
+            if let Some(pid) = agent_proc.process_id() {
                 info!(
                     event = "core.session.destroy_kill_started",
                     pid = pid,
-                    agent = agent_proc.agent
+                    agent = agent_proc.agent()
                 );
                 match crate::process::kill_process(
                     pid,
-                    agent_proc.process_name.as_deref(),
-                    agent_proc.process_start_time,
+                    agent_proc.process_name(),
+                    agent_proc.process_start_time(),
                 ) {
                     Ok(()) => {
                         info!(event = "core.session.destroy_kill_completed", pid = pid);
@@ -345,18 +345,31 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
             }
         }
 
-        if !force && let Some((pid, message)) = kill_errors.into_iter().next() {
-            error!(
-                event = "core.session.destroy_kill_failed",
-                pid = pid,
-                error = message
-            );
-            return Err(SessionError::ProcessKillFailed {
-                pid,
-                message: format!(
+        if !force && !kill_errors.is_empty() {
+            for (pid, err) in &kill_errors {
+                error!(
+                    event = "core.session.destroy_kill_failed",
+                    pid = pid,
+                    error = %err
+                );
+            }
+            let pids: Vec<String> = kill_errors.iter().map(|(p, _)| p.to_string()).collect();
+            let (first_pid, first_msg) = kill_errors.into_iter().next().unwrap();
+            let message = if pids.len() == 1 {
+                format!(
                     "Process still running. Kill it manually or use --force flag: {}",
-                    message
-                ),
+                    first_msg
+                )
+            } else {
+                format!(
+                    "{} processes still running (PIDs: {}). Kill them manually or use --force flag.",
+                    pids.len(),
+                    pids.join(", ")
+                )
+            };
+            return Err(SessionError::ProcessKillFailed {
+                pid: first_pid,
+                message,
             });
         }
     } else {
@@ -1114,16 +1127,16 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     } else {
         spawn_result.command_executed.clone()
     };
-    let new_agent = AgentProcess {
-        agent: agent.clone(),
-        process_id: spawn_result.process_id,
-        process_name: process_name.clone(),
+    let new_agent = AgentProcess::new(
+        agent.clone(),
+        spawn_result.process_id,
+        process_name.clone(),
         process_start_time,
-        terminal_type: Some(spawn_result.terminal_type.clone()),
-        terminal_window_id: spawn_result.terminal_window_id.clone(),
-        command: command.clone(),
-        opened_at: now.clone(),
-    };
+        Some(spawn_result.terminal_type.clone()),
+        spawn_result.terminal_window_id.clone(),
+        command.clone(),
+        now.clone(),
+    )?;
 
     // Keep singular fields updated to latest for backward compat
     session.process_id = spawn_result.process_id;
@@ -1137,7 +1150,7 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     session.last_activity = Some(now);
 
     // Track all agents for proper cleanup
-    session.agents.push(new_agent);
+    session.add_agent(new_agent);
 
     // 7. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1174,33 +1187,33 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
     );
 
     // 2. Close all terminal windows and kill all processes
-    if !session.agents.is_empty() {
+    if session.has_agents() {
         // Multi-agent path: iterate all tracked agents
-        for agent_proc in &session.agents {
+        for agent_proc in session.agents() {
             if let (Some(terminal_type), Some(window_id)) =
-                (&agent_proc.terminal_type, &agent_proc.terminal_window_id)
+                (agent_proc.terminal_type(), agent_proc.terminal_window_id())
             {
                 info!(
                     event = "core.session.stop_close_terminal",
                     terminal_type = ?terminal_type,
-                    agent = agent_proc.agent,
+                    agent = agent_proc.agent(),
                 );
-                terminal::handler::close_terminal(terminal_type, Some(window_id.as_str()));
+                terminal::handler::close_terminal(terminal_type, Some(window_id));
             }
         }
 
         let mut kill_errors: Vec<(u32, String)> = Vec::new();
-        for agent_proc in &session.agents {
-            if let Some(pid) = agent_proc.process_id {
+        for agent_proc in session.agents() {
+            if let Some(pid) = agent_proc.process_id() {
                 info!(
                     event = "core.session.stop_kill_started",
                     pid = pid,
-                    agent = agent_proc.agent
+                    agent = agent_proc.agent()
                 );
                 match crate::process::kill_process(
                     pid,
-                    agent_proc.process_name.as_deref(),
-                    agent_proc.process_start_time,
+                    agent_proc.process_name(),
+                    agent_proc.process_start_time(),
                 ) {
                     Ok(()) => {
                         info!(event = "core.session.stop_kill_completed", pid = pid);
@@ -1216,8 +1229,29 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
             }
         }
 
-        if let Some((pid, message)) = kill_errors.into_iter().next() {
-            return Err(SessionError::ProcessKillFailed { pid, message });
+        if !kill_errors.is_empty() {
+            for (pid, err) in &kill_errors {
+                error!(
+                    event = "core.session.stop_kill_failed_summary",
+                    pid = pid,
+                    error = %err
+                );
+            }
+            let pids: Vec<String> = kill_errors.iter().map(|(p, _)| p.to_string()).collect();
+            let (first_pid, first_msg) = kill_errors.into_iter().next().unwrap();
+            let message = if pids.len() == 1 {
+                first_msg
+            } else {
+                format!(
+                    "{} processes failed to stop (PIDs: {}). Kill them manually.",
+                    pids.len(),
+                    pids.join(", ")
+                )
+            };
+            return Err(SessionError::ProcessKillFailed {
+                pid: first_pid,
+                message,
+            });
         }
     } else {
         // Fallback: singular-field logic for old sessions with empty agents vec
@@ -1274,7 +1308,7 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
     }
 
     // 4. Clear process info and set status to Stopped
-    session.agents.clear();
+    session.clear_agents();
     session.process_id = None;
     session.process_name = None;
     session.process_start_time = None;

@@ -56,6 +56,11 @@ pub enum SessionError {
     #[error("Access denied for process '{pid}'")]
     ProcessAccessDenied { pid: u32 },
 
+    #[error(
+        "Invalid process metadata: process_id, process_name, and process_start_time must all be present or all absent"
+    )]
+    InvalidProcessMetadata,
+
     #[error("Configuration error: {message}")]
     ConfigError { message: String },
 
@@ -86,6 +91,7 @@ impl KildError for SessionError {
             SessionError::ProcessNotFound { .. } => "PROCESS_NOT_FOUND",
             SessionError::ProcessKillFailed { .. } => "PROCESS_KILL_FAILED",
             SessionError::ProcessAccessDenied { .. } => "PROCESS_ACCESS_DENIED",
+            SessionError::InvalidProcessMetadata => "INVALID_PROCESS_METADATA",
             SessionError::ConfigError { .. } => "CONFIG_ERROR",
             SessionError::RemoteBranchDeleteFailed { .. } => "REMOTE_BRANCH_DELETE_FAILED",
             SessionError::UncommittedChanges { .. } => "SESSION_UNCOMMITTED_CHANGES",
@@ -104,6 +110,7 @@ impl KildError for SessionError {
                 | SessionError::InvalidPortCount
                 | SessionError::PortRangeExhausted
                 | SessionError::PortAllocationFailed { .. }
+                | SessionError::InvalidProcessMetadata
                 | SessionError::ConfigError { .. }
                 | SessionError::RemoteBranchDeleteFailed { .. }
                 | SessionError::UncommittedChanges { .. }

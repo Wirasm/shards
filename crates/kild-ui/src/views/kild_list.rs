@@ -173,15 +173,13 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                 let branch_for_edit = branch.clone();
                                 let terminal_type_for_focus = display
                                     .session
-                                    .agents
-                                    .last()
-                                    .and_then(|a| a.terminal_type.clone())
+                                    .latest_agent()
+                                    .and_then(|a| a.terminal_type().cloned())
                                     .or_else(|| display.session.terminal_type.clone());
                                 let window_id_for_focus = display
                                     .session
-                                    .agents
-                                    .last()
-                                    .and_then(|a| a.terminal_window_id.clone())
+                                    .latest_agent()
+                                    .and_then(|a| a.terminal_window_id().map(|s| s.to_string()))
                                     .or_else(|| display.session.terminal_window_id.clone());
                                 let branch_for_focus = branch.clone();
 
