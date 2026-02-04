@@ -661,6 +661,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -711,6 +712,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -773,6 +775,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -817,6 +820,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -863,6 +867,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -927,6 +932,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -988,6 +994,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut state = AppState::test_new();
@@ -1051,6 +1058,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         }
     }
 
@@ -1140,6 +1148,7 @@ mod tests {
 
         state.apply_events(&[Event::KildOpened {
             branch: "branch-1".to_string(),
+            agent: "claude".to_string(),
         }]);
 
         assert!(state.dialog().is_create());

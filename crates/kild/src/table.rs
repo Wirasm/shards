@@ -52,27 +52,52 @@ impl TableFormatter {
 
     fn print_row(&self, session: &Session) {
         let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
-        let process_status = session.process_id.map_or("No PID".to_string(), |pid| {
-            match kild_core::process::is_process_running(pid) {
-                Ok(true) => format!("Run({})", pid),
-                Ok(false) => format!("Stop({})", pid),
-                Err(e) => {
-                    tracing::warn!(
-                        event = "cli.list_process_check_failed",
-                        pid = pid,
-                        session_branch = &session.branch,
-                        error = %e
-                    );
-                    format!("Err({})", pid)
+        let process_status = if !session.agents.is_empty() {
+            let running = session
+                .agents
+                .iter()
+                .filter(|a| {
+                    a.process_id.is_some_and(|pid| {
+                        matches!(kild_core::process::is_process_running(pid), Ok(true))
+                    })
+                })
+                .count();
+            let total = session.agents.len();
+            format!("Run({}/{})", running, total)
+        } else {
+            session.process_id.map_or("No PID".to_string(), |pid| {
+                match kild_core::process::is_process_running(pid) {
+                    Ok(true) => format!("Run({})", pid),
+                    Ok(false) => format!("Stop({})", pid),
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "cli.list_process_check_failed",
+                            pid = pid,
+                            session_branch = &session.branch,
+                            error = %e
+                        );
+                        format!("Err({})", pid)
+                    }
                 }
-            }
-        });
+            })
+        };
         let note_display = session.note.as_deref().unwrap_or("");
 
         println!(
             "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             truncate(&session.branch, self.branch_width),
-            truncate(&session.agent, self.agent_width),
+            truncate(
+                &if session.agents.len() > 1 {
+                    format!(
+                        "{} (+{})",
+                        session.agents.last().map_or(&session.agent, |a| &a.agent),
+                        session.agents.len() - 1
+                    )
+                } else {
+                    session.agent.clone()
+                },
+                self.agent_width
+            ),
             format!("{:?}", session.status).to_lowercase(),
             truncate(&session.created_at, self.created_width),
             truncate(&port_range, self.port_width),

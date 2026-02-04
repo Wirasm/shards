@@ -61,7 +61,29 @@ pub fn get_health_single_session(branch: &str) -> Result<KildHealth, HealthError
 
 /// Helper to enrich session with process metrics
 fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth {
-    let (process_metrics, process_running) = if let Some(pid) = session.process_id {
+    // Find first running agent for metrics (multi-agent path)
+    let running_pid = session
+        .agents
+        .iter()
+        .filter_map(|a| a.process_id)
+        .find(|&pid| matches!(process::is_process_running(pid), Ok(true)));
+
+    let (process_metrics, process_running) = if let Some(pid) = running_pid {
+        let metrics = match process::get_process_metrics(pid) {
+            Ok(metrics) => Some(metrics),
+            Err(e) => {
+                warn!(
+                    event = "core.health.process_metrics_failed",
+                    pid = pid,
+                    session_branch = &session.branch,
+                    error = %e
+                );
+                None
+            }
+        };
+        (metrics, true)
+    } else if let Some(pid) = session.process_id {
+        // Fallback to singular field for old sessions
         match process::is_process_running(pid) {
             Ok(true) => {
                 let metrics = match process::get_process_metrics(pid) {

@@ -860,8 +860,20 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
         }
     };
 
-    // 2. Get terminal type and window ID
-    let terminal_type = session.terminal_type.as_ref().ok_or_else(|| {
+    // 2. Get terminal type and window ID (prefer latest agent from agents vec)
+    let (term_type_ref, window_id_ref) = if let Some(latest) = session.agents.last() {
+        (
+            latest.terminal_type.as_ref(),
+            latest.terminal_window_id.as_ref(),
+        )
+    } else {
+        (
+            session.terminal_type.as_ref(),
+            session.terminal_window_id.as_ref(),
+        )
+    };
+
+    let terminal_type = term_type_ref.ok_or_else(|| {
         eprintln!("❌ No terminal type recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -871,7 +883,7 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
         "No terminal type recorded for this kild"
     })?;
 
-    let window_id = session.terminal_window_id.as_ref().ok_or_else(|| {
+    let window_id = window_id_ref.ok_or_else(|| {
         eprintln!("❌ No window ID recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -1093,7 +1105,6 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             println!("📊 KILD Status: {}", branch);
             println!("┌─────────────────────────────────────────────────────────────┐");
             println!("│ Branch:      {:<47} │", session.branch);
-            println!("│ Agent:       {:<47} │", session.agent);
             println!(
                 "│ Status:      {:<47} │",
                 format!("{:?}", session.status).to_lowercase()
@@ -1104,30 +1115,43 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             }
             println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
-            // Check process status if PID is available
-            if let Some(pid) = session.process_id {
-                match process::is_process_running(pid) {
-                    Ok(true) => {
-                        println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
-
-                        // Try to get process info
-                        if let Ok(info) = process::get_process_info(pid) {
-                            println!("│ Process Name: {:<46} │", info.name);
-                            println!("│ Process Status: {:<44} │", format!("{:?}", info.status));
+            // Display agents
+            if !session.agents.is_empty() {
+                println!(
+                    "│ Agents:      {:<47} │",
+                    format!("{} agent(s)", session.agents.len())
+                );
+                for (i, agent_proc) in session.agents.iter().enumerate() {
+                    let status = agent_proc.process_id.map_or("No PID".to_string(), |pid| {
+                        match process::is_process_running(pid) {
+                            Ok(true) => format!("Running (PID: {})", pid),
+                            Ok(false) => format!("Stopped (PID: {})", pid),
+                            Err(_) => format!("Error (PID: {})", pid),
                         }
-                    }
-                    Ok(false) => {
-                        println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
-                    }
-                    Err(e) => {
-                        println!(
-                            "│ Process:     {:<47} │",
-                            format!("Error checking PID {}: {}", pid, e)
-                        );
-                    }
+                    });
+                    println!("│   {}. {:<6} {:<38} │", i + 1, agent_proc.agent, status);
                 }
             } else {
-                println!("│ Process:     {:<47} │", "No PID tracked");
+                // Fallback: singular field display for old sessions
+                println!("│ Agent:       {:<47} │", session.agent);
+                if let Some(pid) = session.process_id {
+                    match process::is_process_running(pid) {
+                        Ok(true) => {
+                            println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+                        }
+                        Ok(false) => {
+                            println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
+                        }
+                        Err(e) => {
+                            println!(
+                                "│ Process:     {:<47} │",
+                                format!("Error checking PID {}: {}", pid, e)
+                            );
+                        }
+                    }
+                } else {
+                    println!("│ Process:     {:<47} │", "No PID tracked");
+                }
             }
 
             println!("└─────────────────────────────────────────────────────────────┘");

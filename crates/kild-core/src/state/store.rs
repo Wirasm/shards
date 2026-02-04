@@ -77,7 +77,10 @@ mod tests {
                     Command::DestroyKild { branch, .. } => {
                         Ok(vec![Event::KildDestroyed { branch }])
                     }
-                    Command::OpenKild { branch, .. } => Ok(vec![Event::KildOpened { branch }]),
+                    Command::OpenKild { branch, .. } => Ok(vec![Event::KildOpened {
+                        branch,
+                        agent: "claude".to_string(),
+                    }]),
                     Command::StopKild { branch } => Ok(vec![Event::KildStopped { branch }]),
                     Command::CompleteKild { branch, .. } => {
                         Ok(vec![Event::KildCompleted { branch }])
@@ -122,7 +125,7 @@ mod tests {
                 agent: None,
             })
             .unwrap();
-        assert!(matches!(&events[0], Event::KildOpened { branch } if branch == "feat"));
+        assert!(matches!(&events[0], Event::KildOpened { branch, .. } if branch == "feat"));
 
         let events = store
             .dispatch(Command::StopKild {
@@ -182,7 +185,10 @@ mod tests {
                         session_id: "id".to_string(),
                     }]),
                     Command::DestroyKild { .. } => Ok(vec![Event::KildDestroyed { branch }]),
-                    Command::OpenKild { .. } => Ok(vec![Event::KildOpened { branch }]),
+                    Command::OpenKild { .. } => Ok(vec![Event::KildOpened {
+                        branch,
+                        agent: "claude".to_string(),
+                    }]),
                     Command::StopKild { .. } => Ok(vec![Event::KildStopped { branch }]),
                     Command::CompleteKild { .. } => Ok(vec![Event::KildCompleted { branch }]),
                     Command::RefreshSessions => Ok(vec![Event::SessionsRefreshed]),

@@ -199,6 +199,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let display = SessionInfo::from_session(session);
@@ -231,6 +232,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let display = SessionInfo::from_session(session);
@@ -301,6 +303,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let display = SessionInfo::from_session(session);
@@ -352,6 +355,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         // Create a session with our own PID (should be Running)
@@ -374,6 +378,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         // Create a session with no PID (should remain Stopped)
@@ -396,6 +401,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut store = SessionStore::from_data(Vec::new(), None);
@@ -486,6 +492,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let mut store = SessionStore::from_data(Vec::new(), None);

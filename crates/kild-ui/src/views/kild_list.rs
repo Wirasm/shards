@@ -171,9 +171,18 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                 let worktree_path_for_copy = display.session.worktree_path.clone();
                                 let worktree_path_for_edit = display.session.worktree_path.clone();
                                 let branch_for_edit = branch.clone();
-                                let terminal_type_for_focus = display.session.terminal_type.clone();
-                                let window_id_for_focus =
-                                    display.session.terminal_window_id.clone();
+                                let terminal_type_for_focus = display
+                                    .session
+                                    .agents
+                                    .last()
+                                    .and_then(|a| a.terminal_type.clone())
+                                    .or_else(|| display.session.terminal_type.clone());
+                                let window_id_for_focus = display
+                                    .session
+                                    .agents
+                                    .last()
+                                    .and_then(|a| a.terminal_window_id.clone())
+                                    .or_else(|| display.session.terminal_window_id.clone());
                                 let branch_for_focus = branch.clone();
 
                                 // Selection state
@@ -489,6 +498,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         let state = AppState::test_with_displays(vec![SessionInfo {

@@ -78,6 +78,50 @@ impl SessionInfo {
 /// - `ProcessStatus::Unknown` when PID check errors
 /// - `ProcessStatus::Stopped` when window check errors or no detection method available
 pub fn determine_process_status(session: &Session) -> ProcessStatus {
+    // Check agents vec first (multi-agent path)
+    if !session.agents.is_empty() {
+        let mut any_running = false;
+        let mut any_unknown = false;
+        for agent_proc in &session.agents {
+            if let Some(pid) = agent_proc.process_id {
+                match is_process_running(pid) {
+                    Ok(true) => {
+                        any_running = true;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "core.session.process_check_failed",
+                            pid = pid,
+                            agent = agent_proc.agent,
+                            branch = session.branch,
+                            error = %e
+                        );
+                        any_unknown = true;
+                    }
+                }
+            } else if let (Some(terminal_type), Some(window_id)) =
+                (&agent_proc.terminal_type, &agent_proc.terminal_window_id)
+            {
+                match is_terminal_window_open(terminal_type, window_id) {
+                    Ok(Some(true)) => {
+                        any_running = true;
+                    }
+                    Ok(Some(false) | None) => {}
+                    Err(_) => {}
+                }
+            }
+        }
+        if any_running {
+            return ProcessStatus::Running;
+        }
+        if any_unknown {
+            return ProcessStatus::Unknown;
+        }
+        return ProcessStatus::Stopped;
+    }
+
+    // Fallback: singular-field logic for old sessions
     if let Some(pid) = session.process_id {
         match is_process_running(pid) {
             Ok(true) => ProcessStatus::Running,
@@ -180,6 +224,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         }
     }
 

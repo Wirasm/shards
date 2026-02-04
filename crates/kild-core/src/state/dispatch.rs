@@ -54,8 +54,11 @@ impl Store for CoreStore {
                 Ok(vec![Event::KildDestroyed { branch }])
             }
             Command::OpenKild { branch, agent } => {
-                session_ops::open_session(&branch, agent)?;
-                Ok(vec![Event::KildOpened { branch }])
+                let session = session_ops::open_session(&branch, agent)?;
+                Ok(vec![Event::KildOpened {
+                    branch,
+                    agent: session.agent,
+                }])
             }
             Command::StopKild { branch } => {
                 session_ops::stop_session(&branch)?;

@@ -125,6 +125,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: None,
             note: None,
+            agents: vec![],
         }
     }
 

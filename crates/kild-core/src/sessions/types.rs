@@ -243,6 +243,31 @@ pub struct Session {
     /// in list output, and truncated to 47 chars in status output.
     #[serde(default)]
     pub note: Option<String>,
+
+    /// All agent processes opened in this kild session.
+    ///
+    /// Populated by `kild create` (initial agent) and `kild open` (additional agents).
+    /// `kild stop` clears this vec. Each open operation appends an entry.
+    ///
+    /// Empty for sessions created before multi-agent tracking was added.
+    #[serde(default)]
+    pub agents: Vec<AgentProcess>,
+}
+
+/// Represents a single agent process spawned within a kild session.
+///
+/// Multiple agents can run concurrently in the same kild via `kild open`.
+/// Each open operation appends an `AgentProcess` to the session's `agents` vec.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentProcess {
+    pub agent: String,
+    pub process_id: Option<u32>,
+    pub process_name: Option<String>,
+    pub process_start_time: Option<u64>,
+    pub terminal_type: Option<TerminalType>,
+    pub terminal_window_id: Option<String>,
+    pub command: String,
+    pub opened_at: String,
 }
 
 impl Session {
@@ -389,6 +414,7 @@ mod tests {
             command: "claude-code".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         assert_eq!(session.branch, "branch");
@@ -542,6 +568,7 @@ mod tests {
             command: "claude-code".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Test serialization round-trip
@@ -651,6 +678,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         assert!(session.is_worktree_valid());
@@ -680,6 +708,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: None,
             note: None,
+            agents: vec![],
         };
 
         assert!(!session.is_worktree_valid());
@@ -915,5 +944,98 @@ mod tests {
         };
         assert!(!info.has_warnings());
         assert!(info.warning_messages().is_empty());
+    }
+
+    // --- AgentProcess and multi-agent tests ---
+
+    #[test]
+    fn test_agent_process_serialization_roundtrip() {
+        let agent = AgentProcess {
+            agent: "claude".to_string(),
+            process_id: Some(12345),
+            process_name: Some("claude-code".to_string()),
+            process_start_time: Some(1705318200),
+            terminal_type: Some(TerminalType::Ghostty),
+            terminal_window_id: Some("kild-test".to_string()),
+            command: "claude-code".to_string(),
+            opened_at: "2024-01-15T10:30:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&agent).unwrap();
+        let deserialized: AgentProcess = serde_json::from_str(&json).unwrap();
+        assert_eq!(agent, deserialized);
+    }
+
+    #[test]
+    fn test_session_with_agents_backward_compat() {
+        // Old session JSON without "agents" field should deserialize with empty vec
+        let json = r#"{
+            "id": "test",
+            "project_id": "test-project",
+            "branch": "test-branch",
+            "worktree_path": "/tmp/test",
+            "agent": "claude",
+            "status": "Active",
+            "created_at": "2024-01-01T00:00:00Z",
+            "port_range_start": 3000,
+            "port_range_end": 3009,
+            "port_count": 10,
+            "process_id": null,
+            "process_name": null,
+            "process_start_time": null,
+            "command": "claude-code"
+        }"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert!(session.agents.is_empty());
+    }
+
+    #[test]
+    fn test_session_with_multiple_agents_serialization() {
+        let session = Session {
+            id: "test/branch".to_string(),
+            project_id: "test".to_string(),
+            branch: "branch".to_string(),
+            worktree_path: PathBuf::from("/tmp/test"),
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            port_range_start: 3000,
+            port_range_end: 3009,
+            port_count: 10,
+            process_id: Some(12345),
+            process_name: Some("claude-code".to_string()),
+            process_start_time: Some(1234567890),
+            terminal_type: Some(TerminalType::Ghostty),
+            terminal_window_id: Some("kild-test".to_string()),
+            command: "claude-code".to_string(),
+            last_activity: Some("2024-01-01T00:00:00Z".to_string()),
+            note: None,
+            agents: vec![
+                AgentProcess {
+                    agent: "claude".to_string(),
+                    process_id: Some(12345),
+                    process_name: Some("claude-code".to_string()),
+                    process_start_time: Some(1234567890),
+                    terminal_type: Some(TerminalType::Ghostty),
+                    terminal_window_id: Some("kild-test".to_string()),
+                    command: "claude-code".to_string(),
+                    opened_at: "2024-01-01T00:00:00Z".to_string(),
+                },
+                AgentProcess {
+                    agent: "kiro".to_string(),
+                    process_id: Some(67890),
+                    process_name: Some("kiro-cli".to_string()),
+                    process_start_time: Some(1234567900),
+                    terminal_type: Some(TerminalType::Ghostty),
+                    terminal_window_id: Some("kild-test-2".to_string()),
+                    command: "kiro-cli chat".to_string(),
+                    opened_at: "2024-01-01T00:01:00Z".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_string_pretty(&session).unwrap();
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.agents.len(), 2);
+        assert_eq!(deserialized.agents[0].agent, "claude");
+        assert_eq!(deserialized.agents[1].agent, "kiro");
     }
 }
