@@ -130,6 +130,9 @@ kild diff <branch>
 
 # Show only staged changes
 kild diff <branch> --staged
+
+# Show diffstat summary
+kild diff <branch> --stat
 ```
 
 ### Show recent commits

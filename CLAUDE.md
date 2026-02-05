@@ -75,6 +75,7 @@ cargo run -p kild -- code my-branch              # Open worktree in editor
 cargo run -p kild -- focus my-branch             # Bring terminal window to foreground
 cargo run -p kild -- diff my-branch              # Show git diff for worktree
 cargo run -p kild -- diff my-branch --staged     # Show only staged changes
+cargo run -p kild -- diff my-branch --stat       # Show diffstat summary
 cargo run -p kild -- commits my-branch           # Show recent commits in kild's branch
 cargo run -p kild -- commits my-branch -n 5      # Show last 5 commits
 cargo run -p kild -- stop my-branch              # Stop agent, preserve kild
