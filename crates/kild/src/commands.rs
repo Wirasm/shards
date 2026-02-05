@@ -398,13 +398,7 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
         return Err("Invalid branch name".into());
     }
 
-    let force = matches.get_flag("force");
-
-    info!(
-        event = "cli.complete_started",
-        branch = branch,
-        force = force
-    );
+    info!(event = "cli.complete_started", branch = branch);
 
     // Pre-complete safety check (always — complete never bypasses uncommitted check)
     let safety_info = match session_handler::get_destroy_safety_info(branch) {
@@ -448,7 +442,7 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
         }
     }
 
-    match session_handler::complete_session(branch, force) {
+    match session_handler::complete_session(branch) {
         Ok(result) => {
             use kild_core::CompleteResult;
 

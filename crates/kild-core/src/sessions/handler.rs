@@ -506,7 +506,6 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
 ///
 /// # Arguments
 /// * `name` - Branch name or kild identifier
-/// * `force` - If true, bypass git safety checks (passed through to destroy_session)
 ///
 /// # Returns
 /// * `Ok(CompleteResult::RemoteDeleted)` - PR was merged and remote branch was deleted
@@ -515,18 +514,15 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
 ///
 /// # Errors
 /// Returns `SessionError::NotFound` if the session doesn't exist.
-/// Propagates errors from `destroy_session` (e.g., uncommitted changes without --force).
+/// Returns `SessionError::UncommittedChanges` if the worktree has uncommitted changes.
+/// Propagates errors from `destroy_session`.
 /// Remote branch deletion errors are logged but do not fail the operation.
 ///
 /// # Workflow Detection
 /// - If PR is merged: attempts to delete remote branch (since gh merge --delete-branch would have failed due to worktree)
 /// - If PR not merged: just destroys the local session, allowing user's subsequent merge to handle remote cleanup
-pub fn complete_session(name: &str, force: bool) -> Result<CompleteResult, SessionError> {
-    info!(
-        event = "core.session.complete_started",
-        name = name,
-        force = force
-    );
+pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
+    info!(event = "core.session.complete_started", name = name);
 
     let config = Config::new();
 
@@ -582,8 +578,9 @@ pub fn complete_session(name: &str, force: bool) -> Result<CompleteResult, Sessi
         });
     }
 
-    // 5. Destroy the session (reuse existing logic)
-    destroy_session(name, force)?;
+    // 5. Destroy the session (reuse existing logic, always non-force since we already
+    //    verified the worktree is clean above)
+    destroy_session(name, false)?;
 
     info!(
         event = "core.session.complete_completed",
@@ -1422,15 +1419,7 @@ mod tests {
 
     #[test]
     fn test_complete_session_not_found() {
-        let result = complete_session("non-existent", false);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
-    }
-
-    #[test]
-    fn test_complete_session_force_not_found() {
-        // Force flag shouldn't skip session lookup
-        let result = complete_session("non-existent", true);
+        let result = complete_session("non-existent");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }
@@ -1449,7 +1438,6 @@ mod tests {
     #[test]
     fn test_complete_blocks_on_uncommitted_via_safety_info() {
         // Verify that DestroySafetyInfo with uncommitted changes would block complete.
-        // complete_session always checks should_block(), regardless of force flag.
         use crate::git::types::WorktreeStatus;
         use crate::sessions::types::DestroySafetyInfo;
 
@@ -1460,7 +1448,6 @@ mod tests {
             },
             ..Default::default()
         };
-        // Complete always blocks — force flag is irrelevant for this check
         assert!(dirty.should_block());
 
         let clean = DestroySafetyInfo {

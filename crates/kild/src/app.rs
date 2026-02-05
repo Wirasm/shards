@@ -130,13 +130,6 @@ pub fn build_cli() -> Command {
                         .required(true)
                         .index(1)
                 )
-                .arg(
-                    Arg::new("force")
-                        .long("force")
-                        .short('f')
-                        .help("Force completion, bypassing git uncommitted changes check")
-                        .action(ArgAction::SetTrue)
-                )
         )
         .subcommand(
             Command::new("open")
@@ -990,29 +983,14 @@ mod tests {
             complete_matches.get_one::<String>("branch").unwrap(),
             "test-branch"
         );
-        assert!(!complete_matches.get_flag("force"));
     }
 
     #[test]
-    fn test_cli_complete_command_with_force() {
+    fn test_cli_complete_rejects_force_flag() {
         let app = build_cli();
+        // --force should not be accepted on complete (removed in #188)
         let matches = app.try_get_matches_from(vec!["kild", "complete", "test-branch", "--force"]);
-        assert!(matches.is_ok());
-
-        let matches = matches.unwrap();
-        let complete_matches = matches.subcommand_matches("complete").unwrap();
-        assert!(complete_matches.get_flag("force"));
-    }
-
-    #[test]
-    fn test_cli_complete_command_force_short() {
-        let app = build_cli();
-        let matches = app.try_get_matches_from(vec!["kild", "complete", "test-branch", "-f"]);
-        assert!(matches.is_ok());
-
-        let matches = matches.unwrap();
-        let complete_matches = matches.subcommand_matches("complete").unwrap();
-        assert!(complete_matches.get_flag("force"));
+        assert!(matches.is_err());
     }
 
     #[test]

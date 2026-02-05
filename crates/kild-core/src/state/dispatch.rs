@@ -64,8 +64,8 @@ impl Store for CoreStore {
                 session_ops::stop_session(&branch)?;
                 Ok(vec![Event::KildStopped { branch }])
             }
-            Command::CompleteKild { branch, force } => {
-                session_ops::complete_session(&branch, force)?;
+            Command::CompleteKild { branch } => {
+                session_ops::complete_session(&branch)?;
                 Ok(vec![Event::KildCompleted { branch }])
             }
             Command::UpdateAgentStatus { branch, status } => {

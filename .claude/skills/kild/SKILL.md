@@ -246,7 +246,7 @@ kild destroy feature-auth --force
 
 ### Complete a Kild (PR Cleanup)
 ```bash
-kild complete <branch> [--force]
+kild complete <branch>
 ```
 
 Completes a kild by destroying it and cleaning up the remote branch if the PR was merged.
@@ -255,10 +255,7 @@ Use this when finishing work on a PR. The command adapts to your workflow:
 - If PR was already merged (you ran `gh pr merge` first), it also deletes the orphaned remote branch
 - If PR hasn't been merged yet, it just destroys the kild so `gh pr merge --delete-branch` can work
 
-**Flags**
-- `--force` / `-f` - Force complete even with uncommitted changes
-
-**Note:** Requires `gh` CLI to detect merged PRs. If `gh` is not installed, the command still works but won't auto-delete remote branches.
+**Note:** Always blocks on uncommitted changes (use `kild destroy --force` for forced removal). Requires `gh` CLI to detect merged PRs. If `gh` is not installed, the command still works but won't auto-delete remote branches.
 
 **Workflow A: Complete first, then merge**
 ```bash

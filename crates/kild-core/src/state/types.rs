@@ -37,8 +37,8 @@ pub enum Command {
     /// Stop the agent process in a kild without destroying it.
     StopKild { branch: String },
     /// Complete a kild: check if PR was merged, delete remote branch if merged, destroy session.
-    /// The `force` flag bypasses safety checks for session destruction only.
-    CompleteKild { branch: String, force: bool },
+    /// Always blocks on uncommitted changes (use `kild destroy --force` for forced removal).
+    CompleteKild { branch: String },
     /// Update agent status for a kild session.
     UpdateAgentStatus { branch: String, status: AgentStatus },
     /// Refresh the session list from disk.
@@ -90,7 +90,6 @@ mod tests {
             },
             Command::CompleteKild {
                 branch: "feature".to_string(),
-                force: true,
             },
             Command::UpdateAgentStatus {
                 branch: "feature".to_string(),
@@ -140,7 +139,6 @@ mod tests {
             },
             Command::CompleteKild {
                 branch: "test".to_string(),
-                force: false,
             },
             Command::UpdateAgentStatus {
                 branch: "feature".to_string(),

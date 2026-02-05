@@ -87,7 +87,6 @@ cargo run -p kild -- destroy my-branch --force   # Force destroy (bypass git che
 cargo run -p kild -- destroy --all               # Destroy all kilds (with confirmation)
 cargo run -p kild -- destroy --all --force       # Force destroy all (skip confirmation)
 cargo run -p kild -- complete my-branch          # Complete kild (check PR, cleanup)
-cargo run -p kild -- complete my-branch --force  # Force complete (bypass git checks)
 
 # kild-peek - Native app inspection and interaction
 cargo run -p kild-peek -- list windows           # List all visible windows

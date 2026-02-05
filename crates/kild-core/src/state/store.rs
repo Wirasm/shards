@@ -141,7 +141,6 @@ mod tests {
         let events = store
             .dispatch(Command::CompleteKild {
                 branch: "feat".to_string(),
-                force: false,
             })
             .unwrap();
         assert!(matches!(&events[0], Event::KildCompleted { branch } if branch == "feat"));
@@ -233,7 +232,6 @@ mod tests {
             },
             Command::CompleteKild {
                 branch: "b".to_string(),
-                force: false,
             },
             Command::UpdateAgentStatus {
                 branch: "b".to_string(),
