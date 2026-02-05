@@ -1126,66 +1126,67 @@ pub fn open_session(
 
     // 3. Determine agent and command based on OpenMode
     let is_bare_shell = matches!(mode, crate::state::types::OpenMode::BareShell);
-    let (agent, agent_command) = match mode {
-        crate::state::types::OpenMode::BareShell => {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-                let fallback = "/bin/sh".to_string();
-                warn!(
-                    event = "core.session.shell_env_missing",
-                    fallback = %fallback,
-                    "$SHELL not set, falling back to /bin/sh"
-                );
-                eprintln!("Warning: $SHELL not set. Using /bin/sh as fallback.");
-                fallback
-            });
-            info!(event = "core.session.open_shell_selected", shell = %shell);
-            // Keep the session's original agent — no agent is actually running
-            (session.agent.clone(), shell)
-        }
-        crate::state::types::OpenMode::Agent(name) => {
-            info!(event = "core.session.open_agent_selected", agent = name);
-
-            // Warn if agent CLI is not available in PATH
-            if let Some(false) = agents::is_agent_available(&name) {
-                warn!(
-                    event = "core.session.agent_not_available",
-                    agent = %name,
-                    session_id = %session.id,
-                    "Agent CLI '{}' not found in PATH - session may fail to start",
-                    name
-                );
+    let (agent, agent_command) =
+        match mode {
+            crate::state::types::OpenMode::BareShell => {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+                    let fallback = "/bin/sh".to_string();
+                    warn!(
+                        event = "core.session.shell_env_missing",
+                        fallback = %fallback,
+                        "$SHELL not set, falling back to /bin/sh"
+                    );
+                    eprintln!("Warning: $SHELL not set. Using /bin/sh as fallback.");
+                    fallback
+                });
+                info!(event = "core.session.open_shell_selected", shell = %shell);
+                // Keep the session's original agent — no agent is actually running
+                (session.agent.clone(), shell)
             }
+            crate::state::types::OpenMode::Agent(name) => {
+                info!(event = "core.session.open_agent_selected", agent = name);
 
-            let command = kild_config.get_agent_command(&name).map_err(|e| {
-                SessionError::ConfigError {
-                    message: e.to_string(),
+                // Warn if agent CLI is not available in PATH
+                if let Some(false) = agents::is_agent_available(&name) {
+                    warn!(
+                        event = "core.session.agent_not_available",
+                        agent = %name,
+                        session_id = %session.id,
+                        "Agent CLI '{}' not found in PATH - session may fail to start",
+                        name
+                    );
                 }
-            })?;
-            (name, command)
-        }
-        crate::state::types::OpenMode::DefaultAgent => {
-            let agent = session.agent.clone();
-            info!(event = "core.session.open_agent_selected", agent = agent);
 
-            // Warn if agent CLI is not available in PATH
-            if let Some(false) = agents::is_agent_available(&agent) {
-                warn!(
-                    event = "core.session.agent_not_available",
-                    agent = %agent,
-                    session_id = %session.id,
-                    "Agent CLI '{}' not found in PATH - session may fail to start",
-                    agent
-                );
+                let command = kild_config.get_agent_command(&name).map_err(|e| {
+                    SessionError::ConfigError {
+                        message: e.to_string(),
+                    }
+                })?;
+                (name, command)
             }
+            crate::state::types::OpenMode::DefaultAgent => {
+                let agent = session.agent.clone();
+                info!(event = "core.session.open_agent_selected", agent = agent);
 
-            let command = kild_config.get_agent_command(&agent).map_err(|e| {
-                SessionError::ConfigError {
-                    message: e.to_string(),
+                // Warn if agent CLI is not available in PATH
+                if let Some(false) = agents::is_agent_available(&agent) {
+                    warn!(
+                        event = "core.session.agent_not_available",
+                        agent = %agent,
+                        session_id = %session.id,
+                        "Agent CLI '{}' not found in PATH - session may fail to start",
+                        agent
+                    );
                 }
-            })?;
-            (agent, command)
-        }
-    };
+
+                let command = kild_config.get_agent_command(&agent).map_err(|e| {
+                    SessionError::ConfigError {
+                        message: e.to_string(),
+                    }
+                })?;
+                (agent, command)
+            }
+        };
 
     // 4. Spawn NEW terminal (additive - don't touch existing)
     let spawn_index = session.agent_count();
