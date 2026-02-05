@@ -1147,6 +1147,7 @@ fn handle_hide_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         Err(e) => {
             eprintln!("❌ Failed to hide terminal for '{}': {}", branch, e);
             error!(event = "cli.hide_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
             Err(e.into())
         }
     }
@@ -1183,6 +1184,11 @@ fn handle_hide_all() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or((None, None));
 
         let Some(terminal_type) = term_type else {
+            warn!(
+                event = "cli.hide_skipped",
+                branch = session.branch,
+                reason = "no_terminal_type"
+            );
             errors.push((
                 session.branch.clone(),
                 "No terminal type recorded".to_string(),
@@ -1191,6 +1197,11 @@ fn handle_hide_all() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let Some(wid) = window_id else {
+            warn!(
+                event = "cli.hide_skipped",
+                branch = session.branch,
+                reason = "no_window_id"
+            );
             errors.push((session.branch.clone(), "No window ID recorded".to_string()));
             continue;
         };

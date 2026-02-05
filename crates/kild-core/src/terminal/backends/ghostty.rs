@@ -458,6 +458,7 @@ impl TerminalBackend for GhosttyBackend {
         // Step 3: Fallback to title-based search (for edge cases)
         // This handles scenarios where PID lookup fails: pgrep unavailable, permission
         // issues, or race conditions where the process exits between lookup and focus.
+        let escaped_id = applescript_escape(window_id);
         let focus_script = format!(
             r#"tell application "System Events"
             tell process "Ghostty"
@@ -471,7 +472,7 @@ impl TerminalBackend for GhosttyBackend {
                 return "not found"
             end tell
         end tell"#,
-            window_id
+            escaped_id
         );
 
         match std::process::Command::new("osascript")
@@ -547,6 +548,7 @@ impl TerminalBackend for GhosttyBackend {
         // Use System Events to find window by title and minimize it.
         // Ghostty doesn't expose an AppleScript dictionary, so we use
         // the accessibility API via System Events.
+        let escaped_id = applescript_escape(window_id);
         let hide_script = format!(
             r#"tell application "System Events"
             tell process "Ghostty"
@@ -559,7 +561,7 @@ impl TerminalBackend for GhosttyBackend {
                 return "not found"
             end tell
         end tell"#,
-            window_id
+            escaped_id
         );
 
         match std::process::Command::new("osascript")

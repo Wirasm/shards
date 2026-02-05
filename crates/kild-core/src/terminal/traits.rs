@@ -57,7 +57,7 @@ pub trait TerminalBackend: Send + Sync {
     /// Hide/minimize a terminal window.
     ///
     /// # Arguments
-    /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+    /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty/Alacritty)
     ///
     /// # Returns
     /// * `Ok(())` - Window was hidden successfully
