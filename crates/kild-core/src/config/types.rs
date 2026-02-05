@@ -18,6 +18,11 @@
 //! startup_command = "kiro-cli chat"
 //! flags = "--trust-all-tools"
 //!
+//! [editor]
+//! default = "nvim"
+//! flags = "--nofork"
+//! terminal = true
+//!
 //! [health]
 //! idle_threshold_minutes = 10
 //! history_enabled = true
@@ -76,6 +81,10 @@ pub struct KildConfig {
     /// Git configuration for worktree creation
     #[serde(default)]
     pub git: GitConfig,
+
+    /// Editor configuration for `kild code`
+    #[serde(default)]
+    pub editor: EditorConfig,
 }
 
 impl Default for KildConfig {
@@ -87,6 +96,7 @@ impl Default for KildConfig {
             include_patterns: default_include_patterns_option(),
             health: HealthConfig::default(),
             git: GitConfig::default(),
+            editor: <EditorConfig as Default>::default(),
         }
     }
 }
@@ -130,6 +140,48 @@ impl GitConfig {
     /// Returns whether to fetch before creating worktrees, defaulting to true.
     pub fn fetch_before_create(&self) -> bool {
         self.fetch_before_create.unwrap_or(true)
+    }
+}
+
+/// Editor configuration for `kild code`.
+///
+/// Controls which editor opens worktrees and how it's launched.
+///
+/// Fields are `Option<T>` to support proper config hierarchy merging:
+/// only explicitly-set values override lower-priority configs.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EditorConfig {
+    /// Editor command to use for `kild code`.
+    /// Default: falls back to $EDITOR, then "zed"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+
+    /// Flags passed to the editor before the worktree path.
+    /// Example: "--new-window" for VS Code
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<String>,
+
+    /// Whether to spawn the editor inside a terminal window.
+    /// Required for terminal-based editors (nvim, vim, helix).
+    /// Default: false
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<bool>,
+}
+
+impl EditorConfig {
+    /// Returns the editor command, if configured.
+    pub fn default(&self) -> Option<&str> {
+        self.default.as_deref()
+    }
+
+    /// Returns the editor flags, if configured.
+    pub fn flags(&self) -> Option<&str> {
+        self.flags.as_deref()
+    }
+
+    /// Returns whether to spawn in a terminal, defaulting to false.
+    pub fn terminal(&self) -> bool {
+        self.terminal.unwrap_or(false)
     }
 }
 
@@ -312,5 +364,57 @@ base_branch = "develop"
         assert_eq!(config.git.remote(), "origin"); // default via accessor
         assert_eq!(config.git.base_branch(), "develop"); // specified
         assert!(config.git.fetch_before_create()); // default via accessor
+    }
+
+    #[test]
+    fn test_editor_config_serialization() {
+        let config = <EditorConfig as Default>::default();
+        assert!(config.default().is_none());
+        assert!(config.flags().is_none());
+        assert!(!config.terminal());
+
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: EditorConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.default(), config.default());
+        assert_eq!(parsed.flags(), config.flags());
+        assert_eq!(parsed.terminal(), config.terminal());
+    }
+
+    #[test]
+    fn test_editor_config_from_toml() {
+        let config: KildConfig = toml::from_str(
+            r#"
+[editor]
+default = "nvim"
+flags = "--new-window"
+terminal = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.editor.default(), Some("nvim"));
+        assert_eq!(config.editor.flags(), Some("--new-window"));
+        assert!(config.editor.terminal());
+    }
+
+    #[test]
+    fn test_editor_config_defaults_when_missing() {
+        let config: KildConfig = toml::from_str("").unwrap();
+        assert!(config.editor.default().is_none());
+        assert!(config.editor.flags().is_none());
+        assert!(!config.editor.terminal());
+    }
+
+    #[test]
+    fn test_editor_config_partial_toml() {
+        let config: KildConfig = toml::from_str(
+            r#"
+[editor]
+default = "code"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.editor.default(), Some("code"));
+        assert!(config.editor.flags().is_none());
+        assert!(!config.editor.terminal());
     }
 }

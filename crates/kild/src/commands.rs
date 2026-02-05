@@ -864,9 +864,10 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Determine which editor to use based on precedence:
-/// CLI flag > $EDITOR environment variable > "zed" (default)
-fn select_editor(cli_override: Option<String>) -> String {
+/// CLI flag > config default > $EDITOR environment variable > "zed" (hardcoded)
+fn select_editor(cli_override: Option<String>, config: &KildConfig) -> String {
     cli_override
+        .or_else(|| config.editor.default.clone())
         .or_else(|| std::env::var("EDITOR").ok())
         .unwrap_or_else(|| "zed".to_string())
 }
@@ -883,7 +884,13 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         editor_override = ?editor_override
     );
 
-    // 1. Look up the session to get worktree path
+    // 1. Load config and apply CLI override
+    let mut config = load_config_with_warning();
+    if let Some(ref editor) = editor_override {
+        config.editor.default = Some(editor.clone());
+    }
+
+    // 2. Look up the session to get worktree path
     let session = match session_handler::get_session(branch) {
         Ok(session) => session,
         Err(e) => {
@@ -894,44 +901,92 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         }
     };
 
-    // 2. Determine editor: CLI flag > $EDITOR > "zed"
-    let editor = select_editor(editor_override);
+    // 3. Determine editor
+    let editor = select_editor(editor_override, &config);
 
     info!(
         event = "cli.code_editor_selected",
         branch = branch,
-        editor = editor
+        editor = editor,
+        terminal = config.editor.terminal(),
+        flags = ?config.editor.flags()
     );
 
-    // 3. Spawn editor with worktree path
-    match std::process::Command::new(&editor)
-        .arg(&session.worktree_path)
-        .spawn()
-    {
-        Ok(_) => {
-            println!("✅ Opening '{}' in {}", branch, editor);
-            println!("   Path: {}", session.worktree_path.display());
-            info!(
-                event = "cli.code_completed",
-                branch = branch,
-                editor = editor,
-                worktree_path = %session.worktree_path.display()
-            );
-            Ok(())
+    // 4. Spawn editor
+    if config.editor.terminal() {
+        // Terminal-based editor: spawn inside a terminal window
+        let editor_command = match config.editor.flags() {
+            Some(flags) => format!("{} {} {}", editor, flags, session.worktree_path.display()),
+            None => format!("{} {}", editor, session.worktree_path.display()),
+        };
+
+        match kild_core::terminal_ops::spawn_terminal(
+            &session.worktree_path,
+            &editor_command,
+            &config,
+            None,
+            None,
+        ) {
+            Ok(_) => {
+                println!("✅ Opening '{}' in {} (terminal)", branch, editor);
+                println!("   Path: {}", session.worktree_path.display());
+                info!(
+                    event = "cli.code_completed",
+                    branch = branch,
+                    editor = editor,
+                    terminal = true,
+                    worktree_path = %session.worktree_path.display()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to open editor '{}' in terminal: {}", editor, e);
+                error!(
+                    event = "cli.code_failed",
+                    branch = branch,
+                    editor = editor,
+                    terminal = true,
+                    error = %e
+                );
+                Err(e.into())
+            }
         }
-        Err(e) => {
-            eprintln!("❌ Failed to open editor '{}': {}", editor, e);
-            eprintln!(
-                "   Hint: Make sure '{}' is installed and in your PATH",
-                editor
-            );
-            error!(
-                event = "cli.code_failed",
-                branch = branch,
-                editor = editor,
-                error = %e
-            );
-            Err(e.into())
+    } else {
+        // GUI editor: spawn directly
+        let mut cmd = std::process::Command::new(&editor);
+        if let Some(flags) = config.editor.flags() {
+            for flag in flags.split_whitespace() {
+                cmd.arg(flag);
+            }
+        }
+        cmd.arg(&session.worktree_path);
+
+        match cmd.spawn() {
+            Ok(_) => {
+                println!("✅ Opening '{}' in {}", branch, editor);
+                println!("   Path: {}", session.worktree_path.display());
+                info!(
+                    event = "cli.code_completed",
+                    branch = branch,
+                    editor = editor,
+                    worktree_path = %session.worktree_path.display()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to open editor '{}': {}", editor, e);
+                eprintln!(
+                    "   Hint: Make sure '{}' is installed and in your PATH",
+                    editor
+                );
+                error!(
+                    event = "cli.code_failed",
+                    branch = branch,
+                    editor = editor,
+                    error = %e
+                );
+                Err(e.into())
+            }
         }
     }
 }
@@ -2062,13 +2117,14 @@ mod tests {
     #[test]
     fn test_select_editor_cli_override_takes_precedence() {
         let _guard = ENV_MUTEX.lock().unwrap();
+        let config = KildConfig::default();
 
         // Even if $EDITOR is set, CLI override should win
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
             std::env::set_var("EDITOR", "vim");
         }
-        let editor = select_editor(Some("code".to_string()));
+        let editor = select_editor(Some("code".to_string()), &config);
         assert_eq!(editor, "code");
         unsafe {
             std::env::remove_var("EDITOR");
@@ -2078,12 +2134,13 @@ mod tests {
     #[test]
     fn test_select_editor_uses_env_when_no_override() {
         let _guard = ENV_MUTEX.lock().unwrap();
+        let config = KildConfig::default();
 
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
             std::env::set_var("EDITOR", "nvim");
         }
-        let editor = select_editor(None);
+        let editor = select_editor(None, &config);
         assert_eq!(editor, "nvim");
         unsafe {
             std::env::remove_var("EDITOR");
@@ -2093,29 +2150,62 @@ mod tests {
     #[test]
     fn test_select_editor_defaults_to_zed() {
         let _guard = ENV_MUTEX.lock().unwrap();
+        let config = KildConfig::default();
 
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
             std::env::remove_var("EDITOR");
         }
-        let editor = select_editor(None);
+        let editor = select_editor(None, &config);
         assert_eq!(editor, "zed");
     }
 
     #[test]
     fn test_select_editor_cli_override_ignores_env() {
         let _guard = ENV_MUTEX.lock().unwrap();
+        let config = KildConfig::default();
 
         // Verify CLI override completely ignores $EDITOR
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
             std::env::set_var("EDITOR", "emacs");
         }
-        let editor = select_editor(Some("sublime".to_string()));
+        let editor = select_editor(Some("sublime".to_string()), &config);
         assert_eq!(editor, "sublime");
         unsafe {
             std::env::remove_var("EDITOR");
         }
+    }
+
+    #[test]
+    fn test_select_editor_config_overrides_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let mut config = KildConfig::default();
+        config.editor.default = Some("code".to_string());
+
+        // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
+        unsafe {
+            std::env::set_var("EDITOR", "vim");
+        }
+        let editor = select_editor(None, &config);
+        assert_eq!(editor, "code");
+        unsafe {
+            std::env::remove_var("EDITOR");
+        }
+    }
+
+    #[test]
+    fn test_select_editor_cli_overrides_config() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let mut config = KildConfig::default();
+        config.editor.default = Some("code".to_string());
+
+        // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
+        unsafe {
+            std::env::remove_var("EDITOR");
+        }
+        let editor = select_editor(Some("nvim".to_string()), &config);
+        assert_eq!(editor, "nvim");
     }
 
     #[test]
