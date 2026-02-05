@@ -129,7 +129,14 @@ pub fn destroy_kild(branch: String, force: bool) -> Result<Vec<Event>, String> {
 pub fn open_kild(branch: String, agent: Option<String>) -> Result<Vec<Event>, String> {
     tracing::info!(event = "ui.open_kild.started", branch = %branch, agent = ?agent);
 
-    dispatch_command(Command::OpenKild { branch, agent }, "ui.open_kild")
+    dispatch_command(
+        Command::OpenKild {
+            branch,
+            agent,
+            no_agent: false,
+        },
+        "ui.open_kild",
+    )
 }
 
 /// Stop the agent process in a kild without destroying the kild.
@@ -160,6 +167,7 @@ pub fn open_all_stopped(displays: &[SessionInfo]) -> (usize, Vec<OperationError>
                 Command::OpenKild {
                     branch: branch.to_string(),
                     agent: None,
+                    no_agent: false,
                 },
                 "ui.open_all_stopped.dispatch",
             )

@@ -127,6 +127,7 @@ mod tests {
             .dispatch(Command::OpenKild {
                 branch: "feat".to_string(),
                 agent: None,
+                no_agent: false,
             })
             .unwrap();
         assert!(matches!(&events[0], Event::KildOpened { branch, .. } if branch == "feat"));
@@ -226,6 +227,7 @@ mod tests {
             Command::OpenKild {
                 branch: "b".to_string(),
                 agent: None,
+                no_agent: false,
             },
             Command::StopKild {
                 branch: "b".to_string(),

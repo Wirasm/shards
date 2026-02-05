@@ -1077,11 +1077,16 @@ pub fn restart_session(
 ///
 /// This is the preferred way to add agents to a kild. Unlike restart, this does NOT
 /// close existing terminals - multiple agents can run in the same kild.
-pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Session, SessionError> {
+pub fn open_session(
+    name: &str,
+    agent_override: Option<String>,
+    no_agent: bool,
+) -> Result<Session, SessionError> {
     info!(
         event = "core.session.open_started",
         name = name,
-        agent_override = ?agent_override
+        agent_override = ?agent_override,
+        no_agent = no_agent
     );
 
     let config = Config::new();
@@ -1121,30 +1126,36 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
         });
     }
 
-    // 3. Determine agent
-    let agent = agent_override.unwrap_or_else(|| session.agent.clone());
-    info!(event = "core.session.open_agent_selected", agent = agent);
+    // 3. Determine agent and command
+    let (agent, agent_command) = if no_agent {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        info!(event = "core.session.open_shell_selected", shell = %shell);
+        ("shell".to_string(), shell)
+    } else {
+        let agent = agent_override.unwrap_or_else(|| session.agent.clone());
+        info!(event = "core.session.open_agent_selected", agent = agent);
 
-    // Warn if agent CLI is not available in PATH
-    if let Some(false) = agents::is_agent_available(&agent) {
-        warn!(
-            event = "core.session.agent_not_available",
-            agent = %agent,
-            session_id = %session.id,
-            "Agent CLI '{}' not found in PATH - session may fail to start",
-            agent
-        );
-    }
+        // Warn if agent CLI is not available in PATH
+        if let Some(false) = agents::is_agent_available(&agent) {
+            warn!(
+                event = "core.session.agent_not_available",
+                agent = %agent,
+                session_id = %session.id,
+                "Agent CLI '{}' not found in PATH - session may fail to start",
+                agent
+            );
+        }
 
-    // 4. Build command
-    let agent_command =
-        kild_config
-            .get_agent_command(&agent)
-            .map_err(|e| SessionError::ConfigError {
-                message: e.to_string(),
-            })?;
+        let command =
+            kild_config
+                .get_agent_command(&agent)
+                .map_err(|e| SessionError::ConfigError {
+                    message: e.to_string(),
+                })?;
+        (agent, command)
+    };
 
-    // 5. Spawn NEW terminal (additive - don't touch existing)
+    // 4. Spawn NEW terminal (additive - don't touch existing)
     let spawn_index = session.agent_count();
     let spawn_id = compute_spawn_id(&session.id, spawn_index);
     info!(
@@ -1164,7 +1175,7 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     // Capture process metadata immediately for PID reuse protection
     let (process_name, process_start_time) = capture_process_metadata(&spawn_result, "open");
 
-    // 6. Update session with new process info
+    // 5. Update session with new process info
     let now = chrono::Utc::now().to_rfc3339();
     let command = if spawn_result.command_executed.trim().is_empty() {
         format!("{} (command not captured)", agent)
@@ -1183,11 +1194,15 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
         now.clone(),
     )?;
 
-    session.status = SessionStatus::Active;
+    // When --no-agent, keep session Stopped (no agent is running).
+    // Otherwise, mark as Active.
+    if !no_agent {
+        session.status = SessionStatus::Active;
+    }
     session.last_activity = Some(now);
     session.add_agent(new_agent);
 
-    // 7. Save updated session
+    // 6. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
 
     info!(
@@ -1883,7 +1898,7 @@ mod tests {
 
     #[test]
     fn test_open_session_not_found() {
-        let result = open_session("non-existent", None);
+        let result = open_session("non-existent", None, false);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }

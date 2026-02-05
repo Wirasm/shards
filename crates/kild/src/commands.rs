@@ -627,10 +627,12 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
 }
 
 fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let no_agent = matches.get_flag("no-agent");
+
     // Check for --all flag first
     if matches.get_flag("all") {
         let agent_override = matches.get_one::<String>("agent").cloned();
-        return handle_open_all(agent_override);
+        return handle_open_all(agent_override, no_agent);
     }
 
     // Single branch operation
@@ -639,12 +641,17 @@ fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         .ok_or("Branch argument is required (or use --all)")?;
     let agent_override = matches.get_one::<String>("agent").cloned();
 
-    info!(event = "cli.open_started", branch = branch, agent_override = ?agent_override);
+    info!(event = "cli.open_started", branch = branch, agent_override = ?agent_override, no_agent = no_agent);
 
-    match session_handler::open_session(branch, agent_override) {
+    match session_handler::open_session(branch, agent_override, no_agent) {
         Ok(session) => {
-            println!("✅ Opened new agent in kild '{}'", branch);
-            println!("   Agent: {}", session.agent);
+            if no_agent {
+                println!("✅ Opened bare terminal in kild '{}'", branch);
+                println!("   Agent: (none - bare shell)");
+            } else {
+                println!("✅ Opened new agent in kild '{}'", branch);
+                println!("   Agent: {}", session.agent);
+            }
             if let Some(pid) = session.latest_agent().and_then(|a| a.process_id()) {
                 println!("   PID: {}", pid);
             }
@@ -665,8 +672,11 @@ fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
 }
 
 /// Handle `kild open --all` - open agents in all stopped kilds
-fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    info!(event = "cli.open_all_started", agent_override = ?agent_override);
+fn handle_open_all(
+    agent_override: Option<String>,
+    no_agent: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!(event = "cli.open_all_started", agent_override = ?agent_override, no_agent = no_agent);
 
     let sessions = session_handler::list_sessions()?;
     let stopped: Vec<_> = sessions
@@ -684,7 +694,7 @@ fn handle_open_all(agent_override: Option<String>) -> Result<(), Box<dyn std::er
     let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in stopped {
-        match session_handler::open_session(&session.branch, agent_override.clone()) {
+        match session_handler::open_session(&session.branch, agent_override.clone(), no_agent) {
             Ok(s) => {
                 info!(
                     event = "cli.open_completed",

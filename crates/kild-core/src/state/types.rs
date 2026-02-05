@@ -33,6 +33,8 @@ pub enum Command {
         branch: String,
         /// Agent to launch. Uses default from config if `None`.
         agent: Option<String>,
+        /// Open a bare terminal with $SHELL instead of an agent.
+        no_agent: bool,
     },
     /// Stop the agent process in a kild without destroying it.
     StopKild { branch: String },
@@ -84,6 +86,7 @@ mod tests {
             Command::OpenKild {
                 branch: "feature".to_string(),
                 agent: None,
+                no_agent: false,
             },
             Command::StopKild {
                 branch: "feature".to_string(),
@@ -133,6 +136,7 @@ mod tests {
             Command::OpenKild {
                 branch: "test".to_string(),
                 agent: Some("gemini".to_string()),
+                no_agent: false,
             },
             Command::StopKild {
                 branch: "test".to_string(),
