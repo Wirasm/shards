@@ -85,6 +85,9 @@ mod tests {
                     Command::CompleteKild { branch, .. } => {
                         Ok(vec![Event::KildCompleted { branch }])
                     }
+                    Command::UpdateAgentStatus { branch, status } => {
+                        Ok(vec![Event::AgentStatusUpdated { branch, status }])
+                    }
                     Command::RefreshSessions => Ok(vec![Event::SessionsRefreshed]),
                     Command::AddProject { path, name } => Ok(vec![Event::ProjectAdded {
                         path,
@@ -191,6 +194,9 @@ mod tests {
                     }]),
                     Command::StopKild { .. } => Ok(vec![Event::KildStopped { branch }]),
                     Command::CompleteKild { .. } => Ok(vec![Event::KildCompleted { branch }]),
+                    Command::UpdateAgentStatus { branch, status } => {
+                        Ok(vec![Event::AgentStatusUpdated { branch, status }])
+                    }
                     Command::RefreshSessions => Ok(vec![Event::SessionsRefreshed]),
                     Command::AddProject { path, name } => Ok(vec![Event::ProjectAdded {
                         path,
@@ -226,6 +232,10 @@ mod tests {
             Command::CompleteKild {
                 branch: "b".to_string(),
                 force: false,
+            },
+            Command::UpdateAgentStatus {
+                branch: "b".to_string(),
+                status: "working".to_string(),
             },
             Command::RefreshSessions,
             Command::AddProject {

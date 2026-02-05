@@ -68,6 +68,16 @@ impl Store for CoreStore {
                 session_ops::complete_session(&branch, force)?;
                 Ok(vec![Event::KildCompleted { branch }])
             }
+            Command::UpdateAgentStatus { branch, status } => {
+                let agent_status: crate::sessions::types::AgentStatus =
+                    status.parse().map_err(|e: String| {
+                        DispatchError::Session(
+                            crate::sessions::errors::SessionError::InvalidAgentStatus { status: e },
+                        )
+                    })?;
+                session_ops::update_agent_status(&branch, agent_status)?;
+                Ok(vec![Event::AgentStatusUpdated { branch, status }])
+            }
             Command::RefreshSessions => {
                 session_ops::list_sessions()?;
                 Ok(vec![Event::SessionsRefreshed])

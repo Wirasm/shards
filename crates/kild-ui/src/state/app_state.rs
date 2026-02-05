@@ -140,6 +140,9 @@ impl AppState {
                 kild_core::Event::ActiveProjectChanged { .. } => {
                     self.reload_projects();
                 }
+                kild_core::Event::AgentStatusUpdated { .. } => {
+                    self.refresh_sessions();
+                }
             }
         }
     }

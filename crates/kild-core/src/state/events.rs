@@ -22,6 +22,8 @@ pub enum Event {
     KildStopped { branch: String },
     /// A kild was completed (PR checked, branch cleaned, session destroyed).
     KildCompleted { branch: String },
+    /// Agent status was updated for a kild session.
+    AgentStatusUpdated { branch: String, status: String },
     /// The session list was refreshed from disk.
     SessionsRefreshed,
 
@@ -68,6 +70,10 @@ mod tests {
             Event::KildCompleted {
                 branch: "feature".to_string(),
             },
+            Event::AgentStatusUpdated {
+                branch: "feature".to_string(),
+                status: "working".to_string(),
+            },
             Event::SessionsRefreshed,
             Event::ProjectAdded {
                 path: PathBuf::from("/projects/app"),
@@ -109,6 +115,10 @@ mod tests {
             },
             Event::KildCompleted {
                 branch: "test".to_string(),
+            },
+            Event::AgentStatusUpdated {
+                branch: "feature".to_string(),
+                status: "working".to_string(),
             },
             Event::SessionsRefreshed,
             Event::ProjectAdded {

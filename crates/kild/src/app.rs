@@ -279,6 +279,23 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("agent-status")
+                .about("Report agent activity status (called by agent hooks)")
+                .arg(
+                    Arg::new("target")
+                        .help("Branch name and status (e.g., 'mybranch working') or just status with --self (e.g., 'working')")
+                        .required(true)
+                        .num_args(1..=2)
+                        .value_parser(clap::value_parser!(String))
+                )
+                .arg(
+                    Arg::new("self")
+                        .long("self")
+                        .help("Auto-detect session from current working directory")
+                        .action(ArgAction::SetTrue)
+                )
+        )
+        .subcommand(
             Command::new("cleanup")
                 .about("Clean up orphaned resources (branches, worktrees, sessions)")
                 .arg(
@@ -1061,5 +1078,42 @@ mod tests {
         let create_matches = matches.subcommand_matches("create").unwrap();
         assert!(!create_matches.get_flag("no-fetch"));
         assert!(create_matches.get_one::<String>("base").is_none());
+    }
+
+    #[test]
+    fn test_cli_agent_status_with_branch_and_status() {
+        let app = build_cli();
+        let matches =
+            app.try_get_matches_from(vec!["kild", "agent-status", "my-branch", "working"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("agent-status").unwrap();
+        let targets: Vec<&String> = sub.get_many::<String>("target").unwrap().collect();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0], "my-branch");
+        assert_eq!(targets[1], "working");
+        assert!(!sub.get_flag("self"));
+    }
+
+    #[test]
+    fn test_cli_agent_status_with_self_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "agent-status", "--self", "idle"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("agent-status").unwrap();
+        let targets: Vec<&String> = sub.get_many::<String>("target").unwrap().collect();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0], "idle");
+        assert!(sub.get_flag("self"));
+    }
+
+    #[test]
+    fn test_cli_agent_status_requires_at_least_one_target() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "agent-status"]);
+        assert!(matches.is_err());
     }
 }

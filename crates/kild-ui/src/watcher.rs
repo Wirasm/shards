@@ -110,11 +110,11 @@ impl SessionWatcher {
             return false;
         }
 
-        // Only care about .json files (session files)
+        // Only care about .json (session files) and .status (agent status sidecar files)
         event.paths.iter().any(|p| {
             p.extension()
                 .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext == "json")
+                .is_some_and(|ext| ext == "json" || ext == "status")
         })
     }
 }
@@ -202,6 +202,18 @@ mod tests {
         assert!(
             SessionWatcher::is_relevant_event(&event),
             "Should return true if ANY path is .json"
+        );
+    }
+
+    #[test]
+    fn test_is_relevant_event_status_sidecar() {
+        let event = make_event(
+            EventKind::Create(CreateKind::File),
+            vec![PathBuf::from("/sessions/test_branch.status")],
+        );
+        assert!(
+            SessionWatcher::is_relevant_event(&event),
+            "Should return true for .status sidecar files"
         );
     }
 

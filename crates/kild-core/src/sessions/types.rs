@@ -466,6 +466,60 @@ pub enum SessionStatus {
     Destroyed,
 }
 
+/// Agent-reported activity status, written via `kild agent-status` command.
+///
+/// This is distinct from `ProcessStatus` (running/stopped) and `HealthStatus`
+/// (inferred from metrics). `AgentStatus` is explicitly reported by the agent
+/// via hooks, giving real-time insight into what the agent is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentStatus {
+    Working,
+    Idle,
+    Waiting,
+    Done,
+    Error,
+}
+
+impl std::fmt::Display for AgentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Working => write!(f, "working"),
+            Self::Idle => write!(f, "idle"),
+            Self::Waiting => write!(f, "waiting"),
+            Self::Done => write!(f, "done"),
+            Self::Error => write!(f, "error"),
+        }
+    }
+}
+
+impl std::str::FromStr for AgentStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "working" => Ok(Self::Working),
+            "idle" => Ok(Self::Idle),
+            "waiting" => Ok(Self::Waiting),
+            "done" => Ok(Self::Done),
+            "error" => Ok(Self::Error),
+            other => Err(format!(
+                "Invalid agent status: '{}'. Valid: working, idle, waiting, done, error",
+                other
+            )),
+        }
+    }
+}
+
+/// Sidecar file content for agent status reporting.
+///
+/// Stored as `{session_id}.status` alongside the session `.json` file.
+/// Written by `kild agent-status`, read by `kild list` and `kild status`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentStatusInfo {
+    pub status: AgentStatus,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ValidatedRequest {
     pub name: String,
@@ -1320,5 +1374,68 @@ mod tests {
         }"#;
         let result: Result<Session, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_agent_status_display() {
+        assert_eq!(AgentStatus::Working.to_string(), "working");
+        assert_eq!(AgentStatus::Idle.to_string(), "idle");
+        assert_eq!(AgentStatus::Waiting.to_string(), "waiting");
+        assert_eq!(AgentStatus::Done.to_string(), "done");
+        assert_eq!(AgentStatus::Error.to_string(), "error");
+    }
+
+    #[test]
+    fn test_agent_status_from_str() {
+        assert_eq!(
+            "working".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Working
+        );
+        assert_eq!("idle".parse::<AgentStatus>().unwrap(), AgentStatus::Idle);
+        assert_eq!(
+            "waiting".parse::<AgentStatus>().unwrap(),
+            AgentStatus::Waiting
+        );
+        assert_eq!("done".parse::<AgentStatus>().unwrap(), AgentStatus::Done);
+        assert_eq!("error".parse::<AgentStatus>().unwrap(), AgentStatus::Error);
+    }
+
+    #[test]
+    fn test_agent_status_from_str_invalid() {
+        let err = "invalid".parse::<AgentStatus>().unwrap_err();
+        assert!(err.contains("Invalid agent status"));
+        assert!(err.contains("invalid"));
+    }
+
+    #[test]
+    fn test_agent_status_serde_roundtrip() {
+        for status in [
+            AgentStatus::Working,
+            AgentStatus::Idle,
+            AgentStatus::Waiting,
+            AgentStatus::Done,
+            AgentStatus::Error,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let parsed: AgentStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn test_agent_status_serde_lowercase() {
+        let json = serde_json::to_string(&AgentStatus::Working).unwrap();
+        assert_eq!(json, r#""working""#);
+    }
+
+    #[test]
+    fn test_agent_status_info_serde_roundtrip() {
+        let info = AgentStatusInfo {
+            status: AgentStatus::Working,
+            updated_at: "2026-02-05T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: AgentStatusInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, info);
     }
 }
