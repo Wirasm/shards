@@ -88,6 +88,7 @@ mod tests {
                     Command::UpdateAgentStatus { branch, status } => {
                         Ok(vec![Event::AgentStatusUpdated { branch, status }])
                     }
+
                     Command::RefreshSessions => Ok(vec![Event::SessionsRefreshed]),
                     Command::AddProject { path, name } => Ok(vec![Event::ProjectAdded {
                         path,
@@ -197,6 +198,7 @@ mod tests {
                     Command::UpdateAgentStatus { branch, status } => {
                         Ok(vec![Event::AgentStatusUpdated { branch, status }])
                     }
+
                     Command::RefreshSessions => Ok(vec![Event::SessionsRefreshed]),
                     Command::AddProject { path, name } => Ok(vec![Event::ProjectAdded {
                         path,
@@ -235,7 +237,7 @@ mod tests {
             },
             Command::UpdateAgentStatus {
                 branch: "b".to_string(),
-                status: "working".to_string(),
+                status: crate::sessions::types::AgentStatus::Working,
             },
             Command::RefreshSessions,
             Command::AddProject {

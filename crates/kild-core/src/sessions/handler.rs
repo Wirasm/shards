@@ -1247,6 +1247,14 @@ pub fn update_agent_status(
     Ok(())
 }
 
+/// Read agent status for a session from the sidecar file.
+///
+/// Returns `None` if no status has been reported yet.
+pub fn read_agent_status(session_id: &str) -> Option<super::types::AgentStatusInfo> {
+    let config = Config::new();
+    persistence::read_agent_status(&config.sessions_dir(), session_id)
+}
+
 /// Resolve session from a worktree path (for --self flag).
 ///
 /// Matches if the given path equals or is a subdirectory of a session's worktree path.

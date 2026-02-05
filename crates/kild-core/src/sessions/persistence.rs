@@ -186,8 +186,29 @@ pub fn read_agent_status(
     session_id: &str,
 ) -> Option<super::types::AgentStatusInfo> {
     let sidecar_file = sessions_dir.join(format!("{}.status", session_id.replace('/', "_")));
-    let content = fs::read_to_string(&sidecar_file).ok()?;
-    serde_json::from_str(&content).ok()
+    let content = match fs::read_to_string(&sidecar_file) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::warn!(
+                event = "core.session.agent_status_read_failed",
+                session_id = %session_id,
+                error = %e,
+            );
+            return None;
+        }
+    };
+    match serde_json::from_str(&content) {
+        Ok(status) => Some(status),
+        Err(e) => {
+            tracing::warn!(
+                event = "core.session.agent_status_parse_failed",
+                session_id = %session_id,
+                error = %e,
+            );
+            None
+        }
+    }
 }
 
 /// Remove agent status sidecar file. Best-effort (logs warning on failure).

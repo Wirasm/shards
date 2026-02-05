@@ -217,8 +217,6 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     match session_handler::list_sessions() {
         Ok(sessions) => {
             let session_count = sessions.len();
-            let config = kild_core::config::Config::new();
-            let sessions_dir = config.sessions_dir();
 
             if json_output {
                 #[derive(serde::Serialize)]
@@ -234,10 +232,7 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                     .into_iter()
                     .map(|session| {
                         let git_stats = collect_git_stats(&session.worktree_path, &session.branch);
-                        let status_info = kild_core::sessions::persistence::read_agent_status(
-                            &sessions_dir,
-                            &session.id,
-                        );
+                        let status_info = session_handler::read_agent_status(&session.id);
                         EnrichedSession {
                             session,
                             git_stats,
@@ -254,9 +249,7 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 // Read sidecar statuses for table display
                 let statuses: Vec<Option<kild_core::sessions::types::AgentStatusInfo>> = sessions
                     .iter()
-                    .map(|s| {
-                        kild_core::sessions::persistence::read_agent_status(&sessions_dir, &s.id)
-                    })
+                    .map(|s| session_handler::read_agent_status(&s.id))
                     .collect();
                 let formatter = crate::table::TableFormatter::new(&sessions);
                 formatter.print_table(&sessions, &statuses);
@@ -1203,8 +1196,10 @@ fn handle_agent_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::
         (targets[0].clone(), targets[1].as_str())
     };
 
-    let status: AgentStatus = status_str.parse().map_err(|e: String| {
-        kild_core::sessions::errors::SessionError::InvalidAgentStatus { status: e }
+    let status: AgentStatus = status_str.parse().map_err(|_| {
+        kild_core::sessions::errors::SessionError::InvalidAgentStatus {
+            status: status_str.to_string(),
+        }
     })?;
 
     info!(event = "cli.agent_status_started", branch = %branch, status = %status);
@@ -1236,10 +1231,7 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     match session_handler::get_session(branch) {
         Ok(session) => {
             let git_stats = collect_git_stats(&session.worktree_path, branch);
-            let config = kild_core::config::Config::new();
-            let sessions_dir = config.sessions_dir();
-            let status_info =
-                kild_core::sessions::persistence::read_agent_status(&sessions_dir, &session.id);
+            let status_info = session_handler::read_agent_status(&session.id);
 
             if json_output {
                 #[derive(serde::Serialize)]

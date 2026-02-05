@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::sessions::types::AgentStatus;
+
 /// All business operations that can be dispatched through the store.
 ///
 /// Each variant captures the parameters needed to execute the operation.
@@ -38,7 +40,7 @@ pub enum Command {
     /// The `force` flag bypasses safety checks for session destruction only.
     CompleteKild { branch: String, force: bool },
     /// Update agent status for a kild session.
-    UpdateAgentStatus { branch: String, status: String },
+    UpdateAgentStatus { branch: String, status: AgentStatus },
     /// Refresh the session list from disk.
     RefreshSessions,
     /// Add a project to the project list. Name is derived from path if `None`.
@@ -92,7 +94,7 @@ mod tests {
             },
             Command::UpdateAgentStatus {
                 branch: "feature".to_string(),
-                status: "working".to_string(),
+                status: AgentStatus::Working,
             },
             Command::RefreshSessions,
             Command::AddProject {
@@ -142,7 +144,7 @@ mod tests {
             },
             Command::UpdateAgentStatus {
                 branch: "feature".to_string(),
-                status: "working".to_string(),
+                status: AgentStatus::Working,
             },
             Command::RefreshSessions,
             Command::AddProject {
