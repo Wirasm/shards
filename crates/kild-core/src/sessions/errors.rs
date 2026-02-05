@@ -61,6 +61,9 @@ pub enum SessionError {
     )]
     InvalidProcessMetadata,
 
+    #[error("Invalid agent status: '{status}'. Valid: working, idle, waiting, done, error")]
+    InvalidAgentStatus { status: String },
+
     #[error("Configuration error: {message}")]
     ConfigError { message: String },
 
@@ -92,6 +95,7 @@ impl KildError for SessionError {
             SessionError::ProcessKillFailed { .. } => "PROCESS_KILL_FAILED",
             SessionError::ProcessAccessDenied { .. } => "PROCESS_ACCESS_DENIED",
             SessionError::InvalidProcessMetadata => "INVALID_PROCESS_METADATA",
+            SessionError::InvalidAgentStatus { .. } => "INVALID_AGENT_STATUS",
             SessionError::ConfigError { .. } => "CONFIG_ERROR",
             SessionError::RemoteBranchDeleteFailed { .. } => "REMOTE_BRANCH_DELETE_FAILED",
             SessionError::UncommittedChanges { .. } => "SESSION_UNCOMMITTED_CHANGES",
@@ -111,6 +115,7 @@ impl KildError for SessionError {
                 | SessionError::PortRangeExhausted
                 | SessionError::PortAllocationFailed { .. }
                 | SessionError::InvalidProcessMetadata
+                | SessionError::InvalidAgentStatus { .. }
                 | SessionError::ConfigError { .. }
                 | SessionError::RemoteBranchDeleteFailed { .. }
                 | SessionError::UncommittedChanges { .. }
@@ -165,6 +170,19 @@ mod tests {
             "Cannot complete 'my-branch' with uncommitted changes. Use 'kild destroy --force' to remove."
         );
         assert_eq!(error.error_code(), "SESSION_UNCOMMITTED_CHANGES");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_invalid_agent_status_error() {
+        let error = SessionError::InvalidAgentStatus {
+            status: "bogus".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Invalid agent status: 'bogus'. Valid: working, idle, waiting, done, error"
+        );
+        assert_eq!(error.error_code(), "INVALID_AGENT_STATUS");
         assert!(error.is_user_error());
     }
 }

@@ -68,6 +68,10 @@ impl Store for CoreStore {
                 session_ops::complete_session(&branch, force)?;
                 Ok(vec![Event::KildCompleted { branch }])
             }
+            Command::UpdateAgentStatus { branch, status } => {
+                session_ops::update_agent_status(&branch, status)?;
+                Ok(vec![Event::AgentStatusUpdated { branch, status }])
+            }
             Command::RefreshSessions => {
                 session_ops::list_sessions()?;
                 Ok(vec![Event::SessionsRefreshed])

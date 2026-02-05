@@ -78,6 +78,8 @@ cargo run -p kild -- diff my-branch --staged     # Show only staged changes
 cargo run -p kild -- diff my-branch --stat       # Show diffstat summary
 cargo run -p kild -- commits my-branch           # Show recent commits in kild's branch
 cargo run -p kild -- commits my-branch -n 5      # Show last 5 commits
+cargo run -p kild -- agent-status my-branch working  # Report agent activity (for hooks)
+cargo run -p kild -- agent-status --self idle        # Auto-detect session from $PWD
 cargo run -p kild -- stop my-branch              # Stop agent, preserve kild
 cargo run -p kild -- stop --all                  # Stop all running kilds
 cargo run -p kild -- destroy my-branch           # Destroy kild

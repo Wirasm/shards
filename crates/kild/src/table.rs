@@ -1,9 +1,11 @@
 use kild_core::Session;
+use kild_core::sessions::types::AgentStatusInfo;
 
 pub struct TableFormatter {
     branch_width: usize,
     agent_width: usize,
     status_width: usize,
+    activity_width: usize,
     created_width: usize,
     port_width: usize,
     process_width: usize,
@@ -24,6 +26,7 @@ impl TableFormatter {
             branch_width,
             agent_width: 7,
             status_width: 7,
+            activity_width: 8,
             created_width: 19,
             port_width: 11,
             process_width: 11,
@@ -32,10 +35,11 @@ impl TableFormatter {
         }
     }
 
-    pub fn print_table(&self, sessions: &[Session]) {
+    pub fn print_table(&self, sessions: &[Session], statuses: &[Option<AgentStatusInfo>]) {
         self.print_header();
-        for session in sessions {
-            self.print_row(session);
+        for (i, session) in sessions.iter().enumerate() {
+            let status_info = statuses.get(i).and_then(|s| s.as_ref());
+            self.print_row(session, status_info);
         }
         self.print_footer();
     }
@@ -50,7 +54,7 @@ impl TableFormatter {
         println!("{}", self.bottom_border());
     }
 
-    fn print_row(&self, session: &Session) {
+    fn print_row(&self, session: &Session, status_info: Option<&AgentStatusInfo>) {
         let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
         let process_status = {
             let mut running = 0;
@@ -83,9 +87,11 @@ impl TableFormatter {
             }
         };
         let note_display = session.note.as_deref().unwrap_or("");
+        let activity_display =
+            status_info.map_or_else(|| "-".to_string(), |i| i.status.to_string());
 
         println!(
-            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
+            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_activity$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             truncate(&session.branch, self.branch_width),
             truncate(
                 &if session.agent_count() > 1 {
@@ -102,6 +108,7 @@ impl TableFormatter {
                 self.agent_width
             ),
             format!("{:?}", session.status).to_lowercase(),
+            truncate(&activity_display, self.activity_width),
             truncate(&session.created_at, self.created_width),
             truncate(&port_range, self.port_width),
             truncate(&process_status, self.process_width),
@@ -113,6 +120,7 @@ impl TableFormatter {
             width_branch = self.branch_width,
             width_agent = self.agent_width,
             width_status = self.status_width,
+            width_activity = self.activity_width,
             width_created = self.created_width,
             width_port = self.port_width,
             width_process = self.process_width,
@@ -123,10 +131,11 @@ impl TableFormatter {
 
     fn top_border(&self) -> String {
         format!(
-            "┌{}┬{}┬{}┬{}┬{}┬{}┬{}┬{}┐",
+            "┌{}┬{}┬{}┬{}┬{}┬{}┬{}┬{}┬{}┐",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
+            "─".repeat(self.activity_width + 2),
             "─".repeat(self.created_width + 2),
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),
@@ -137,10 +146,11 @@ impl TableFormatter {
 
     fn header_row(&self) -> String {
         format!(
-            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
+            "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_activity$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             "Branch",
             "Agent",
             "Status",
+            "Activity",
             "Created",
             "Port Range",
             "Process",
@@ -149,6 +159,7 @@ impl TableFormatter {
             width_branch = self.branch_width,
             width_agent = self.agent_width,
             width_status = self.status_width,
+            width_activity = self.activity_width,
             width_created = self.created_width,
             width_port = self.port_width,
             width_process = self.process_width,
@@ -159,10 +170,11 @@ impl TableFormatter {
 
     fn separator(&self) -> String {
         format!(
-            "├{}┼{}┼{}┼{}┼{}┼{}┼{}┼{}┤",
+            "├{}┼{}┼{}┼{}┼{}┼{}┼{}┼{}┼{}┤",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
+            "─".repeat(self.activity_width + 2),
             "─".repeat(self.created_width + 2),
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),
@@ -173,10 +185,11 @@ impl TableFormatter {
 
     fn bottom_border(&self) -> String {
         format!(
-            "└{}┴{}┴{}┴{}┴{}┴{}┴{}┴{}┘",
+            "└{}┴{}┴{}┴{}┴{}┴{}┴{}┴{}┴{}┘",
             "─".repeat(self.branch_width + 2),
             "─".repeat(self.agent_width + 2),
             "─".repeat(self.status_width + 2),
+            "─".repeat(self.activity_width + 2),
             "─".repeat(self.created_width + 2),
             "─".repeat(self.port_width + 2),
             "─".repeat(self.process_width + 2),

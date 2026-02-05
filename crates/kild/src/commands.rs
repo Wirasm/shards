@@ -1,6 +1,7 @@
 use clap::ArgMatches;
 use tracing::{error, info, warn};
 
+use kild_core::AgentStatus;
 use kild_core::CreateSessionRequest;
 use kild_core::SessionStatus;
 use kild_core::cleanup;
@@ -12,13 +13,6 @@ use kild_core::process;
 use kild_core::session_ops as session_handler;
 
 use crate::table::truncate;
-
-#[derive(serde::Serialize)]
-struct SessionWithGitStats {
-    #[serde(flatten)]
-    session: kild_core::Session,
-    git_stats: Option<GitStatsResponse>,
-}
 
 #[derive(serde::Serialize)]
 struct GitStatsResponse {
@@ -124,6 +118,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("diff", sub_matches)) => handle_diff_command(sub_matches),
         Some(("commits", sub_matches)) => handle_commits_command(sub_matches),
         Some(("status", sub_matches)) => handle_status_command(sub_matches),
+        Some(("agent-status", sub_matches)) => handle_agent_status_command(sub_matches),
         Some(("cleanup", sub_matches)) => handle_cleanup_command(sub_matches),
         Some(("health", sub_matches)) => handle_health_command(sub_matches),
         _ => {
@@ -224,11 +219,26 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             let session_count = sessions.len();
 
             if json_output {
-                let enriched: Vec<SessionWithGitStats> = sessions
+                #[derive(serde::Serialize)]
+                struct EnrichedSession {
+                    #[serde(flatten)]
+                    session: kild_core::Session,
+                    git_stats: Option<GitStatsResponse>,
+                    agent_status: Option<String>,
+                    agent_status_updated_at: Option<String>,
+                }
+
+                let enriched: Vec<EnrichedSession> = sessions
                     .into_iter()
                     .map(|session| {
                         let git_stats = collect_git_stats(&session.worktree_path, &session.branch);
-                        SessionWithGitStats { session, git_stats }
+                        let status_info = session_handler::read_agent_status(&session.id);
+                        EnrichedSession {
+                            session,
+                            git_stats,
+                            agent_status: status_info.as_ref().map(|i| i.status.to_string()),
+                            agent_status_updated_at: status_info.map(|i| i.updated_at),
+                        }
                     })
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&enriched)?);
@@ -236,8 +246,13 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 println!("No active kilds found.");
             } else {
                 println!("Active kilds:");
+                // Read sidecar statuses for table display
+                let statuses: Vec<Option<kild_core::sessions::types::AgentStatusInfo>> = sessions
+                    .iter()
+                    .map(|s| session_handler::read_agent_status(&s.id))
+                    .collect();
                 let formatter = crate::table::TableFormatter::new(&sessions);
-                formatter.print_table(&sessions);
+                formatter.print_table(&sessions, &statuses);
             }
 
             info!(event = "cli.list_completed", count = session_count);
@@ -1155,6 +1170,45 @@ fn handle_commits_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+fn handle_agent_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
+    let use_self = matches.get_flag("self");
+    let targets: Vec<&String> = matches.get_many::<String>("target").unwrap().collect();
+
+    // Parse branch and status from positional args
+    let (branch, status_str) = match (use_self, targets.as_slice()) {
+        (true, [status]) => {
+            let cwd = std::env::current_dir()?;
+            let session =
+                session_handler::find_session_by_worktree_path(&cwd)?.ok_or_else(|| {
+                    format!(
+                        "No kild session found for current directory: {}",
+                        cwd.display()
+                    )
+                })?;
+            (session.branch, status.as_str())
+        }
+        (false, [branch, status]) => ((*branch).clone(), status.as_str()),
+        (true, _) => return Err("Usage: kild agent-status --self <status>".into()),
+        (false, _) => return Err("Usage: kild agent-status <branch> <status>".into()),
+    };
+
+    let status: AgentStatus = status_str.parse().map_err(|_| {
+        kild_core::sessions::errors::SessionError::InvalidAgentStatus {
+            status: status_str.to_string(),
+        }
+    })?;
+
+    info!(event = "cli.agent_status_started", branch = %branch, status = %status);
+
+    session_handler::update_agent_status(&branch, status).map_err(|e| {
+        error!(event = "cli.agent_status_failed", error = %e);
+        e
+    })?;
+
+    info!(event = "cli.agent_status_completed", branch = %branch, status = %status);
+    Ok(())
+}
+
 fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let branch = matches
         .get_one::<String>("branch")
@@ -1170,9 +1224,24 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     match session_handler::get_session(branch) {
         Ok(session) => {
             let git_stats = collect_git_stats(&session.worktree_path, branch);
+            let status_info = session_handler::read_agent_status(&session.id);
 
             if json_output {
-                let enriched = SessionWithGitStats { session, git_stats };
+                #[derive(serde::Serialize)]
+                struct EnrichedStatus<'a> {
+                    #[serde(flatten)]
+                    session: &'a kild_core::Session,
+                    git_stats: Option<&'a GitStatsResponse>,
+                    agent_status: Option<String>,
+                    agent_status_updated_at: Option<String>,
+                }
+
+                let enriched = EnrichedStatus {
+                    session: &session,
+                    git_stats: git_stats.as_ref(),
+                    agent_status: status_info.as_ref().map(|i| i.status.to_string()),
+                    agent_status_updated_at: status_info.as_ref().map(|i| i.updated_at.clone()),
+                };
                 println!("{}", serde_json::to_string_pretty(&enriched)?);
                 info!(
                     event = "cli.status_completed",
@@ -1190,6 +1259,9 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
                 "│ Status:      {:<47} │",
                 format!("{:?}", session.status).to_lowercase()
             );
+            if let Some(ref info) = status_info {
+                println!("│ Activity:    {:<47} │", info.status);
+            }
             println!("│ Created:     {:<47} │", session.created_at);
             if let Some(ref note) = session.note {
                 println!("│ Note:        {} │", truncate(note, 47));

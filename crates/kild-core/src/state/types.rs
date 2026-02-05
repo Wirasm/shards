@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::sessions::types::AgentStatus;
+
 /// All business operations that can be dispatched through the store.
 ///
 /// Each variant captures the parameters needed to execute the operation.
@@ -37,6 +39,8 @@ pub enum Command {
     /// Complete a kild: check if PR was merged, delete remote branch if merged, destroy session.
     /// The `force` flag bypasses safety checks for session destruction only.
     CompleteKild { branch: String, force: bool },
+    /// Update agent status for a kild session.
+    UpdateAgentStatus { branch: String, status: AgentStatus },
     /// Refresh the session list from disk.
     RefreshSessions,
     /// Add a project to the project list. Name is derived from path if `None`.
@@ -88,6 +92,10 @@ mod tests {
                 branch: "feature".to_string(),
                 force: true,
             },
+            Command::UpdateAgentStatus {
+                branch: "feature".to_string(),
+                status: AgentStatus::Working,
+            },
             Command::RefreshSessions,
             Command::AddProject {
                 path: PathBuf::from("/projects/app"),
@@ -133,6 +141,10 @@ mod tests {
             Command::CompleteKild {
                 branch: "test".to_string(),
                 force: false,
+            },
+            Command::UpdateAgentStatus {
+                branch: "feature".to_string(),
+                status: AgentStatus::Working,
             },
             Command::RefreshSessions,
             Command::AddProject {

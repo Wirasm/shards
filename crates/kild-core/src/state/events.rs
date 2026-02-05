@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::sessions::types::AgentStatus;
+
 /// All business state changes that can result from a dispatched command.
 ///
 /// Each variant describes _what happened_, not what should happen. Only
@@ -22,6 +24,8 @@ pub enum Event {
     KildStopped { branch: String },
     /// A kild was completed (PR checked, branch cleaned, session destroyed).
     KildCompleted { branch: String },
+    /// Agent status was updated for a kild session.
+    AgentStatusUpdated { branch: String, status: AgentStatus },
     /// The session list was refreshed from disk.
     SessionsRefreshed,
 
@@ -68,6 +72,10 @@ mod tests {
             Event::KildCompleted {
                 branch: "feature".to_string(),
             },
+            Event::AgentStatusUpdated {
+                branch: "feature".to_string(),
+                status: AgentStatus::Working,
+            },
             Event::SessionsRefreshed,
             Event::ProjectAdded {
                 path: PathBuf::from("/projects/app"),
@@ -109,6 +117,10 @@ mod tests {
             },
             Event::KildCompleted {
                 branch: "test".to_string(),
+            },
+            Event::AgentStatusUpdated {
+                branch: "feature".to_string(),
+                status: AgentStatus::Working,
             },
             Event::SessionsRefreshed,
             Event::ProjectAdded {
