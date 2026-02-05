@@ -23,6 +23,19 @@ impl DiffStats {
     }
 }
 
+/// Result of counting commits ahead/behind remote tracking branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CommitCounts {
+    /// Number of commits ahead of remote (unpushed)
+    pub ahead: usize,
+    /// Number of commits behind remote
+    pub behind: usize,
+    /// Whether a remote tracking branch exists
+    pub has_remote: bool,
+    /// Whether the behind count check failed (behind value is unreliable)
+    pub behind_count_failed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorktreeInfo {
     pub path: PathBuf,

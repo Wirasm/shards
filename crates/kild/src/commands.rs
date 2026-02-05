@@ -29,6 +29,43 @@ struct GitStatsResponse {
 /// Branch name and agent name for a successfully opened kild
 type OpenedKild = (String, String);
 
+/// Collect git stats for a session's worktree.
+/// Returns None if worktree doesn't exist or on errors (logged as warnings).
+fn collect_git_stats(worktree_path: &std::path::Path, branch: &str) -> Option<GitStatsResponse> {
+    if !worktree_path.exists() {
+        return None;
+    }
+
+    let diff = match get_diff_stats(worktree_path) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            warn!(
+                event = "cli.git_stats.diff_failed",
+                branch = branch,
+                error = %e
+            );
+            None
+        }
+    };
+
+    let status = match get_worktree_status(worktree_path) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warn!(
+                event = "cli.git_stats.worktree_status_failed",
+                branch = branch,
+                error = %e
+            );
+            None
+        }
+    };
+
+    Some(GitStatsResponse {
+        diff_stats: diff,
+        worktree_status: status,
+    })
+}
+
 /// Branch name and error message for a failed operation
 type FailedOperation = (String, String);
 
@@ -190,36 +227,7 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 let enriched: Vec<SessionWithGitStats> = sessions
                     .into_iter()
                     .map(|session| {
-                        let git_stats = if session.worktree_path.exists() {
-                            let diff = match get_diff_stats(&session.worktree_path) {
-                                Ok(d) => Some(d),
-                                Err(e) => {
-                                    warn!(
-                                        event = "cli.list.diff_stats_failed",
-                                        branch = session.branch,
-                                        error = %e
-                                    );
-                                    None
-                                }
-                            };
-                            let status = match get_worktree_status(&session.worktree_path) {
-                                Ok(s) => Some(s),
-                                Err(e) => {
-                                    warn!(
-                                        event = "cli.list.worktree_status_failed",
-                                        branch = session.branch,
-                                        error = %e
-                                    );
-                                    None
-                                }
-                            };
-                            Some(GitStatsResponse {
-                                diff_stats: diff,
-                                worktree_status: status,
-                            })
-                        } else {
-                            None
-                        };
+                        let git_stats = collect_git_stats(&session.worktree_path, &session.branch);
                         SessionWithGitStats { session, git_stats }
                     })
                     .collect();
@@ -1161,37 +1169,7 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
 
     match session_handler::get_session(branch) {
         Ok(session) => {
-            // Compute git stats if worktree exists
-            let git_stats = if session.worktree_path.exists() {
-                let diff = match get_diff_stats(&session.worktree_path) {
-                    Ok(d) => Some(d),
-                    Err(e) => {
-                        warn!(
-                            event = "cli.status.diff_stats_failed",
-                            branch = branch,
-                            error = %e
-                        );
-                        None
-                    }
-                };
-                let status = match get_worktree_status(&session.worktree_path) {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        warn!(
-                            event = "cli.status.worktree_status_failed",
-                            branch = branch,
-                            error = %e
-                        );
-                        None
-                    }
-                };
-                Some(GitStatsResponse {
-                    diff_stats: diff,
-                    worktree_status: status,
-                })
-            } else {
-                None
-            };
+            let git_stats = collect_git_stats(&session.worktree_path, branch);
 
             if json_output {
                 let enriched = SessionWithGitStats { session, git_stats };
@@ -1221,29 +1199,25 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             // Display git stats
             if let Some(ref stats) = git_stats {
                 if let Some(ref diff) = stats.diff_stats {
-                    let changes_line = if let Some(ref ws) = stats.worktree_status {
-                        if let Some(ref details) = ws.uncommitted_details {
+                    let base = format!(
+                        "+{} -{} ({} files)",
+                        diff.insertions, diff.deletions, diff.files_changed
+                    );
+
+                    let changes_line = match &stats.worktree_status {
+                        Some(ws) if ws.uncommitted_details.is_some() => {
+                            let details = ws.uncommitted_details.as_ref().unwrap();
                             format!(
-                                "+{} -{} ({} files) -- {} staged, {} modified, {} untracked",
-                                diff.insertions,
-                                diff.deletions,
-                                diff.files_changed,
+                                "{} -- {} staged, {} modified, {} untracked",
+                                base,
                                 details.staged_files,
                                 details.modified_files,
                                 details.untracked_files
                             )
-                        } else {
-                            format!(
-                                "+{} -{} ({} files)",
-                                diff.insertions, diff.deletions, diff.files_changed
-                            )
                         }
-                    } else {
-                        format!(
-                            "+{} -{} ({} files)",
-                            diff.insertions, diff.deletions, diff.files_changed
-                        )
+                        _ => base,
                     };
+
                     println!("│ Changes:     {} │", truncate(&changes_line, 47));
                 }
 
