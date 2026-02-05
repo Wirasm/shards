@@ -370,6 +370,25 @@ pub fn focus_terminal(terminal_type: &TerminalType, window_id: &str) -> Result<(
     operations::focus_terminal_window(terminal_type, window_id)
 }
 
+/// Hide/minimize a terminal window.
+///
+/// # Arguments
+/// * `terminal_type` - The type of terminal (iTerm, Terminal.app, Ghostty)
+/// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+///
+/// # Returns
+/// * `Ok(())` - Window was hidden successfully
+/// * `Err(TerminalError)` - Hide failed (e.g., window not found, AppleScript execution error)
+pub fn hide_terminal(terminal_type: &TerminalType, window_id: &str) -> Result<(), TerminalError> {
+    info!(
+        event = "core.terminal.hide_requested",
+        terminal_type = %terminal_type,
+        window_id = %window_id
+    );
+
+    operations::hide_terminal_window(terminal_type, window_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

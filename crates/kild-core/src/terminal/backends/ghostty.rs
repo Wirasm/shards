@@ -536,6 +536,89 @@ impl TerminalBackend for GhosttyBackend {
     }
 
     #[cfg(target_os = "macos")]
+    fn hide_window(&self, window_id: &str) -> Result<(), TerminalError> {
+        use tracing::{error, info, warn};
+
+        debug!(
+            event = "core.terminal.hide_ghostty_started",
+            window_id = %window_id
+        );
+
+        // Use System Events to find window by title and minimize it.
+        // Ghostty doesn't expose an AppleScript dictionary, so we use
+        // the accessibility API via System Events.
+        let hide_script = format!(
+            r#"tell application "System Events"
+            tell process "Ghostty"
+                repeat with w in windows
+                    if name of w contains "{}" then
+                        set value of attribute "AXMinimized" of w to true
+                        return "hidden"
+                    end if
+                end repeat
+                return "not found"
+            end tell
+        end tell"#,
+            window_id
+        );
+
+        match std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&hide_script)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if result == "hidden" {
+                    info!(
+                        event = "core.terminal.hide_ghostty_completed",
+                        window_id = %window_id
+                    );
+                    Ok(())
+                } else {
+                    warn!(
+                        event = "core.terminal.hide_ghostty_failed",
+                        window_id = %window_id,
+                        message = "Window not found by title"
+                    );
+                    Err(TerminalError::HideFailed {
+                        message: format!(
+                            "Ghostty window '{}' not found (terminal may have been closed)",
+                            window_id
+                        ),
+                    })
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                warn!(
+                    event = "core.terminal.hide_ghostty_failed",
+                    window_id = %window_id,
+                    stderr = %stderr
+                );
+                Err(TerminalError::HideFailed { message: stderr })
+            }
+            Err(e) => {
+                error!(
+                    event = "core.terminal.hide_ghostty_failed",
+                    window_id = %window_id,
+                    error = %e
+                );
+                Err(TerminalError::HideFailed {
+                    message: e.to_string(),
+                })
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn hide_window(&self, _window_id: &str) -> Result<(), TerminalError> {
+        Err(TerminalError::HideFailed {
+            message: "Hide not supported on this platform".to_string(),
+        })
+    }
+
+    #[cfg(target_os = "macos")]
     fn is_window_open(&self, window_id: &str) -> Result<Option<bool>, TerminalError> {
         debug!(
             event = "core.terminal.ghostty_window_check_started",
