@@ -1,5 +1,6 @@
 use crate::health::{errors::HealthError, operations, types::*};
 use crate::process;
+use crate::process::types::ProcessMetrics;
 use crate::sessions;
 use tracing::{info, warn};
 
@@ -61,23 +62,19 @@ pub fn get_health_single_session(branch: &str) -> Result<KildHealth, HealthError
 
 /// Helper to enrich session with process metrics
 fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth {
-    let (process_metrics, process_running) = if let Some(pid) = session.process_id {
+    // Find first running agent for metrics (multi-agent path)
+    let running_pid = session
+        .agents()
+        .iter()
+        .filter_map(|a| a.process_id())
+        .find(|&pid| matches!(process::is_process_running(pid), Ok(true)));
+
+    let (process_metrics, process_running) = if let Some(pid) = running_pid {
+        (get_metrics_for_pid(pid, &session.branch), true)
+    } else if let Some(pid) = session.process_id {
+        // Fallback to singular field for old sessions
         match process::is_process_running(pid) {
-            Ok(true) => {
-                let metrics = match process::get_process_metrics(pid) {
-                    Ok(metrics) => Some(metrics),
-                    Err(e) => {
-                        warn!(
-                            event = "core.health.process_metrics_failed",
-                            pid = pid,
-                            session_branch = &session.branch,
-                            error = %e
-                        );
-                        None
-                    }
-                };
-                (metrics, true)
-            }
+            Ok(true) => (get_metrics_for_pid(pid, &session.branch), true),
             Ok(false) => (None, false),
             Err(e) => {
                 warn!(
@@ -94,4 +91,19 @@ fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth
     };
 
     operations::enrich_session_with_health(session, process_metrics, process_running)
+}
+
+fn get_metrics_for_pid(pid: u32, branch: &str) -> Option<ProcessMetrics> {
+    match process::get_process_metrics(pid) {
+        Ok(metrics) => Some(metrics),
+        Err(e) => {
+            warn!(
+                event = "core.health.process_metrics_failed",
+                pid = pid,
+                session_branch = branch,
+                error = %e
+            );
+            None
+        }
+    }
 }

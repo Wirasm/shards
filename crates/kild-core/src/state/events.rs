@@ -17,7 +17,7 @@ pub enum Event {
     /// A kild session was destroyed (worktree removed, session file deleted).
     KildDestroyed { branch: String },
     /// An additional agent terminal was opened in an existing kild.
-    KildOpened { branch: String },
+    KildOpened { branch: String, agent: String },
     /// The agent process in a kild was stopped (kild preserved).
     KildStopped { branch: String },
     /// A kild was completed (PR checked, branch cleaned, session destroyed).
@@ -60,6 +60,7 @@ mod tests {
             },
             Event::KildOpened {
                 branch: "feature".to_string(),
+                agent: "claude".to_string(),
             },
             Event::KildStopped {
                 branch: "feature".to_string(),
@@ -101,6 +102,7 @@ mod tests {
             },
             Event::KildOpened {
                 branch: "test".to_string(),
+                agent: "claude".to_string(),
             },
             Event::KildStopped {
                 branch: "test".to_string(),

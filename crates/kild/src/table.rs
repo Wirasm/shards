@@ -52,27 +52,69 @@ impl TableFormatter {
 
     fn print_row(&self, session: &Session) {
         let port_range = format!("{}-{}", session.port_range_start, session.port_range_end);
-        let process_status = session.process_id.map_or("No PID".to_string(), |pid| {
-            match kild_core::process::is_process_running(pid) {
-                Ok(true) => format!("Run({})", pid),
-                Ok(false) => format!("Stop({})", pid),
-                Err(e) => {
-                    tracing::warn!(
-                        event = "cli.list_process_check_failed",
-                        pid = pid,
-                        session_branch = &session.branch,
-                        error = %e
-                    );
-                    format!("Err({})", pid)
+        let process_status = if session.has_agents() {
+            let mut running = 0;
+            let mut errored = 0;
+            for agent_proc in session.agents() {
+                if let Some(pid) = agent_proc.process_id() {
+                    match kild_core::process::is_process_running(pid) {
+                        Ok(true) => running += 1,
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                event = "cli.list_process_check_failed",
+                                pid = pid,
+                                agent = agent_proc.agent(),
+                                session_branch = &session.branch,
+                                error = %e
+                            );
+                            errored += 1;
+                        }
+                    }
                 }
             }
-        });
+            let total = session.agent_count();
+            if errored > 0 {
+                format!("{}run,{}err/{}", running, errored, total)
+            } else {
+                format!("Run({}/{})", running, total)
+            }
+        } else {
+            session.process_id.map_or("No PID".to_string(), |pid| {
+                match kild_core::process::is_process_running(pid) {
+                    Ok(true) => format!("Run({})", pid),
+                    Ok(false) => format!("Stop({})", pid),
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "cli.list_process_check_failed",
+                            pid = pid,
+                            session_branch = &session.branch,
+                            error = %e
+                        );
+                        format!("Err({})", pid)
+                    }
+                }
+            })
+        };
         let note_display = session.note.as_deref().unwrap_or("");
 
         println!(
             "│ {:<width_branch$} │ {:<width_agent$} │ {:<width_status$} │ {:<width_created$} │ {:<width_port$} │ {:<width_process$} │ {:<width_command$} │ {:<width_note$} │",
             truncate(&session.branch, self.branch_width),
-            truncate(&session.agent, self.agent_width),
+            truncate(
+                &if session.agent_count() > 1 {
+                    format!(
+                        "{} (+{})",
+                        session
+                            .latest_agent()
+                            .map_or(session.agent.as_str(), |a| a.agent()),
+                        session.agent_count() - 1
+                    )
+                } else {
+                    session.agent.clone()
+                },
+                self.agent_width
+            ),
             format!("{:?}", session.status).to_lowercase(),
             truncate(&session.created_at, self.created_width),
             truncate(&port_range, self.port_width),

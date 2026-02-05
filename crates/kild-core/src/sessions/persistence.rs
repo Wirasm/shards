@@ -220,6 +220,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save session
@@ -269,6 +270,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save session
@@ -320,6 +322,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         let session_file = temp_dir.join("test_atomic-behavior.json");
@@ -374,6 +377,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Create a directory where the final file should be to force rename failure
@@ -433,6 +437,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         let session2 = Session {
@@ -454,6 +459,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save sessions
@@ -517,6 +523,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save session
@@ -566,6 +573,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save session
@@ -616,6 +624,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
         save_session_to_file(&valid_session, &temp_dir).unwrap();
 
@@ -674,6 +683,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         let session_file = temp_dir.join("test_orphaned.json");
@@ -734,6 +744,7 @@ mod tests {
             command: "claude".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Session 2: missing worktree
@@ -756,6 +767,7 @@ mod tests {
             command: "claude".to_string(),
             last_activity: Some("2024-01-01T00:00:00Z".to_string()),
             note: None,
+            agents: vec![],
         };
 
         // Save both sessions

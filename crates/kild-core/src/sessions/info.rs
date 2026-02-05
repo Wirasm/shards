@@ -75,9 +75,63 @@ impl SessionInfo {
 /// detection for terminals like Ghostty where PID is unavailable.
 ///
 /// Detection failures are logged as warnings and return:
-/// - `ProcessStatus::Unknown` when PID check errors
-/// - `ProcessStatus::Stopped` when window check errors or no detection method available
+/// - `ProcessStatus::Unknown` when PID or window check errors
+/// - `ProcessStatus::Stopped` when no detection method available
 pub fn determine_process_status(session: &Session) -> ProcessStatus {
+    // Check agents vec first (multi-agent path)
+    if session.has_agents() {
+        let mut any_running = false;
+        let mut any_unknown = false;
+        for agent_proc in session.agents() {
+            if let Some(pid) = agent_proc.process_id() {
+                match is_process_running(pid) {
+                    Ok(true) => {
+                        any_running = true;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "core.session.process_check_failed",
+                            pid = pid,
+                            agent = agent_proc.agent(),
+                            branch = session.branch,
+                            error = %e
+                        );
+                        any_unknown = true;
+                    }
+                }
+            } else if let (Some(terminal_type), Some(window_id)) =
+                (agent_proc.terminal_type(), agent_proc.terminal_window_id())
+            {
+                match is_terminal_window_open(terminal_type, window_id) {
+                    Ok(Some(true)) => {
+                        any_running = true;
+                    }
+                    Ok(Some(false) | None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            event = "core.session.window_check_failed",
+                            terminal_type = ?terminal_type,
+                            window_id = %window_id,
+                            agent = agent_proc.agent(),
+                            branch = session.branch,
+                            error = %e
+                        );
+                        any_unknown = true;
+                    }
+                }
+            }
+        }
+        if any_running {
+            return ProcessStatus::Running;
+        }
+        if any_unknown {
+            return ProcessStatus::Unknown;
+        }
+        return ProcessStatus::Stopped;
+    }
+
+    // Fallback: singular-field logic for old sessions
     if let Some(pid) = session.process_id {
         match is_process_running(pid) {
             Ok(true) => ProcessStatus::Running,
@@ -180,6 +234,7 @@ mod tests {
             command: String::new(),
             last_activity: None,
             note: None,
+            agents: vec![],
         }
     }
 
@@ -279,6 +334,108 @@ mod tests {
     fn test_check_git_status_nonexistent_directory() {
         let path = Path::new("/nonexistent/path/that/does/not/exist");
         assert_eq!(check_git_status(path), GitStatus::Unknown);
+    }
+
+    fn make_agent(agent: &str, pid: Option<u32>) -> crate::sessions::types::AgentProcess {
+        crate::sessions::types::AgentProcess::new(
+            agent.to_string(),
+            pid,
+            pid.map(|_| "test-process".to_string()),
+            pid.map(|_| 1234567890),
+            None,
+            None,
+            String::new(),
+            "2024-01-01T00:00:00Z".to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_multi_agent_all_dead_returns_stopped() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.agents = vec![
+            make_agent("claude", Some(999997)),
+            make_agent("kiro", Some(999998)),
+        ];
+        assert_eq!(determine_process_status(&session), ProcessStatus::Stopped);
+    }
+
+    #[test]
+    fn test_multi_agent_one_alive_returns_running() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.agents = vec![
+            make_agent("claude", Some(999997)),           // dead
+            make_agent("kiro", Some(std::process::id())), // alive (self)
+        ];
+        assert_eq!(determine_process_status(&session), ProcessStatus::Running);
+    }
+
+    #[test]
+    fn test_multi_agent_no_pids_returns_stopped() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.agents = vec![make_agent("claude", None), make_agent("kiro", None)];
+        assert_eq!(determine_process_status(&session), ProcessStatus::Stopped);
+    }
+
+    #[test]
+    fn test_multi_agent_empty_vec_falls_back_to_singular() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.agents = vec![];
+        session.process_id = Some(std::process::id()); // alive via singular field
+        assert_eq!(determine_process_status(&session), ProcessStatus::Running);
+    }
+
+    #[test]
+    fn test_multi_agent_mixed_pids_and_no_pids() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.agents = vec![
+            make_agent("claude", Some(std::process::id())), // alive
+            make_agent("kiro", None),                       // no PID
+            make_agent("gemini", Some(999999)),             // dead
+        ];
+        // Should return Running because at least one is alive
+        assert_eq!(determine_process_status(&session), ProcessStatus::Running);
+    }
+
+    #[test]
+    fn test_session_add_agent_appends() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        assert!(!session.has_agents());
+        assert_eq!(session.agent_count(), 0);
+
+        session.add_agent(make_agent("claude", Some(12345)));
+        assert!(session.has_agents());
+        assert_eq!(session.agent_count(), 1);
+        assert_eq!(session.agents()[0].agent(), "claude");
+
+        session.add_agent(make_agent("kiro", Some(67890)));
+        assert_eq!(session.agent_count(), 2);
+        assert_eq!(session.agents()[1].agent(), "kiro");
+    }
+
+    #[test]
+    fn test_session_latest_agent() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        assert!(session.latest_agent().is_none());
+
+        session.add_agent(make_agent("claude", None));
+        assert_eq!(session.latest_agent().unwrap().agent(), "claude");
+
+        session.add_agent(make_agent("kiro", None));
+        assert_eq!(session.latest_agent().unwrap().agent(), "kiro");
+    }
+
+    #[test]
+    fn test_session_clear_agents() {
+        let mut session = make_session(PathBuf::from("/tmp/nonexistent"));
+        session.add_agent(make_agent("claude", Some(12345)));
+        session.add_agent(make_agent("kiro", Some(67890)));
+        assert_eq!(session.agent_count(), 2);
+
+        session.clear_agents();
+        assert!(!session.has_agents());
+        assert_eq!(session.agent_count(), 0);
+        assert!(session.latest_agent().is_none());
     }
 
     #[test]

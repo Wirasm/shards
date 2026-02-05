@@ -25,7 +25,9 @@ fn capture_process_metadata(
     };
 
     match crate::process::get_process_info(pid) {
-        Ok(info) => (Some(info.name), Some(info.start_time)),
+        Ok(info) => {
+            return (Some(info.name), Some(info.start_time));
+        }
         Err(e) => {
             warn!(
                 event = %format!("core.session.{}_process_info_failed", event_prefix),
@@ -33,12 +35,13 @@ fn capture_process_metadata(
                 error = %e,
                 "Failed to get process metadata after spawn - using spawn result metadata"
             );
-            (
-                spawn_result.process_name.clone(),
-                spawn_result.process_start_time,
-            )
         }
     }
+
+    (
+        spawn_result.process_name.clone(),
+        spawn_result.process_start_time,
+    )
 }
 
 pub fn create_session(
@@ -165,6 +168,21 @@ pub fn create_session(
 
     // 6. Create session record
     let now = chrono::Utc::now().to_rfc3339();
+    let command = if spawn_result.command_executed.trim().is_empty() {
+        format!("{} (command not captured)", validated.agent)
+    } else {
+        spawn_result.command_executed.clone()
+    };
+    let initial_agent = AgentProcess::new(
+        validated.agent.clone(),
+        spawn_result.process_id,
+        spawn_result.process_name.clone(),
+        spawn_result.process_start_time,
+        Some(spawn_result.terminal_type.clone()),
+        spawn_result.terminal_window_id.clone(),
+        command.clone(),
+        now.clone(),
+    )?;
     let session = Session {
         id: session_id.clone(),
         project_id: project.id,
@@ -182,12 +200,9 @@ pub fn create_session(
         process_start_time: spawn_result.process_start_time,
         terminal_type: Some(spawn_result.terminal_type.clone()),
         terminal_window_id: spawn_result.terminal_window_id.clone(),
-        command: if spawn_result.command_executed.trim().is_empty() {
-            format!("{} (command not captured)", validated.agent)
-        } else {
-            spawn_result.command_executed.clone()
-        },
+        command,
         note: request.note.clone(),
+        agents: vec![initial_agent],
     };
 
     // 7. Save session to file
@@ -282,52 +297,132 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
         process_id = session.process_id
     );
 
-    // 2. Close terminal window first (before killing process)
-    // This is fire-and-forget - errors are logged but never block destruction
-    if let Some(ref terminal_type) = session.terminal_type {
-        info!(
-            event = "core.session.destroy_close_terminal",
-            terminal_type = %terminal_type,
-            window_id = ?session.terminal_window_id
-        );
-        terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
-    }
-
-    // 3. Kill process if PID is tracked
-    if let Some(pid) = session.process_id {
-        info!(event = "core.session.destroy_kill_started", pid = pid);
-
-        match crate::process::kill_process(
-            pid,
-            session.process_name.as_deref(),
-            session.process_start_time,
-        ) {
-            Ok(()) => {
-                info!(event = "core.session.destroy_kill_completed", pid = pid);
+    // 2. Close all terminal windows and kill all processes
+    if session.has_agents() {
+        // Multi-agent path: close all terminal windows (fire-and-forget)
+        for agent_proc in session.agents() {
+            if let (Some(terminal_type), Some(window_id)) =
+                (agent_proc.terminal_type(), agent_proc.terminal_window_id())
+            {
+                info!(
+                    event = "core.session.destroy_close_terminal",
+                    terminal_type = ?terminal_type,
+                    agent = agent_proc.agent(),
+                );
+                terminal::handler::close_terminal(terminal_type, Some(window_id));
             }
-            Err(crate::process::ProcessError::NotFound { .. }) => {
-                info!(event = "core.session.destroy_kill_already_dead", pid = pid);
-            }
-            Err(e) => {
-                if force {
+        }
+
+        // Kill all tracked processes
+        let mut kill_errors: Vec<(u32, String)> = Vec::new();
+        for agent_proc in session.agents() {
+            let Some(pid) = agent_proc.process_id() else {
+                continue;
+            };
+
+            info!(
+                event = "core.session.destroy_kill_started",
+                pid = pid,
+                agent = agent_proc.agent()
+            );
+
+            let result = crate::process::kill_process(
+                pid,
+                agent_proc.process_name(),
+                agent_proc.process_start_time(),
+            );
+
+            match result {
+                Ok(()) => {
+                    info!(event = "core.session.destroy_kill_completed", pid = pid);
+                }
+                Err(crate::process::ProcessError::NotFound { .. }) => {
+                    info!(event = "core.session.destroy_kill_already_dead", pid = pid);
+                }
+                Err(e) if force => {
                     warn!(
                         event = "core.session.destroy_kill_failed_force_continue",
                         pid = pid,
                         error = %e
                     );
-                } else {
-                    error!(
-                        event = "core.session.destroy_kill_failed",
-                        pid = pid,
-                        error = %e
-                    );
-                    return Err(SessionError::ProcessKillFailed {
-                        pid,
-                        message: format!(
-                            "Process still running. Kill it manually or use --force flag: {}",
-                            e
-                        ),
-                    });
+                }
+                Err(e) => {
+                    kill_errors.push((pid, e.to_string()));
+                }
+            }
+        }
+
+        if !kill_errors.is_empty() && !force {
+            for (pid, err) in &kill_errors {
+                error!(
+                    event = "core.session.destroy_kill_failed",
+                    pid = pid,
+                    error = %err
+                );
+            }
+
+            let pids: Vec<String> = kill_errors.iter().map(|(p, _)| p.to_string()).collect();
+            let (first_pid, first_msg) = kill_errors.into_iter().next().unwrap();
+
+            let message = if pids.len() == 1 {
+                format!(
+                    "Process still running. Kill it manually or use --force flag: {}",
+                    first_msg
+                )
+            } else {
+                format!(
+                    "{} processes still running (PIDs: {}). Kill them manually or use --force flag.",
+                    pids.len(),
+                    pids.join(", ")
+                )
+            };
+
+            return Err(SessionError::ProcessKillFailed {
+                pid: first_pid,
+                message,
+            });
+        }
+    } else {
+        // Fallback: singular-field logic for old sessions with empty agents vec
+        if let Some(ref terminal_type) = session.terminal_type {
+            info!(
+                event = "core.session.destroy_close_terminal",
+                terminal_type = %terminal_type,
+                window_id = ?session.terminal_window_id
+            );
+            terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
+        }
+
+        if let Some(pid) = session.process_id {
+            info!(event = "core.session.destroy_kill_started", pid = pid);
+            match crate::process::kill_process(
+                pid,
+                session.process_name.as_deref(),
+                session.process_start_time,
+            ) {
+                Ok(()) => {
+                    info!(event = "core.session.destroy_kill_completed", pid = pid);
+                }
+                Err(crate::process::ProcessError::NotFound { .. }) => {
+                    info!(event = "core.session.destroy_kill_already_dead", pid = pid);
+                }
+                Err(e) => {
+                    if force {
+                        warn!(
+                            event = "core.session.destroy_kill_failed_force_continue",
+                            pid = pid,
+                            error = %e
+                        );
+                    } else {
+                        error!(event = "core.session.destroy_kill_failed", pid = pid, error = %e);
+                        return Err(SessionError::ProcessKillFailed {
+                            pid,
+                            message: format!(
+                                "Process still running. Kill it manually or use --force flag: {}",
+                                e
+                            ),
+                        });
+                    }
                 }
             }
         }
@@ -1036,19 +1131,36 @@ pub fn open_session(name: &str, agent_override: Option<String>) -> Result<Sessio
     let (process_name, process_start_time) = capture_process_metadata(&spawn_result, "open");
 
     // 6. Update session with new process info
+    let now = chrono::Utc::now().to_rfc3339();
+    let command = if spawn_result.command_executed.trim().is_empty() {
+        format!("{} (command not captured)", agent)
+    } else {
+        spawn_result.command_executed.clone()
+    };
+    let new_agent = AgentProcess::new(
+        agent.clone(),
+        spawn_result.process_id,
+        process_name.clone(),
+        process_start_time,
+        Some(spawn_result.terminal_type.clone()),
+        spawn_result.terminal_window_id.clone(),
+        command.clone(),
+        now.clone(),
+    )?;
+
+    // Keep singular fields updated to latest for backward compat
     session.process_id = spawn_result.process_id;
     session.process_name = process_name;
     session.process_start_time = process_start_time;
     session.terminal_type = Some(spawn_result.terminal_type.clone());
     session.terminal_window_id = spawn_result.terminal_window_id.clone();
-    session.command = if spawn_result.command_executed.trim().is_empty() {
-        format!("{} (command not captured)", agent)
-    } else {
-        spawn_result.command_executed.clone()
-    };
+    session.command = command;
     session.agent = agent.clone();
     session.status = SessionStatus::Active;
-    session.last_activity = Some(chrono::Utc::now().to_rfc3339());
+    session.last_activity = Some(now);
+
+    // Track all agents for proper cleanup
+    session.add_agent(new_agent);
 
     // 7. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1084,45 +1196,116 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
         branch = session.branch
     );
 
-    // 2. Close terminal (fire-and-forget, best-effort)
-    if let Some(ref terminal_type) = session.terminal_type {
-        info!(
-            event = "core.session.stop_close_terminal",
-            terminal_type = ?terminal_type
-        );
-        terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
-    }
-
-    // 3. Kill process (blocking, handle errors)
-    if let Some(pid) = session.process_id {
-        info!(event = "core.session.stop_kill_started", pid = pid);
-
-        match crate::process::kill_process(
-            pid,
-            session.process_name.as_deref(),
-            session.process_start_time,
-        ) {
-            Ok(()) => {
-                info!(event = "core.session.stop_kill_completed", pid = pid);
-            }
-            Err(crate::process::ProcessError::NotFound { .. }) => {
-                info!(event = "core.session.stop_kill_already_dead", pid = pid);
-            }
-            Err(e) => {
-                error!(
-                    event = "core.session.stop_kill_failed",
-                    pid = pid,
-                    error = %e
+    // 2. Close all terminal windows and kill all processes
+    if session.has_agents() {
+        // Multi-agent path: iterate all tracked agents
+        for agent_proc in session.agents() {
+            if let (Some(terminal_type), Some(window_id)) =
+                (agent_proc.terminal_type(), agent_proc.terminal_window_id())
+            {
+                info!(
+                    event = "core.session.stop_close_terminal",
+                    terminal_type = ?terminal_type,
+                    agent = agent_proc.agent(),
                 );
-                return Err(SessionError::ProcessKillFailed {
-                    pid,
-                    message: e.to_string(),
-                });
+                terminal::handler::close_terminal(terminal_type, Some(window_id));
+            }
+        }
+
+        let mut kill_errors: Vec<(u32, String)> = Vec::new();
+        for agent_proc in session.agents() {
+            let Some(pid) = agent_proc.process_id() else {
+                continue;
+            };
+
+            info!(
+                event = "core.session.stop_kill_started",
+                pid = pid,
+                agent = agent_proc.agent()
+            );
+
+            let result = crate::process::kill_process(
+                pid,
+                agent_proc.process_name(),
+                agent_proc.process_start_time(),
+            );
+
+            match result {
+                Ok(()) => {
+                    info!(event = "core.session.stop_kill_completed", pid = pid);
+                }
+                Err(crate::process::ProcessError::NotFound { .. }) => {
+                    info!(event = "core.session.stop_kill_already_dead", pid = pid);
+                }
+                Err(e) => {
+                    error!(event = "core.session.stop_kill_failed", pid = pid, error = %e);
+                    kill_errors.push((pid, e.to_string()));
+                }
+            }
+        }
+
+        if !kill_errors.is_empty() {
+            for (pid, err) in &kill_errors {
+                error!(
+                    event = "core.session.stop_kill_failed_summary",
+                    pid = pid,
+                    error = %err
+                );
+            }
+
+            let pids: Vec<String> = kill_errors.iter().map(|(p, _)| p.to_string()).collect();
+            let (first_pid, first_msg) = kill_errors.into_iter().next().unwrap();
+
+            let message = if pids.len() == 1 {
+                first_msg
+            } else {
+                format!(
+                    "{} processes failed to stop (PIDs: {}). Kill them manually.",
+                    pids.len(),
+                    pids.join(", ")
+                )
+            };
+
+            return Err(SessionError::ProcessKillFailed {
+                pid: first_pid,
+                message,
+            });
+        }
+    } else {
+        // Fallback: singular-field logic for old sessions with empty agents vec
+        if let Some(ref terminal_type) = session.terminal_type {
+            info!(
+                event = "core.session.stop_close_terminal",
+                terminal_type = ?terminal_type
+            );
+            terminal::handler::close_terminal(terminal_type, session.terminal_window_id.as_deref());
+        }
+
+        if let Some(pid) = session.process_id {
+            info!(event = "core.session.stop_kill_started", pid = pid);
+            match crate::process::kill_process(
+                pid,
+                session.process_name.as_deref(),
+                session.process_start_time,
+            ) {
+                Ok(()) => {
+                    info!(event = "core.session.stop_kill_completed", pid = pid);
+                }
+                Err(crate::process::ProcessError::NotFound { .. }) => {
+                    info!(event = "core.session.stop_kill_already_dead", pid = pid);
+                }
+                Err(e) => {
+                    error!(event = "core.session.stop_kill_failed", pid = pid, error = %e);
+                    return Err(SessionError::ProcessKillFailed {
+                        pid,
+                        message: e.to_string(),
+                    });
+                }
             }
         }
     }
 
-    // 4. Delete PID file so next open() won't read stale PID (best-effort)
+    // 3. Delete PID file so next open() won't read stale PID (best-effort)
     let pid_file = get_pid_file_path(&config.kild_dir, &session.id);
     match delete_pid_file(&pid_file) {
         Ok(()) => {
@@ -1142,7 +1325,8 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
         }
     }
 
-    // 5. Clear process info and set status to Stopped
+    // 4. Clear process info and set status to Stopped
+    session.clear_agents();
     session.process_id = None;
     session.process_name = None;
     session.process_start_time = None;
@@ -1280,6 +1464,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         // Create worktree directory so validation passes
@@ -1380,6 +1565,7 @@ mod tests {
                 command: "test-command".to_string(),
                 last_activity: Some(chrono::Utc::now().to_rfc3339()),
                 note: None,
+                agents: vec![],
             };
 
             persistence::save_session_to_file(&session, &sessions_dir)
@@ -1454,6 +1640,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1523,6 +1710,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1596,6 +1784,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1691,6 +1880,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1924,6 +2114,7 @@ mod tests {
             command: "test-command".to_string(),
             last_activity: Some(chrono::Utc::now().to_rfc3339()),
             note: None,
+            agents: vec![],
         };
 
         // Save the session

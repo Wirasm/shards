@@ -860,8 +860,20 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
         }
     };
 
-    // 2. Get terminal type and window ID
-    let terminal_type = session.terminal_type.as_ref().ok_or_else(|| {
+    // 2. Get terminal type and window ID (prefer latest agent from agents vec)
+    let (term_type, window_id) = if let Some(latest) = session.latest_agent() {
+        (
+            latest.terminal_type().cloned(),
+            latest.terminal_window_id().map(|s| s.to_string()),
+        )
+    } else {
+        (
+            session.terminal_type.clone(),
+            session.terminal_window_id.clone(),
+        )
+    };
+
+    let terminal_type = term_type.ok_or_else(|| {
         eprintln!("❌ No terminal type recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -871,7 +883,7 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
         "No terminal type recorded for this kild"
     })?;
 
-    let window_id = session.terminal_window_id.as_ref().ok_or_else(|| {
+    let window_id = window_id.ok_or_else(|| {
         eprintln!("❌ No window ID recorded for kild '{}'", branch);
         error!(
             event = "cli.focus_failed",
@@ -882,7 +894,7 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
     })?;
 
     // 3. Focus the terminal window
-    match kild_core::terminal_ops::focus_terminal(terminal_type, window_id) {
+    match kild_core::terminal_ops::focus_terminal(&terminal_type, &window_id) {
         Ok(()) => {
             println!("✅ Focused kild '{}' terminal window", branch);
             info!(event = "cli.focus_completed", branch = branch);
@@ -1093,7 +1105,6 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             println!("📊 KILD Status: {}", branch);
             println!("┌─────────────────────────────────────────────────────────────┐");
             println!("│ Branch:      {:<47} │", session.branch);
-            println!("│ Agent:       {:<47} │", session.agent);
             println!(
                 "│ Status:      {:<47} │",
                 format!("{:?}", session.status).to_lowercase()
@@ -1104,30 +1115,56 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
             }
             println!("│ Worktree:    {:<47} │", session.worktree_path.display());
 
-            // Check process status if PID is available
-            if let Some(pid) = session.process_id {
-                match process::is_process_running(pid) {
-                    Ok(true) => {
-                        println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
-
-                        // Try to get process info
-                        if let Ok(info) = process::get_process_info(pid) {
-                            println!("│ Process Name: {:<46} │", info.name);
-                            println!("│ Process Status: {:<44} │", format!("{:?}", info.status));
+            // Display agents
+            if session.has_agents() {
+                println!(
+                    "│ Agents:      {:<47} │",
+                    format!("{} agent(s)", session.agent_count())
+                );
+                for (i, agent_proc) in session.agents().iter().enumerate() {
+                    let status = agent_proc.process_id().map_or("No PID".to_string(), |pid| {
+                        match process::is_process_running(pid) {
+                            Ok(true) => format!("Running (PID: {})", pid),
+                            Ok(false) => format!("Stopped (PID: {})", pid),
+                            Err(e) => {
+                                warn!(
+                                    event = "cli.status.process_check_failed",
+                                    pid = pid,
+                                    agent = agent_proc.agent(),
+                                    error = %e
+                                );
+                                format!("Unknown (PID: {})", pid)
+                            }
                         }
-                    }
-                    Ok(false) => {
-                        println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
-                    }
-                    Err(e) => {
-                        println!(
-                            "│ Process:     {:<47} │",
-                            format!("Error checking PID {}: {}", pid, e)
-                        );
-                    }
+                    });
+                    println!("│   {}. {:<6} {:<38} │", i + 1, agent_proc.agent(), status);
                 }
             } else {
-                println!("│ Process:     {:<47} │", "No PID tracked");
+                // Fallback: singular field display for old sessions
+                println!("│ Agent:       {:<47} │", session.agent);
+                if let Some(pid) = session.process_id {
+                    match process::is_process_running(pid) {
+                        Ok(true) => {
+                            println!("│ Process:     {:<47} │", format!("Running (PID: {})", pid));
+                        }
+                        Ok(false) => {
+                            println!("│ Process:     {:<47} │", format!("Stopped (PID: {})", pid));
+                        }
+                        Err(e) => {
+                            warn!(
+                                event = "cli.status.process_check_failed",
+                                pid = pid,
+                                error = %e
+                            );
+                            println!(
+                                "│ Process:     {:<47} │",
+                                format!("Error checking PID {}: {}", pid, e)
+                            );
+                        }
+                    }
+                } else {
+                    println!("│ Process:     {:<47} │", "No PID tracked");
+                }
             }
 
             println!("└─────────────────────────────────────────────────────────────┘");

@@ -25,7 +25,16 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
 
     let session = &kild.session;
     let branch = session.branch.clone();
-    let agent = session.agent.clone();
+    let agent = if session.agent_count() > 1 {
+        session
+            .agents()
+            .iter()
+            .map(|a| a.agent())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        session.agent.clone()
+    };
     let note = session.note.clone();
     let worktree_path = session.worktree_path.display().to_string();
     let created_at = session.created_at.clone();
@@ -55,8 +64,14 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
     let worktree_path_for_editor = session.worktree_path.clone();
     let branch_for_editor = branch.clone();
     let branch_for_focus = branch.clone();
-    let terminal_type_for_focus = session.terminal_type.clone();
-    let window_id_for_focus = session.terminal_window_id.clone();
+    let terminal_type_for_focus = session
+        .latest_agent()
+        .and_then(|a| a.terminal_type().cloned())
+        .or_else(|| session.terminal_type.clone());
+    let window_id_for_focus = session
+        .latest_agent()
+        .and_then(|a| a.terminal_window_id().map(|s| s.to_string()))
+        .or_else(|| session.terminal_window_id.clone());
     let branch_for_action = branch.clone();
     let branch_for_destroy = branch.clone();
     let is_running = kild.process_status == ProcessStatus::Running;
