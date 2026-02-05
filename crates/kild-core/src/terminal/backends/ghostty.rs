@@ -564,52 +564,50 @@ impl TerminalBackend for GhosttyBackend {
             escaped_id
         );
 
-        match std::process::Command::new("osascript")
+        let output = std::process::Command::new("osascript")
             .arg("-e")
             .arg(&hide_script)
             .output()
-        {
-            Ok(output) if output.status.success() => {
-                let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if result == "hidden" {
-                    info!(
-                        event = "core.terminal.hide_ghostty_completed",
-                        window_id = %window_id
-                    );
-                    Ok(())
-                } else {
-                    warn!(
-                        event = "core.terminal.hide_ghostty_failed",
-                        window_id = %window_id,
-                        message = "Window not found by title"
-                    );
-                    Err(TerminalError::HideFailed {
-                        message: format!(
-                            "Ghostty window '{}' not found (terminal may have been closed)",
-                            window_id
-                        ),
-                    })
-                }
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                warn!(
-                    event = "core.terminal.hide_ghostty_failed",
-                    window_id = %window_id,
-                    stderr = %stderr
-                );
-                Err(TerminalError::HideFailed { message: stderr })
-            }
-            Err(e) => {
+            .map_err(|e| {
                 error!(
                     event = "core.terminal.hide_ghostty_failed",
                     window_id = %window_id,
                     error = %e
                 );
-                Err(TerminalError::HideFailed {
+                TerminalError::HideFailed {
                     message: e.to_string(),
-                })
-            }
+                }
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            warn!(
+                event = "core.terminal.hide_ghostty_failed",
+                window_id = %window_id,
+                stderr = %stderr
+            );
+            return Err(TerminalError::HideFailed { message: stderr });
+        }
+
+        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if result == "hidden" {
+            info!(
+                event = "core.terminal.hide_ghostty_completed",
+                window_id = %window_id
+            );
+            Ok(())
+        } else {
+            warn!(
+                event = "core.terminal.hide_ghostty_failed",
+                window_id = %window_id,
+                message = "Window not found by title"
+            );
+            Err(TerminalError::HideFailed {
+                message: format!(
+                    "Ghostty window '{}' not found (terminal may have been closed)",
+                    window_id
+                ),
+            })
         }
     }
 

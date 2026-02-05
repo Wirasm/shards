@@ -63,6 +63,29 @@ fn collect_git_stats(worktree_path: &std::path::Path, branch: &str) -> Option<Gi
 /// Branch name and error message for a failed operation
 type FailedOperation = (String, String);
 
+/// Extract terminal type and window ID from a session's latest agent.
+///
+/// Returns a tuple of (TerminalType, window_id) or an error message if either is missing.
+fn get_terminal_info(
+    session: &kild_core::Session,
+) -> Result<(kild_core::terminal::types::TerminalType, String), String> {
+    let latest = session
+        .latest_agent()
+        .ok_or_else(|| "No agent recorded for this kild".to_string())?;
+
+    let terminal_type = latest
+        .terminal_type()
+        .cloned()
+        .ok_or_else(|| "No terminal type recorded".to_string())?;
+
+    let window_id = latest
+        .terminal_window_id()
+        .ok_or_else(|| "No window ID recorded".to_string())?
+        .to_string();
+
+    Ok((terminal_type, window_id))
+}
+
 /// Load configuration with warning on errors.
 ///
 /// Falls back to defaults if config loading fails, but notifies the user via:
@@ -1084,7 +1107,6 @@ fn handle_focus_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::
 }
 
 fn handle_hide_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
-    // Check for --all flag first
     if matches.get_flag("all") {
         return handle_hide_all();
     }
@@ -1095,7 +1117,6 @@ fn handle_hide_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
 
     info!(event = "cli.hide_started", branch = branch);
 
-    // 1. Look up the session
     let session = match session_handler::get_session(branch) {
         Ok(s) => s,
         Err(e) => {
@@ -1106,38 +1127,15 @@ fn handle_hide_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         }
     };
 
-    // 2. Get terminal type and window ID from latest agent
-    let (term_type, window_id) = session
-        .latest_agent()
-        .map(|latest| {
-            (
-                latest.terminal_type().cloned(),
-                latest.terminal_window_id().map(|s| s.to_string()),
-            )
-        })
-        .unwrap_or((None, None));
+    let (terminal_type, window_id) = match get_terminal_info(&session) {
+        Ok(info) => info,
+        Err(msg) => {
+            eprintln!("❌ {}: {}", msg, branch);
+            error!(event = "cli.hide_failed", branch = branch, error = %msg);
+            return Err(msg.into());
+        }
+    };
 
-    let terminal_type = term_type.ok_or_else(|| {
-        eprintln!("❌ No terminal type recorded for kild '{}'", branch);
-        error!(
-            event = "cli.hide_failed",
-            branch = branch,
-            error = "no_terminal_type"
-        );
-        "No terminal type recorded for this kild"
-    })?;
-
-    let window_id = window_id.ok_or_else(|| {
-        eprintln!("❌ No window ID recorded for kild '{}'", branch);
-        error!(
-            event = "cli.hide_failed",
-            branch = branch,
-            error = "no_window_id"
-        );
-        "No window ID recorded for this kild"
-    })?;
-
-    // 3. Hide the terminal window
     match kild_core::terminal_ops::hide_terminal(&terminal_type, &window_id) {
         Ok(()) => {
             println!("✅ Hidden kild '{}' terminal window", branch);
@@ -1173,40 +1171,20 @@ fn handle_hide_all() -> Result<(), Box<dyn std::error::Error>> {
     let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in active {
-        let (term_type, window_id) = session
-            .latest_agent()
-            .map(|latest| {
-                (
-                    latest.terminal_type().cloned(),
-                    latest.terminal_window_id().map(|s| s.to_string()),
-                )
-            })
-            .unwrap_or((None, None));
-
-        let Some(terminal_type) = term_type else {
-            warn!(
-                event = "cli.hide_skipped",
-                branch = session.branch,
-                reason = "no_terminal_type"
-            );
-            errors.push((
-                session.branch.clone(),
-                "No terminal type recorded".to_string(),
-            ));
-            continue;
+        let (terminal_type, window_id) = match get_terminal_info(&session) {
+            Ok(info) => info,
+            Err(msg) => {
+                warn!(
+                    event = "cli.hide_skipped",
+                    branch = session.branch,
+                    reason = %msg
+                );
+                errors.push((session.branch.clone(), msg));
+                continue;
+            }
         };
 
-        let Some(wid) = window_id else {
-            warn!(
-                event = "cli.hide_skipped",
-                branch = session.branch,
-                reason = "no_window_id"
-            );
-            errors.push((session.branch.clone(), "No window ID recorded".to_string()));
-            continue;
-        };
-
-        match kild_core::terminal_ops::hide_terminal(&terminal_type, &wid) {
+        match kild_core::terminal_ops::hide_terminal(&terminal_type, &window_id) {
             Ok(()) => {
                 info!(event = "cli.hide_completed", branch = session.branch);
                 hidden.push(session.branch);
