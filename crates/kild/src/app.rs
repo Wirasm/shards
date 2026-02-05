@@ -192,7 +192,7 @@ pub fn build_cli() -> Command {
                     Arg::new("editor")
                         .long("editor")
                         .short('e')
-                        .help("Editor to use (defaults to $EDITOR or 'zed')")
+                        .help("Editor to use (overrides config, $EDITOR, and default 'zed')")
                 )
         )
         .subcommand(

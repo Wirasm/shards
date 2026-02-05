@@ -171,6 +171,7 @@ pub fn merge_configs(base: KildConfig, override_config: KildConfig) -> KildConfi
                 .fetch_before_create
                 .or(base.git.fetch_before_create),
         },
+        editor: base.editor.merge(override_config.editor),
     }
 }
 
@@ -883,5 +884,48 @@ default = "claude"
         assert_eq!(merged.git.remote(), "origin");
         assert_eq!(merged.git.base_branch(), "main");
         assert!(merged.git.fetch_before_create());
+    }
+
+    #[test]
+    fn test_editor_config_merge() {
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[editor]
+default = "nvim"
+flags = "--nofork"
+terminal = true
+"#,
+        )
+        .unwrap();
+
+        let project_config: KildConfig = toml::from_str(
+            r#"
+[editor]
+default = "code"
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(user_config, project_config);
+        assert_eq!(merged.editor.default(), Some("code"));
+        assert_eq!(merged.editor.flags(), Some("--nofork"));
+        assert!(merged.editor.terminal());
+    }
+
+    #[test]
+    fn test_editor_config_merge_defaults_preserved() {
+        let base = KildConfig::default();
+        let override_config: KildConfig = toml::from_str(
+            r#"
+[agent]
+default = "claude"
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(base, override_config);
+        assert!(merged.editor.default().is_none());
+        assert!(merged.editor.flags().is_none());
+        assert!(!merged.editor.terminal());
     }
 }
