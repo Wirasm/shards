@@ -6,14 +6,65 @@ use kild_core::SessionStatus;
 use kild_core::cleanup;
 use kild_core::config::KildConfig;
 use kild_core::events;
+use kild_core::git::operations::{get_diff_stats, get_worktree_status};
 use kild_core::health;
 use kild_core::process;
 use kild_core::session_ops as session_handler;
 
 use crate::table::truncate;
 
+#[derive(serde::Serialize)]
+struct SessionWithGitStats {
+    #[serde(flatten)]
+    session: kild_core::Session,
+    git_stats: Option<GitStatsResponse>,
+}
+
+#[derive(serde::Serialize)]
+struct GitStatsResponse {
+    diff_stats: Option<kild_core::DiffStats>,
+    worktree_status: Option<kild_core::WorktreeStatus>,
+}
+
 /// Branch name and agent name for a successfully opened kild
 type OpenedKild = (String, String);
+
+/// Collect git stats for a session's worktree.
+/// Returns None if worktree doesn't exist or on errors (logged as warnings).
+fn collect_git_stats(worktree_path: &std::path::Path, branch: &str) -> Option<GitStatsResponse> {
+    if !worktree_path.exists() {
+        return None;
+    }
+
+    let diff = match get_diff_stats(worktree_path) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            warn!(
+                event = "cli.git_stats.diff_failed",
+                branch = branch,
+                error = %e
+            );
+            None
+        }
+    };
+
+    let status = match get_worktree_status(worktree_path) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warn!(
+                event = "cli.git_stats.worktree_status_failed",
+                branch = branch,
+                error = %e
+            );
+            None
+        }
+    };
+
+    Some(GitStatsResponse {
+        diff_stats: diff,
+        worktree_status: status,
+    })
+}
 
 /// Branch name and error message for a failed operation
 type FailedOperation = (String, String);
@@ -170,8 +221,17 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
 
     match session_handler::list_sessions() {
         Ok(sessions) => {
+            let session_count = sessions.len();
+
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&sessions)?);
+                let enriched: Vec<SessionWithGitStats> = sessions
+                    .into_iter()
+                    .map(|session| {
+                        let git_stats = collect_git_stats(&session.worktree_path, &session.branch);
+                        SessionWithGitStats { session, git_stats }
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&enriched)?);
             } else if sessions.is_empty() {
                 println!("No active kilds found.");
             } else {
@@ -180,7 +240,7 @@ fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 formatter.print_table(&sessions);
             }
 
-            info!(event = "cli.list_completed", count = sessions.len());
+            info!(event = "cli.list_completed", count = session_count);
 
             Ok(())
         }
@@ -914,8 +974,14 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         .get_one::<String>("branch")
         .ok_or("Branch argument is required")?;
     let staged = matches.get_flag("staged");
+    let stat = matches.get_flag("stat");
 
-    info!(event = "cli.diff_started", branch = branch, staged = staged);
+    info!(
+        event = "cli.diff_started",
+        branch = branch,
+        staged = staged,
+        stat = stat
+    );
 
     // 1. Look up the session
     let session = match session_handler::get_session(branch) {
@@ -927,6 +993,17 @@ fn handle_diff_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             return Err(e.into());
         }
     };
+
+    // Handle --stat flag: show summary instead of full diff
+    if stat {
+        let diff = get_diff_stats(&session.worktree_path)?;
+        println!(
+            "+{} -{} ({} files changed)",
+            diff.insertions, diff.deletions, diff.files_changed
+        );
+        info!(event = "cli.diff_completed", branch = branch, stat = true);
+        return Ok(());
+    }
 
     // 2. Build git diff command (with optional --staged flag)
     let mut cmd = std::process::Command::new("git");
@@ -1092,12 +1169,15 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
 
     match session_handler::get_session(branch) {
         Ok(session) => {
+            let git_stats = collect_git_stats(&session.worktree_path, branch);
+
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&session)?);
+                let enriched = SessionWithGitStats { session, git_stats };
+                println!("{}", serde_json::to_string_pretty(&enriched)?);
                 info!(
                     event = "cli.status_completed",
                     branch = branch,
-                    agent_count = session.agent_count()
+                    agent_count = enriched.session.agent_count()
                 );
                 return Ok(());
             }
@@ -1115,6 +1195,58 @@ fn handle_status_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
                 println!("│ Note:        {} │", truncate(note, 47));
             }
             println!("│ Worktree:    {:<47} │", session.worktree_path.display());
+
+            // Display git stats
+            if let Some(ref stats) = git_stats {
+                if let Some(ref diff) = stats.diff_stats {
+                    let base = format!(
+                        "+{} -{} ({} files)",
+                        diff.insertions, diff.deletions, diff.files_changed
+                    );
+
+                    let changes_line = match &stats.worktree_status {
+                        Some(ws) if ws.uncommitted_details.is_some() => {
+                            let details = ws.uncommitted_details.as_ref().unwrap();
+                            format!(
+                                "{} -- {} staged, {} modified, {} untracked",
+                                base,
+                                details.staged_files,
+                                details.modified_files,
+                                details.untracked_files
+                            )
+                        }
+                        _ => base,
+                    };
+
+                    println!("│ Changes:     {} │", truncate(&changes_line, 47));
+                }
+
+                if let Some(ref ws) = stats.worktree_status {
+                    let commits_line = if ws.behind_count_failed {
+                        format!(
+                            "{} ahead, ? behind (check failed)",
+                            ws.unpushed_commit_count
+                        )
+                    } else {
+                        format!(
+                            "{} ahead, {} behind",
+                            ws.unpushed_commit_count, ws.behind_commit_count
+                        )
+                    };
+                    println!("│ Commits:     {:<47} │", commits_line);
+                    let remote_status = if ws.has_remote_branch {
+                        match (ws.unpushed_commit_count, ws.behind_commit_count) {
+                            (0, 0) if !ws.behind_count_failed => "Up to date",
+                            (0, _) => "Behind remote",
+                            (_, 0) if !ws.behind_count_failed => "Unpushed changes",
+                            _ => "Diverged",
+                        }
+                    } else {
+                        "Never pushed"
+                    };
+                    println!("│ Remote:      {:<47} │", remote_status);
+                }
+            }
 
             // Display agents
             if session.has_agents() {
