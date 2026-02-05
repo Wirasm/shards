@@ -12,9 +12,7 @@
 //! 4. **CLI arguments** - Command-line flags (highest priority)
 
 use crate::agents;
-use crate::config::types::{
-    AgentConfig, EditorConfig, GitConfig, HealthConfig, KildConfig, TerminalConfig,
-};
+use crate::config::types::{AgentConfig, GitConfig, HealthConfig, KildConfig, TerminalConfig};
 use crate::config::validation::validate_config;
 use crate::files::types::IncludeConfig;
 use std::fs;
@@ -173,11 +171,7 @@ pub fn merge_configs(base: KildConfig, override_config: KildConfig) -> KildConfi
                 .fetch_before_create
                 .or(base.git.fetch_before_create),
         },
-        editor: EditorConfig {
-            default: override_config.editor.default.or(base.editor.default),
-            flags: override_config.editor.flags.or(base.editor.flags),
-            terminal: override_config.editor.terminal.or(base.editor.terminal),
-        },
+        editor: base.editor.merge(override_config.editor),
     }
 }
 

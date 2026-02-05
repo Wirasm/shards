@@ -864,12 +864,44 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Determine which editor to use based on precedence:
-/// CLI flag > config default > $EDITOR environment variable > "zed" (hardcoded)
+/// CLI arg > config.editor.default > $EDITOR env var > "zed" (hardcoded)
 fn select_editor(cli_override: Option<String>, config: &KildConfig) -> String {
     cli_override
-        .or_else(|| config.editor.default.clone())
+        .or_else(|| config.editor.default().map(String::from))
         .or_else(|| std::env::var("EDITOR").ok())
         .unwrap_or_else(|| "zed".to_string())
+}
+
+/// Build a shell command string for terminal-mode editors.
+/// Escapes the worktree path for safe shell interpretation.
+fn build_terminal_editor_command(
+    editor: &str,
+    flags: Option<&str>,
+    worktree_path: &std::path::Path,
+) -> String {
+    let escaped_path =
+        kild_core::terminal::common::escape::shell_escape(&worktree_path.display().to_string());
+    match flags {
+        Some(flags) => format!("{} {} {}", editor, flags, escaped_path),
+        None => format!("{} {}", editor, escaped_path),
+    }
+}
+
+/// Build a `Command` for GUI-mode editors.
+/// Splits flags by whitespace into separate arguments.
+fn build_gui_editor_command(
+    editor: &str,
+    flags: Option<&str>,
+    worktree_path: &std::path::Path,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(editor);
+    if let Some(flags) = flags {
+        for flag in flags.split_whitespace() {
+            cmd.arg(flag);
+        }
+    }
+    cmd.arg(worktree_path);
+    cmd
 }
 
 fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
@@ -884,11 +916,8 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         editor_override = ?editor_override
     );
 
-    // 1. Load config and apply CLI override
-    let mut config = load_config_with_warning();
-    if let Some(ref editor) = editor_override {
-        config.editor.default = Some(editor.clone());
-    }
+    // 1. Load config
+    let config = load_config_with_warning();
 
     // 2. Look up the session to get worktree path
     let session = match session_handler::get_session(branch) {
@@ -915,10 +944,8 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     // 4. Spawn editor
     if config.editor.terminal() {
         // Terminal-based editor: spawn inside a terminal window
-        let editor_command = match config.editor.flags() {
-            Some(flags) => format!("{} {} {}", editor, flags, session.worktree_path.display()),
-            None => format!("{} {}", editor, session.worktree_path.display()),
-        };
+        let editor_command =
+            build_terminal_editor_command(&editor, config.editor.flags(), &session.worktree_path);
 
         match kild_core::terminal_ops::spawn_terminal(
             &session.worktree_path,
@@ -953,13 +980,8 @@ fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         }
     } else {
         // GUI editor: spawn directly
-        let mut cmd = std::process::Command::new(&editor);
-        if let Some(flags) = config.editor.flags() {
-            for flag in flags.split_whitespace() {
-                cmd.arg(flag);
-            }
-        }
-        cmd.arg(&session.worktree_path);
+        let mut cmd =
+            build_gui_editor_command(&editor, config.editor.flags(), &session.worktree_path);
 
         match cmd.spawn() {
             Ok(_) => {
@@ -2181,7 +2203,7 @@ mod tests {
     fn test_select_editor_config_overrides_env() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let mut config = KildConfig::default();
-        config.editor.default = Some("code".to_string());
+        config.editor.set_default("code".to_string());
 
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
@@ -2198,7 +2220,7 @@ mod tests {
     fn test_select_editor_cli_overrides_config() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let mut config = KildConfig::default();
-        config.editor.default = Some("code".to_string());
+        config.editor.set_default("code".to_string());
 
         // SAFETY: We hold ENV_MUTEX to ensure no concurrent access
         unsafe {
@@ -2206,6 +2228,102 @@ mod tests {
         }
         let editor = select_editor(Some("nvim".to_string()), &config);
         assert_eq!(editor, "nvim");
+    }
+
+    // Tests for build_terminal_editor_command
+
+    #[test]
+    fn test_terminal_command_no_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_terminal_editor_command("nvim", None, &path);
+        assert_eq!(cmd, "nvim '/tmp/worktree'");
+    }
+
+    #[test]
+    fn test_terminal_command_with_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_terminal_editor_command("nvim", Some("--nofork"), &path);
+        assert_eq!(cmd, "nvim --nofork '/tmp/worktree'");
+    }
+
+    #[test]
+    fn test_terminal_command_with_multiple_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_terminal_editor_command("code", Some("--new-window --wait"), &path);
+        assert_eq!(cmd, "code --new-window --wait '/tmp/worktree'");
+    }
+
+    #[test]
+    fn test_terminal_command_path_with_spaces() {
+        let path = std::path::PathBuf::from("/tmp/my worktree/project");
+        let cmd = build_terminal_editor_command("nvim", None, &path);
+        assert_eq!(cmd, "nvim '/tmp/my worktree/project'");
+    }
+
+    #[test]
+    fn test_terminal_command_path_with_special_chars() {
+        let path = std::path::PathBuf::from("/tmp/it's a path");
+        let cmd = build_terminal_editor_command("vim", None, &path);
+        // Single quotes inside are escaped with the shell pattern '\"'\"'
+        assert!(cmd.starts_with("vim "));
+        assert!(cmd.contains("it"));
+    }
+
+    // Tests for build_gui_editor_command
+
+    #[test]
+    fn test_gui_command_no_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_gui_editor_command("code", None, &path);
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, vec![std::ffi::OsStr::new("/tmp/worktree")]);
+    }
+
+    #[test]
+    fn test_gui_command_with_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_gui_editor_command("code", Some("--new-window"), &path);
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                std::ffi::OsStr::new("--new-window"),
+                std::ffi::OsStr::new("/tmp/worktree"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_gui_command_with_multiple_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_gui_editor_command("code", Some("--new-window --wait"), &path);
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                std::ffi::OsStr::new("--new-window"),
+                std::ffi::OsStr::new("--wait"),
+                std::ffi::OsStr::new("/tmp/worktree"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_gui_command_empty_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_gui_editor_command("code", Some(""), &path);
+        let args: Vec<_> = cmd.get_args().collect();
+        // Empty flags string produces no extra args
+        assert_eq!(args, vec![std::ffi::OsStr::new("/tmp/worktree")]);
+    }
+
+    #[test]
+    fn test_gui_command_whitespace_only_flags() {
+        let path = std::path::PathBuf::from("/tmp/worktree");
+        let cmd = build_gui_editor_command("code", Some("   "), &path);
+        let args: Vec<_> = cmd.get_args().collect();
+        // Whitespace-only flags produce no extra args
+        assert_eq!(args, vec![std::ffi::OsStr::new("/tmp/worktree")]);
     }
 
     #[test]

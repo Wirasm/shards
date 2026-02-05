@@ -151,21 +151,24 @@ impl GitConfig {
 /// only explicitly-set values override lower-priority configs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EditorConfig {
-    /// Editor command to use for `kild code`.
-    /// Default: falls back to $EDITOR, then "zed"
+    /// Editor command configured in TOML.
+    /// When None, runtime fallback applies ($EDITOR, then "zed").
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<String>,
+    default: Option<String>,
 
     /// Flags passed to the editor before the worktree path.
+    /// In GUI mode, split by whitespace into separate args.
+    /// In terminal mode, passed as a single shell string.
     /// Example: "--new-window" for VS Code
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flags: Option<String>,
+    flags: Option<String>,
 
-    /// Whether to spawn the editor inside a terminal window.
+    /// Whether to spawn the editor inside a terminal window
+    /// via kild's terminal backend (Ghostty, iTerm, etc.).
     /// Required for terminal-based editors (nvim, vim, helix).
     /// Default: false
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terminal: Option<bool>,
+    terminal: Option<bool>,
 }
 
 impl EditorConfig {
@@ -182,6 +185,20 @@ impl EditorConfig {
     /// Returns whether to spawn in a terminal, defaulting to false.
     pub fn terminal(&self) -> bool {
         self.terminal.unwrap_or(false)
+    }
+
+    /// Override the editor command (used for CLI flag override).
+    pub fn set_default(&mut self, editor: String) {
+        self.default = Some(editor);
+    }
+
+    /// Merge two editor configs. `other` takes precedence for set fields.
+    pub fn merge(self, other: EditorConfig) -> EditorConfig {
+        EditorConfig {
+            default: other.default.or(self.default),
+            flags: other.flags.or(self.flags),
+            terminal: other.terminal.or(self.terminal),
+        }
     }
 }
 
