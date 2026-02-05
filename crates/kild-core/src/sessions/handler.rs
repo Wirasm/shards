@@ -53,6 +53,62 @@ fn capture_process_metadata(
     )
 }
 
+/// Clean up PID files for a session (best-effort).
+///
+/// Handles both multi-agent sessions (per-agent spawn ID PID files) and
+/// legacy sessions (session-level PID file). Failures are logged at debug
+/// level since PID file cleanup is best-effort.
+fn cleanup_session_pid_files(session: &Session, kild_dir: &std::path::Path, operation: &str) {
+    if session.has_agents() {
+        for agent_proc in session.agents() {
+            let pid_key = if agent_proc.spawn_id().is_empty() {
+                // Backward compat: old sessions without spawn_id use session-level PID file
+                session.id.clone()
+            } else {
+                agent_proc.spawn_id().to_string()
+            };
+            let pid_file = get_pid_file_path(kild_dir, &pid_key);
+            match delete_pid_file(&pid_file) {
+                Ok(()) => {
+                    debug!(
+                        event = %format!("core.session.{}_pid_file_cleaned", operation),
+                        session_id = session.id,
+                        pid_file = %pid_file.display()
+                    );
+                }
+                Err(e) => {
+                    debug!(
+                        event = %format!("core.session.{}_pid_file_cleanup_failed", operation),
+                        session_id = session.id,
+                        pid_file = %pid_file.display(),
+                        error = %e
+                    );
+                }
+            }
+        }
+    } else {
+        // Fallback: session-level PID file for old sessions with empty agents vec
+        let pid_file = get_pid_file_path(kild_dir, &session.id);
+        match delete_pid_file(&pid_file) {
+            Ok(()) => {
+                debug!(
+                    event = %format!("core.session.{}_pid_file_cleaned", operation),
+                    session_id = session.id,
+                    pid_file = %pid_file.display()
+                );
+            }
+            Err(e) => {
+                debug!(
+                    event = %format!("core.session.{}_pid_file_cleanup_failed", operation),
+                    session_id = session.id,
+                    pid_file = %pid_file.display(),
+                    error = %e
+                );
+            }
+        }
+    }
+}
+
 pub fn create_session(
     request: CreateSessionRequest,
     kild_config: &KildConfig,
@@ -459,46 +515,7 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     );
 
     // 5. Clean up PID files (best-effort, don't fail if missing)
-    if session.has_agents() {
-        for agent_proc in session.agents() {
-            let pid_key = if agent_proc.spawn_id().is_empty() {
-                session.id.clone()
-            } else {
-                agent_proc.spawn_id().to_string()
-            };
-            let pid_file = get_pid_file_path(&config.kild_dir, &pid_key);
-            if let Err(e) = delete_pid_file(&pid_file) {
-                warn!(
-                    event = "core.session.destroy_pid_file_cleanup_failed",
-                    session_id = session.id,
-                    pid_file = %pid_file.display(),
-                    error = %e
-                );
-            } else {
-                info!(
-                    event = "core.session.destroy_pid_file_cleaned",
-                    session_id = session.id,
-                    pid_file = %pid_file.display()
-                );
-            }
-        }
-    } else {
-        let pid_file = get_pid_file_path(&config.kild_dir, &session.id);
-        if let Err(e) = delete_pid_file(&pid_file) {
-            warn!(
-                event = "core.session.destroy_pid_file_cleanup_failed",
-                session_id = session.id,
-                pid_file = %pid_file.display(),
-                error = %e
-            );
-        } else {
-            info!(
-                event = "core.session.destroy_pid_file_cleaned",
-                session_id = session.id,
-                pid_file = %pid_file.display()
-            );
-        }
-    }
+    cleanup_session_pid_files(&session, &config.kild_dir, "destroy");
 
     // 6. Remove session file (automatically frees port range)
     persistence::remove_session_file(&config.sessions_dir(), &session.id)?;
@@ -1055,6 +1072,24 @@ pub fn restart_session(
     let (process_name, process_start_time) = capture_process_metadata(&spawn_result, "restart");
 
     // 6. Update session with new process info
+    let now = chrono::Utc::now().to_rfc3339();
+    let command = if spawn_result.command_executed.trim().is_empty() {
+        format!("{} (command not captured)", agent)
+    } else {
+        spawn_result.command_executed.clone()
+    };
+    let new_agent = AgentProcess::new(
+        agent.clone(),
+        spawn_id,
+        spawn_result.process_id,
+        process_name.clone(),
+        process_start_time,
+        Some(spawn_result.terminal_type.clone()),
+        spawn_result.terminal_window_id.clone(),
+        command,
+        now.clone(),
+    )?;
+
     session.agent = agent;
     session.process_id = spawn_result.process_id;
     session.process_name = process_name;
@@ -1062,7 +1097,9 @@ pub fn restart_session(
     session.terminal_type = Some(spawn_result.terminal_type.clone());
     session.terminal_window_id = spawn_result.terminal_window_id.clone();
     session.status = SessionStatus::Active;
-    session.last_activity = Some(chrono::Utc::now().to_rfc3339());
+    session.last_activity = Some(now);
+    session.clear_agents();
+    session.add_agent(new_agent);
 
     // 7. Save updated session to file
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1347,54 +1384,7 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
     }
 
     // 3. Delete PID files so next open() won't read stale PIDs (best-effort)
-    if session.has_agents() {
-        for agent_proc in session.agents() {
-            let pid_key = if agent_proc.spawn_id().is_empty() {
-                // Backward compat: old sessions without spawn_id use session-level PID file
-                session.id.clone()
-            } else {
-                agent_proc.spawn_id().to_string()
-            };
-            let pid_file = get_pid_file_path(&config.kild_dir, &pid_key);
-            match delete_pid_file(&pid_file) {
-                Ok(()) => {
-                    debug!(
-                        event = "core.session.stop_pid_file_cleaned",
-                        session_id = session.id,
-                        pid_file = %pid_file.display()
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        event = "core.session.stop_pid_file_cleanup_failed",
-                        session_id = session.id,
-                        pid_file = %pid_file.display(),
-                        error = %e
-                    );
-                }
-            }
-        }
-    } else {
-        // Fallback: session-level PID file for old sessions with empty agents vec
-        let pid_file = get_pid_file_path(&config.kild_dir, &session.id);
-        match delete_pid_file(&pid_file) {
-            Ok(()) => {
-                debug!(
-                    event = "core.session.stop_pid_file_cleaned",
-                    session_id = session.id,
-                    pid_file = %pid_file.display()
-                );
-            }
-            Err(e) => {
-                debug!(
-                    event = "core.session.stop_pid_file_cleanup_failed",
-                    session_id = session.id,
-                    pid_file = %pid_file.display(),
-                    error = %e
-                );
-            }
-        }
-    }
+    cleanup_session_pid_files(&session, &config.kild_dir, "stop");
 
     // 4. Clear process info and set status to Stopped
     session.clear_agents();

@@ -144,8 +144,14 @@ pub fn spawn_terminal(
 
             // Delete any stale PID file from a previous spawn with the same ID
             // (e.g., restart_session reuses spawn_id 0)
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
+            if path.exists() && let Err(e) = std::fs::remove_file(&path) {
+                warn!(
+                    event = "core.terminal.stale_pid_file_cleanup_failed",
+                    session_id = sid,
+                    pid_file = %path.display(),
+                    error = %e,
+                    "Failed to delete stale PID file before spawn"
+                );
             }
 
             debug!(

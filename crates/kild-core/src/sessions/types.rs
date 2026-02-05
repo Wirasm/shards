@@ -268,6 +268,15 @@ pub struct Session {
 #[serde(into = "AgentProcessData")]
 pub struct AgentProcess {
     agent: String,
+    /// Unique identifier for this agent spawn within the session.
+    ///
+    /// Format: `{session_id}_{spawn_index}` (e.g., `"abc123_0"`, `"abc123_1"`).
+    /// Used for per-agent PID file isolation and Ghostty window title generation.
+    /// Computed by `compute_spawn_id()` in the session handler.
+    ///
+    /// Empty string for legacy sessions created before per-agent spawn tracking.
+    /// Code handling spawn_id must check `spawn_id().is_empty()` and fall back
+    /// to session-level PID files for backward compatibility.
     spawn_id: String,
     process_id: Option<u32>,
     process_name: Option<String>,
@@ -283,6 +292,7 @@ pub struct AgentProcess {
 #[derive(Serialize, Deserialize)]
 struct AgentProcessData {
     agent: String,
+    /// See [`AgentProcess`] `spawn_id` field. Defaults to empty for backward compat.
     #[serde(default)]
     spawn_id: String,
     process_id: Option<u32>,
