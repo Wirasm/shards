@@ -1079,14 +1079,12 @@ pub fn restart_session(
 /// close existing terminals - multiple agents can run in the same kild.
 pub fn open_session(
     name: &str,
-    agent_override: Option<String>,
-    no_agent: bool,
+    mode: crate::state::types::OpenMode,
 ) -> Result<Session, SessionError> {
     info!(
         event = "core.session.open_started",
         name = name,
-        agent_override = ?agent_override,
-        no_agent = no_agent
+        mode = ?mode
     );
 
     let config = Config::new();
@@ -1126,13 +1124,32 @@ pub fn open_session(
         });
     }
 
-    // 3. Determine agent and command
-    let (agent, agent_command) = if no_agent {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        info!(event = "core.session.open_shell_selected", shell = %shell);
-        ("shell".to_string(), shell)
+    // 3. Determine agent and command based on OpenMode
+    let is_bare_shell = matches!(mode, crate::state::types::OpenMode::BareShell);
+    let (agent, agent_command) = if is_bare_shell {
+        let shell = match std::env::var("SHELL") {
+            Ok(shell) => {
+                info!(event = "core.session.open_shell_selected", shell = %shell);
+                shell
+            }
+            Err(_) => {
+                let fallback = "/bin/sh".to_string();
+                warn!(
+                    event = "core.session.shell_env_missing",
+                    fallback = %fallback,
+                    "$SHELL not set, falling back to /bin/sh"
+                );
+                eprintln!("Warning: $SHELL not set. Using /bin/sh as fallback.");
+                fallback
+            }
+        };
+        // Keep the session's original agent — no agent is actually running
+        (session.agent.clone(), shell)
     } else {
-        let agent = agent_override.unwrap_or_else(|| session.agent.clone());
+        let agent = match mode {
+            crate::state::types::OpenMode::Agent(name) => name,
+            _ => session.agent.clone(),
+        };
         info!(event = "core.session.open_agent_selected", agent = agent);
 
         // Warn if agent CLI is not available in PATH
@@ -1194,9 +1211,9 @@ pub fn open_session(
         now.clone(),
     )?;
 
-    // When --no-agent, keep session Stopped (no agent is running).
+    // When bare shell, keep session Stopped (no agent is running).
     // Otherwise, mark as Active.
-    if !no_agent {
+    if !is_bare_shell {
         session.status = SessionStatus::Active;
     }
     session.last_activity = Some(now);
@@ -1898,7 +1915,7 @@ mod tests {
 
     #[test]
     fn test_open_session_not_found() {
-        let result = open_session("non-existent", None, false);
+        let result = open_session("non-existent", crate::state::types::OpenMode::DefaultAgent);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
     }

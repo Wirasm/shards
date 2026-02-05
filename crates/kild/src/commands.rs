@@ -627,25 +627,23 @@ fn handle_restart_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error
 }
 
 fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
-    let no_agent = matches.get_flag("no-agent");
+    let mode = resolve_open_mode(matches);
 
     // Check for --all flag first
     if matches.get_flag("all") {
-        let agent_override = matches.get_one::<String>("agent").cloned();
-        return handle_open_all(agent_override, no_agent);
+        return handle_open_all(mode);
     }
 
     // Single branch operation
     let branch = matches
         .get_one::<String>("branch")
         .ok_or("Branch argument is required (or use --all)")?;
-    let agent_override = matches.get_one::<String>("agent").cloned();
 
-    info!(event = "cli.open_started", branch = branch, agent_override = ?agent_override, no_agent = no_agent);
+    info!(event = "cli.open_started", branch = branch, mode = ?mode);
 
-    match session_handler::open_session(branch, agent_override, no_agent) {
+    match session_handler::open_session(branch, mode.clone()) {
         Ok(session) => {
-            if no_agent {
+            if matches!(mode, kild_core::OpenMode::BareShell) {
                 println!("✅ Opened bare terminal in kild '{}'", branch);
                 println!("   Agent: (none - bare shell)");
             } else {
@@ -671,12 +669,21 @@ fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
     }
 }
 
+/// Convert CLI args into an OpenMode.
+fn resolve_open_mode(matches: &ArgMatches) -> kild_core::OpenMode {
+    if matches.get_flag("no-agent") {
+        kild_core::OpenMode::BareShell
+    } else {
+        match matches.get_one::<String>("agent").cloned() {
+            Some(agent) => kild_core::OpenMode::Agent(agent),
+            None => kild_core::OpenMode::DefaultAgent,
+        }
+    }
+}
+
 /// Handle `kild open --all` - open agents in all stopped kilds
-fn handle_open_all(
-    agent_override: Option<String>,
-    no_agent: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!(event = "cli.open_all_started", agent_override = ?agent_override, no_agent = no_agent);
+fn handle_open_all(mode: kild_core::OpenMode) -> Result<(), Box<dyn std::error::Error>> {
+    info!(event = "cli.open_all_started", mode = ?mode);
 
     let sessions = session_handler::list_sessions()?;
     let stopped: Vec<_> = sessions
@@ -694,7 +701,7 @@ fn handle_open_all(
     let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in stopped {
-        match session_handler::open_session(&session.branch, agent_override.clone(), no_agent) {
+        match session_handler::open_session(&session.branch, mode.clone()) {
             Ok(s) => {
                 info!(
                     event = "cli.open_completed",
