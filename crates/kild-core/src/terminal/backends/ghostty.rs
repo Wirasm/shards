@@ -371,7 +371,7 @@ fn hide_by_pid(pid: u32) -> Result<(), TerminalError> {
 /// Hide a Ghostty window by title using System Events AXMinimized attribute.
 #[cfg(target_os = "macos")]
 fn hide_by_title(window_id: &str) -> Result<(), TerminalError> {
-    use tracing::{error, info, warn};
+    use tracing::{info, warn};
 
     let escaped_id = applescript_escape(window_id);
     let hide_script = format!(
@@ -421,7 +421,7 @@ fn hide_by_title(window_id: &str) -> Result<(), TerminalError> {
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            error!(
+            warn!(
                 event = "core.terminal.hide_failed",
                 terminal = "Ghostty",
                 window_id = %window_id,
@@ -430,7 +430,7 @@ fn hide_by_title(window_id: &str) -> Result<(), TerminalError> {
             Err(TerminalError::HideFailed { message: stderr })
         }
         Err(e) => {
-            error!(
+            warn!(
                 event = "core.terminal.hide_failed",
                 terminal = "Ghostty",
                 window_id = %window_id,
@@ -488,9 +488,7 @@ fn check_window_by_pid(pid: u32) -> Result<Option<bool>, TerminalError> {
                         pid = pid,
                         result = %result
                     );
-                    Err(TerminalError::FocusFailed {
-                        message: format!("Ghostty process {} has no windows", pid),
-                    })
+                    Ok(Some(false))
                 }
             }
         }
@@ -501,9 +499,7 @@ fn check_window_by_pid(pid: u32) -> Result<Option<bool>, TerminalError> {
                 pid = pid,
                 stderr = %stderr
             );
-            Err(TerminalError::FocusFailed {
-                message: format!("Failed to check Ghostty by PID {}: {}", pid, stderr),
-            })
+            Ok(None)
         }
         Err(e) => {
             debug!(
@@ -511,9 +507,7 @@ fn check_window_by_pid(pid: u32) -> Result<Option<bool>, TerminalError> {
                 pid = pid,
                 error = %e
             );
-            Err(TerminalError::FocusFailed {
-                message: format!("osascript error for PID {}: {}", pid, e),
-            })
+            Ok(None)
         }
     }
 }
