@@ -23,13 +23,6 @@ pub trait AgentBackend: Send + Sync {
     /// running agent instances. Handles quirks like Claude showing version
     /// as process name.
     fn process_patterns(&self) -> Vec<String>;
-
-    /// Get additional command line variations to search for.
-    ///
-    /// Default implementation returns just the default command.
-    fn command_patterns(&self) -> Vec<String> {
-        vec![self.default_command().to_string()]
-    }
 }
 
 #[cfg(test)]
@@ -58,13 +51,6 @@ mod tests {
         fn process_patterns(&self) -> Vec<String> {
             vec!["mock".to_string(), "mock-cli".to_string()]
         }
-    }
-
-    #[test]
-    fn test_agent_backend_default_command_patterns() {
-        let backend = MockBackend;
-        let patterns = backend.command_patterns();
-        assert_eq!(patterns, vec!["mock-cli".to_string()]);
     }
 
     #[test]
