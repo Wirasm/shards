@@ -1,5 +1,6 @@
+use kild_core::PrInfo;
 use kild_core::Session;
-use kild_core::sessions::types::{AgentStatusInfo, PrInfo};
+use kild_core::sessions::types::AgentStatusInfo;
 
 pub struct TableFormatter {
     branch_width: usize,

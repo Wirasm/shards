@@ -17,6 +17,7 @@ pub mod config;
 pub mod errors;
 pub mod events;
 pub mod files;
+pub mod forge;
 pub mod git;
 pub mod health;
 pub mod logging;
@@ -28,13 +29,14 @@ pub mod terminal;
 
 // Re-export commonly used types at crate root for convenience
 pub use config::KildConfig;
+pub use forge::types::{CiStatus, PrCheckResult, PrInfo, PrState, ReviewStatus};
+pub use forge::{ForgeBackend, ForgeError, ForgeType};
 pub use git::types::{DiffStats, UncommittedDetails, WorktreeStatus};
 pub use projects::{Project, ProjectError, ProjectManager, ProjectsData};
 pub use sessions::info::SessionInfo;
 pub use sessions::types::{
-    AgentProcess, AgentStatus, AgentStatusInfo, CiStatus, CompleteResult, CreateSessionRequest,
-    DestroySafetyInfo, GitStatus, PrCheckResult, PrInfo, PrState, ProcessStatus, ReviewStatus,
-    Session, SessionStatus,
+    AgentProcess, AgentStatus, AgentStatusInfo, CompleteResult, CreateSessionRequest,
+    DestroySafetyInfo, GitStatus, ProcessStatus, Session, SessionStatus,
 };
 pub use state::{Command, CoreStore, DispatchError, Event, OpenMode, Store};
 

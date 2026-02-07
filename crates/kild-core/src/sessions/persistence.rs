@@ -229,7 +229,7 @@ pub fn remove_agent_status_file(sessions_dir: &Path, session_id: &str) {
 pub fn write_pr_info(
     sessions_dir: &Path,
     session_id: &str,
-    pr_info: &super::types::PrInfo,
+    pr_info: &crate::forge::types::PrInfo,
 ) -> Result<(), SessionError> {
     let sidecar_file = sessions_dir.join(format!("{}.pr", session_id.replace('/', "_")));
     let content = serde_json::to_string(pr_info).map_err(|e| SessionError::IoError {
@@ -248,7 +248,7 @@ pub fn write_pr_info(
 }
 
 /// Read PR info from sidecar file. Returns None if file doesn't exist or is corrupt.
-pub fn read_pr_info(sessions_dir: &Path, session_id: &str) -> Option<super::types::PrInfo> {
+pub fn read_pr_info(sessions_dir: &Path, session_id: &str) -> Option<crate::forge::types::PrInfo> {
     let sidecar_file = sessions_dir.join(format!("{}.pr", session_id.replace('/', "_")));
     let content = match fs::read_to_string(&sidecar_file) {
         Ok(c) => c,
@@ -985,7 +985,7 @@ mod tests {
 
     #[test]
     fn test_write_and_read_pr_info() {
-        use super::super::types::{CiStatus, PrInfo, PrState, ReviewStatus};
+        use crate::forge::types::{CiStatus, PrInfo, PrState, ReviewStatus};
         use std::env;
 
         let temp_dir = env::temp_dir().join("kild_test_pr_info_write_read");
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn test_remove_pr_info_file_exists() {
-        use super::super::types::{CiStatus, PrInfo, PrState, ReviewStatus};
+        use crate::forge::types::{CiStatus, PrInfo, PrState, ReviewStatus};
         use std::env;
 
         let temp_dir = env::temp_dir().join("kild_test_pr_info_remove");

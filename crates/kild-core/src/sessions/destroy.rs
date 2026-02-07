@@ -367,10 +367,15 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
         }
     };
 
-    // 3. Check if PR exists (best-effort, requires gh CLI)
+    // 3. Check if PR exists (best-effort, requires forge CLI)
     // Skip PR check for repos without a remote to avoid false "No PR found" warnings
+    let forge_override = crate::config::KildConfig::load_hierarchy()
+        .ok()
+        .and_then(|c| c.git.forge());
     let pr_status = if has_remote_configured(&session.worktree_path) {
-        check_pr_exists(&session.worktree_path, &kild_branch)
+        crate::forge::get_forge_backend(&session.worktree_path, forge_override)
+            .map(|backend| backend.check_pr_exists(&session.worktree_path, &kild_branch))
+            .unwrap_or(PrCheckResult::Unavailable)
     } else {
         debug!(
             event = "core.session.safety_check_no_remote",
@@ -399,75 +404,6 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
     );
 
     Ok(safety_info)
-}
-
-/// Check if a PR exists for the given branch.
-///
-/// Uses the `gh` CLI to query GitHub for PRs associated with the branch.
-/// The `gh pr view <branch>` command finds PRs in any state (open, merged, closed).
-///
-/// # Arguments
-/// * `worktree_path` - Path to the git worktree (for gh CLI working directory)
-/// * `branch` - Branch name to check (typically `kild/<name>`)
-///
-/// # Returns
-/// * `PrCheckResult::Exists` - A PR exists for this branch
-/// * `PrCheckResult::NotFound` - No PR found for this branch
-/// * `PrCheckResult::Unavailable` - Could not check (gh unavailable, auth error, network error)
-fn check_pr_exists(worktree_path: &std::path::Path, branch: &str) -> PrCheckResult {
-    debug!(
-        event = "core.session.pr_exists_check_started",
-        branch = branch
-    );
-
-    // Check if worktree exists first
-    if !worktree_path.exists() {
-        debug!(
-            event = "core.session.pr_exists_check_skipped",
-            reason = "worktree_missing"
-        );
-        return PrCheckResult::Unavailable;
-    }
-
-    let output = std::process::Command::new("gh")
-        .current_dir(worktree_path)
-        .args(["pr", "view", branch, "--json", "state"])
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => {
-            // PR exists (regardless of state - open, merged, or closed)
-            PrCheckResult::Exists
-        }
-        Ok(output) => {
-            // Check if it's "no PR found" vs other error
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("no pull requests found")
-                || stderr.contains("Could not resolve")
-                || stderr.contains("no open pull requests")
-            {
-                PrCheckResult::NotFound
-            } else {
-                // Some other error (auth, network, etc.)
-                warn!(
-                    event = "core.session.pr_exists_check_error",
-                    branch = branch,
-                    stderr = %stderr.trim(),
-                    "gh CLI error - PR status unavailable"
-                );
-                PrCheckResult::Unavailable
-            }
-        }
-        Err(e) => {
-            // gh CLI not available or other I/O error
-            debug!(
-                event = "core.session.pr_exists_check_unavailable",
-                error = %e,
-                "gh CLI not available"
-            );
-            PrCheckResult::Unavailable
-        }
-    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@
 //! ```
 
 use crate::files::types::IncludeConfig;
+use crate::forge::ForgeType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -124,6 +125,11 @@ pub struct GitConfig {
     /// Default: true
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetch_before_create: Option<bool>,
+
+    /// Force a specific forge backend instead of auto-detecting from remote URL.
+    /// When None, detect_forge() inspects the git remote URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forge: Option<ForgeType>,
 }
 
 impl GitConfig {
@@ -140,6 +146,11 @@ impl GitConfig {
     /// Returns whether to fetch before creating worktrees, defaulting to true.
     pub fn fetch_before_create(&self) -> bool {
         self.fetch_before_create.unwrap_or(true)
+    }
+
+    /// Returns the configured forge override, if any.
+    pub fn forge(&self) -> Option<ForgeType> {
+        self.forge
     }
 }
 

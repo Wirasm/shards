@@ -170,6 +170,7 @@ pub fn merge_configs(base: KildConfig, override_config: KildConfig) -> KildConfi
                 .git
                 .fetch_before_create
                 .or(base.git.fetch_before_create),
+            forge: override_config.git.forge.or(base.git.forge),
         },
         editor: base.editor.merge(override_config.editor),
     }
