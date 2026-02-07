@@ -9,8 +9,10 @@ use crate::terminal::{
     common::{detection::app_exists_linux, hyprland},
     errors::TerminalError,
     traits::TerminalBackend,
-    types::SpawnConfig,
 };
+
+#[cfg(target_os = "linux")]
+use crate::terminal::types::SpawnConfig;
 
 #[cfg(target_os = "linux")]
 use crate::terminal::common::escape::build_cd_command;
@@ -98,27 +100,10 @@ impl TerminalBackend for AlacrittyBackend {
         Ok(Some(title.to_string()))
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn execute_spawn(
-        &self,
-        _config: &SpawnConfig,
-        _window_title: Option<&str>,
-    ) -> Result<Option<String>, TerminalError> {
-        debug!(
-            event = "core.terminal.spawn_alacritty_not_supported",
-            platform = std::env::consts::OS
-        );
-        Ok(None)
-    }
-
     #[cfg(target_os = "linux")]
     fn close_window(&self, window_id: Option<&str>) {
-        let Some(id) = window_id else {
-            debug!(
-                event = "core.terminal.close_skipped_no_id",
-                terminal = "alacritty",
-                message = "No window ID available, skipping close to avoid closing wrong window"
-            );
+        let Some(id) = crate::terminal::common::helpers::require_window_id(window_id, self.name())
+        else {
             return;
         };
 
@@ -129,14 +114,6 @@ impl TerminalBackend for AlacrittyBackend {
 
         // Use Hyprland IPC to close the window by title
         hyprland::close_window_by_title(id);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn close_window(&self, _window_id: Option<&str>) {
-        debug!(
-            event = "core.terminal.close_not_supported",
-            platform = std::env::consts::OS
-        );
     }
 
     #[cfg(target_os = "linux")]
@@ -150,13 +127,6 @@ impl TerminalBackend for AlacrittyBackend {
         hyprland::focus_window_by_title(window_id)
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::FocusFailed {
-            message: "Alacritty focus not supported on this platform".to_string(),
-        })
-    }
-
     #[cfg(target_os = "linux")]
     fn hide_window(&self, window_id: &str) -> Result<(), TerminalError> {
         debug!(
@@ -165,13 +135,6 @@ impl TerminalBackend for AlacrittyBackend {
         );
 
         hyprland::hide_window_by_title(window_id)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn hide_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::HideFailed {
-            message: "Alacritty hide not supported on this platform".to_string(),
-        })
     }
 
     #[cfg(target_os = "linux")]
@@ -185,9 +148,10 @@ impl TerminalBackend for AlacrittyBackend {
         hyprland::window_exists_by_title(window_id)
     }
 
+    crate::terminal::common::helpers::platform_unsupported!(not(target_os = "linux"), "alacritty");
+
     #[cfg(not(target_os = "linux"))]
     fn is_window_open(&self, _window_id: &str) -> Result<Option<bool>, TerminalError> {
-        // Non-Linux: window detection not supported
         Ok(None)
     }
 }
@@ -195,7 +159,6 @@ impl TerminalBackend for AlacrittyBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_alacritty_backend_name() {
@@ -219,6 +182,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_alacritty_spawn_command_structure() {
+        use std::path::PathBuf;
         // Verify the structure of what would be passed to alacritty
         let config = SpawnConfig::new(
             crate::terminal::types::TerminalType::Alacritty,

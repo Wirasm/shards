@@ -1,11 +1,9 @@
 //! iTerm2 terminal backend implementation.
 
-use tracing::debug;
+use crate::terminal::{common::detection::app_exists_macos, traits::TerminalBackend};
 
-use crate::terminal::{
-    common::detection::app_exists_macos, errors::TerminalError, traits::TerminalBackend,
-    types::SpawnConfig,
-};
+#[cfg(target_os = "macos")]
+use crate::terminal::{errors::TerminalError, types::SpawnConfig};
 
 #[cfg(target_os = "macos")]
 use crate::terminal::common::{
@@ -74,40 +72,15 @@ impl TerminalBackend for ITermBackend {
         execute_spawn_script(&script, self.display_name())
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn execute_spawn(
-        &self,
-        _config: &SpawnConfig,
-        _window_title: Option<&str>,
-    ) -> Result<Option<String>, TerminalError> {
-        debug!(
-            event = "core.terminal.spawn_iterm_not_supported",
-            platform = std::env::consts::OS
-        );
-        Ok(None)
-    }
-
     #[cfg(target_os = "macos")]
     fn close_window(&self, window_id: Option<&str>) {
-        let Some(id) = window_id else {
-            debug!(
-                event = "core.terminal.close_skipped_no_id",
-                terminal = "iterm",
-                message = "No window ID available, skipping close to avoid closing wrong window"
-            );
+        let Some(id) = crate::terminal::common::helpers::require_window_id(window_id, self.name())
+        else {
             return;
         };
 
         let script = ITERM_CLOSE_SCRIPT.replace("{window_id}", id);
         close_applescript_window(&script, self.name(), id);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn close_window(&self, _window_id: Option<&str>) {
-        debug!(
-            event = "core.terminal.close_not_supported",
-            platform = std::env::consts::OS
-        );
     }
 
     #[cfg(target_os = "macos")]
@@ -120,25 +93,13 @@ impl TerminalBackend for ITermBackend {
         )
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::FocusFailed {
-            message: "Focus not supported on this platform".to_string(),
-        })
-    }
-
     #[cfg(target_os = "macos")]
     fn hide_window(&self, window_id: &str) -> Result<(), TerminalError> {
         let script = ITERM_HIDE_SCRIPT.replace("{window_id}", window_id);
         hide_applescript_window(&script, self.display_name(), window_id)
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn hide_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::HideFailed {
-            message: "Hide not supported on this platform".to_string(),
-        })
-    }
+    crate::terminal::common::helpers::platform_unsupported!(not(target_os = "macos"), "iterm");
 }
 
 #[cfg(test)]
