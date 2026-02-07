@@ -29,6 +29,7 @@
 //! ```
 
 use crate::files::types::IncludeConfig;
+use crate::forge::ForgeType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -127,9 +128,8 @@ pub struct GitConfig {
 
     /// Force a specific forge backend instead of auto-detecting from remote URL.
     /// When None, detect_forge() inspects the git remote URL.
-    /// Values: "github" (future: "gitlab", "bitbucket", "gitea")
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub forge: Option<String>,
+    pub forge: Option<ForgeType>,
 }
 
 impl GitConfig {
@@ -149,8 +149,8 @@ impl GitConfig {
     }
 
     /// Returns the configured forge override, if any.
-    pub fn forge(&self) -> Option<&str> {
-        self.forge.as_deref()
+    pub fn forge(&self) -> Option<ForgeType> {
+        self.forge
     }
 }
 

@@ -2,12 +2,16 @@
 
 use std::path::Path;
 
+use crate::forge::errors::ForgeError;
 use crate::forge::types::{PrCheckResult, PrInfo};
 
 /// Trait defining the interface for forge (code hosting) backends.
 ///
 /// Each supported forge (GitHub, GitLab, etc.) implements this trait
 /// to provide platform-specific PR/MR operations.
+///
+/// Callers obtain backends via `get_forge_backend()`, which guarantees
+/// `is_available()` is true before returning a backend reference.
 pub trait ForgeBackend: Send + Sync {
     /// The canonical name of this forge (e.g., "github", "gitlab").
     fn name(&self) -> &'static str;
@@ -19,15 +23,20 @@ pub trait ForgeBackend: Send + Sync {
     fn is_available(&self) -> bool;
 
     /// Check if a merged PR/MR exists for the given branch.
-    ///
-    /// Returns true if PR exists and is merged, false otherwise (including errors).
-    fn is_pr_merged(&self, worktree_path: &Path, branch: &str) -> bool;
+    fn is_pr_merged(&self, worktree_path: &Path, branch: &str) -> Result<bool, ForgeError>;
 
     /// Check if any PR/MR exists for the given branch.
     fn check_pr_exists(&self, worktree_path: &Path, branch: &str) -> PrCheckResult;
 
     /// Fetch rich PR/MR info (number, URL, state, CI, reviews).
-    fn fetch_pr_info(&self, worktree_path: &Path, branch: &str) -> Option<PrInfo>;
+    ///
+    /// Returns `Ok(Some(info))` if PR found, `Ok(None)` if no PR exists,
+    /// or `Err(ForgeError)` if the fetch itself failed.
+    fn fetch_pr_info(
+        &self,
+        worktree_path: &Path,
+        branch: &str,
+    ) -> Result<Option<PrInfo>, ForgeError>;
 }
 
 #[cfg(test)]
@@ -49,16 +58,20 @@ mod tests {
             true
         }
 
-        fn is_pr_merged(&self, _worktree_path: &Path, _branch: &str) -> bool {
-            false
+        fn is_pr_merged(&self, _worktree_path: &Path, _branch: &str) -> Result<bool, ForgeError> {
+            Ok(false)
         }
 
         fn check_pr_exists(&self, _worktree_path: &Path, _branch: &str) -> PrCheckResult {
             PrCheckResult::Unavailable
         }
 
-        fn fetch_pr_info(&self, _worktree_path: &Path, _branch: &str) -> Option<PrInfo> {
-            None
+        fn fetch_pr_info(
+            &self,
+            _worktree_path: &Path,
+            _branch: &str,
+        ) -> Result<Option<PrInfo>, ForgeError> {
+            Ok(None)
         }
     }
 
@@ -74,8 +87,8 @@ mod tests {
     fn test_forge_backend_pr_methods() {
         let backend = MockForge;
         let path = Path::new("/tmp");
-        assert!(!backend.is_pr_merged(path, "test"));
+        assert!(!backend.is_pr_merged(path, "test").unwrap());
         assert!(backend.check_pr_exists(path, "test").is_unavailable());
-        assert!(backend.fetch_pr_info(path, "test").is_none());
+        assert!(backend.fetch_pr_info(path, "test").unwrap().is_none());
     }
 }

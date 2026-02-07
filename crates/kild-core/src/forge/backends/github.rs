@@ -4,6 +4,7 @@ use std::path::Path;
 
 use tracing::{debug, info, warn};
 
+use crate::forge::errors::ForgeError;
 use crate::forge::traits::ForgeBackend;
 use crate::forge::types::{CiStatus, PrCheckResult, PrInfo, PrState, ReviewStatus};
 
@@ -23,7 +24,7 @@ impl ForgeBackend for GitHubBackend {
         which::which("gh").is_ok()
     }
 
-    fn is_pr_merged(&self, worktree_path: &Path, branch: &str) -> bool {
+    fn is_pr_merged(&self, worktree_path: &Path, branch: &str) -> Result<bool, ForgeError> {
         debug!(
             event = "core.forge.pr_merge_check_started",
             branch = branch,
@@ -47,28 +48,28 @@ impl ForgeBackend for GitHubBackend {
                     state = %state,
                     merged = merged
                 );
-                merged
+                Ok(merged)
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    event = "core.forge.pr_merge_check_gh_error",
-                    branch = branch,
-                    exit_code = output.status.code(),
-                    stderr = %stderr.trim()
-                );
-                false
+                // "no pull requests found" is not an error — it means the PR doesn't exist
+                if stderr.contains("no pull requests found")
+                    || stderr.contains("Could not resolve")
+                    || stderr.contains("no open pull requests")
+                {
+                    debug!(event = "core.forge.pr_merge_check_no_pr", branch = branch,);
+                    Ok(false)
+                } else {
+                    Err(ForgeError::CliError {
+                        message: format!(
+                            "gh pr view failed (exit {}): {}",
+                            output.status.code().unwrap_or(-1),
+                            stderr.trim()
+                        ),
+                    })
+                }
             }
-            Err(e) => {
-                warn!(
-                    event = "core.forge.pr_merge_check_failed",
-                    branch = branch,
-                    worktree_path = %worktree_path.display(),
-                    error = %e,
-                    hint = "gh CLI may not be installed or accessible"
-                );
-                false
-            }
+            Err(e) => Err(ForgeError::from(e)),
         }
     }
 
@@ -104,6 +105,7 @@ impl ForgeBackend for GitHubBackend {
                     warn!(
                         event = "core.forge.pr_exists_check_error",
                         branch = branch,
+                        exit_code = output.status.code(),
                         stderr = %stderr.trim(),
                         "gh CLI error - PR status unavailable"
                     );
@@ -121,7 +123,11 @@ impl ForgeBackend for GitHubBackend {
         }
     }
 
-    fn fetch_pr_info(&self, worktree_path: &Path, branch: &str) -> Option<PrInfo> {
+    fn fetch_pr_info(
+        &self,
+        worktree_path: &Path,
+        branch: &str,
+    ) -> Result<Option<PrInfo>, ForgeError> {
         debug!(
             event = "core.forge.pr_info_fetch_started",
             branch = branch,
@@ -142,31 +148,35 @@ impl ForgeBackend for GitHubBackend {
         match output {
             Ok(output) if output.status.success() => {
                 let json_str = String::from_utf8_lossy(&output.stdout);
-                parse_gh_pr_json(&json_str, branch)
+                Ok(parse_gh_pr_json(&json_str, branch))
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    event = "core.forge.pr_info_fetch_no_pr",
-                    branch = branch,
-                    stderr = %stderr.trim()
-                );
-                None
+                if stderr.contains("no pull requests found")
+                    || stderr.contains("Could not resolve")
+                    || stderr.contains("no open pull requests")
+                {
+                    debug!(event = "core.forge.pr_info_fetch_no_pr", branch = branch,);
+                    Ok(None)
+                } else {
+                    Err(ForgeError::CliError {
+                        message: format!(
+                            "gh pr view failed (exit {}): {}",
+                            output.status.code().unwrap_or(-1),
+                            stderr.trim()
+                        ),
+                    })
+                }
             }
-            Err(e) => {
-                warn!(
-                    event = "core.forge.pr_info_fetch_failed",
-                    branch = branch,
-                    error = %e,
-                    hint = "gh CLI may not be installed or accessible"
-                );
-                None
-            }
+            Err(e) => Err(ForgeError::from(e)),
         }
     }
 }
 
 /// Parse the JSON output from `gh pr view` into a `PrInfo`.
+///
+/// Expects JSON with fields: number, url, state, isDraft, statusCheckRollup, reviews.
+/// Returns `None` if JSON is malformed or required fields are missing (logged as warnings).
 fn parse_gh_pr_json(json_str: &str, branch: &str) -> Option<PrInfo> {
     let value: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
@@ -180,13 +190,43 @@ fn parse_gh_pr_json(json_str: &str, branch: &str) -> Option<PrInfo> {
         }
     };
 
-    let number = value.get("number")?.as_u64()? as u32;
-    let url = value.get("url")?.as_str()?.to_string();
+    let number = match value.get("number").and_then(|v| v.as_u64()) {
+        Some(n) => n as u32,
+        None => {
+            warn!(
+                event = "core.forge.pr_info_missing_field",
+                branch = branch,
+                field = "number",
+            );
+            return None;
+        }
+    };
+    let url = match value.get("url").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => {
+            warn!(
+                event = "core.forge.pr_info_missing_field",
+                branch = branch,
+                field = "url",
+            );
+            return None;
+        }
+    };
     let is_draft = value
         .get("isDraft")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let gh_state = value.get("state")?.as_str()?.to_uppercase();
+    let gh_state = match value.get("state").and_then(|v| v.as_str()) {
+        Some(s) => s.to_uppercase(),
+        None => {
+            warn!(
+                event = "core.forge.pr_info_missing_field",
+                branch = branch,
+                field = "state",
+            );
+            return None;
+        }
+    };
 
     let state = match gh_state.as_str() {
         "MERGED" => PrState::Merged,
@@ -222,6 +262,9 @@ fn parse_gh_pr_json(json_str: &str, branch: &str) -> Option<PrInfo> {
 }
 
 /// Parse `statusCheckRollup` array from gh output into CI status.
+///
+/// Priority: Failing > Pending > Passing. If any check fails, the overall
+/// status is Failing. If none fail but some are pending, it's Pending.
 fn parse_ci_status(value: &serde_json::Value) -> (CiStatus, Option<String>) {
     let checks = match value.get("statusCheckRollup").and_then(|v| v.as_array()) {
         Some(arr) => arr,
@@ -271,6 +314,9 @@ fn parse_ci_status(value: &serde_json::Value) -> (CiStatus, Option<String>) {
 }
 
 /// Parse `reviews` array from gh output into review status.
+///
+/// Deduplicates reviews by author (last review wins per GitHub API array order),
+/// then applies priority: ChangesRequested > Approved > Pending.
 fn parse_review_status(value: &serde_json::Value) -> (ReviewStatus, Option<String>) {
     let reviews = match value.get("reviews").and_then(|v| v.as_array()) {
         Some(arr) => arr,
@@ -281,7 +327,7 @@ fn parse_review_status(value: &serde_json::Value) -> (ReviewStatus, Option<Strin
         return (ReviewStatus::Pending, None);
     }
 
-    // Deduplicate reviews by author — only keep the latest review per author
+    // Deduplicate reviews by author — last entry per author wins (GitHub API array order)
     let mut latest_by_author: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for review in reviews {

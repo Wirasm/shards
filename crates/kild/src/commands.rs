@@ -496,6 +496,9 @@ fn handle_complete_command(matches: &ArgMatches) -> Result<(), Box<dyn std::erro
                 CompleteResult::PrNotMerged => {
                     println!("   Remote branch preserved (merge will delete it)");
                 }
+                CompleteResult::PrCheckUnavailable => {
+                    println!("   Could not verify PR merge status — remote branch preserved");
+                }
             }
 
             info!(

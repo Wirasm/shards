@@ -19,14 +19,6 @@ impl ForgeType {
             ForgeType::GitHub => "github",
         }
     }
-
-    /// Parse a forge type from a string (case-insensitive).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "github" => Some(ForgeType::GitHub),
-            _ => None,
-        }
-    }
 }
 
 impl std::fmt::Display for ForgeType {
@@ -39,7 +31,10 @@ impl std::str::FromStr for ForgeType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).ok_or_else(|| format!("Unknown forge '{}'. Supported: github", s))
+        match s.to_lowercase().as_str() {
+            "github" => Ok(ForgeType::GitHub),
+            _ => Err(format!("Unknown forge '{}'. Supported: github", s)),
+        }
     }
 }
 
@@ -56,10 +51,10 @@ pub enum PrCheckResult {
     /// Could not check PR status.
     ///
     /// This happens when:
-    /// - The `gh` CLI is not installed
-    /// - The `gh` CLI is not authenticated
+    /// - The forge CLI (gh, glab, etc.) is not installed or not authenticated
     /// - Network errors occurred
     /// - The worktree path doesn't exist
+    /// - API rate limiting or other CLI errors
     #[default]
     Unavailable,
 }
@@ -170,12 +165,13 @@ mod tests {
     }
 
     #[test]
-    fn test_forge_type_parse() {
-        assert_eq!(ForgeType::parse("github"), Some(ForgeType::GitHub));
-        assert_eq!(ForgeType::parse("GITHUB"), Some(ForgeType::GitHub));
-        assert_eq!(ForgeType::parse("GitHub"), Some(ForgeType::GitHub));
-        assert_eq!(ForgeType::parse("unknown"), None);
-        assert_eq!(ForgeType::parse(""), None);
+    fn test_forge_type_from_str_case_insensitive() {
+        use std::str::FromStr;
+        assert_eq!(ForgeType::from_str("github"), Ok(ForgeType::GitHub));
+        assert_eq!(ForgeType::from_str("GITHUB"), Ok(ForgeType::GitHub));
+        assert_eq!(ForgeType::from_str("GitHub"), Ok(ForgeType::GitHub));
+        assert!(ForgeType::from_str("unknown").is_err());
+        assert!(ForgeType::from_str("").is_err());
     }
 
     #[test]

@@ -110,8 +110,10 @@ pub enum CompleteResult {
     RemoteDeleted,
     /// PR was merged but remote branch deletion failed (logged as warning, non-fatal)
     RemoteDeleteFailed,
-    /// PR was not merged (or couldn't be checked), remote branch preserved for future merge
+    /// PR was not merged, remote branch preserved for future merge
     PrNotMerged,
+    /// Could not verify PR merge status (no forge, CLI error, no remote)
+    PrCheckUnavailable,
 }
 
 fn default_port_start() -> u16 {

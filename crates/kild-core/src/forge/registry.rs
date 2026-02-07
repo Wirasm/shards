@@ -21,7 +21,15 @@ struct ForgeRegistry {
 impl ForgeRegistry {
     fn new() -> Self {
         let mut backends: HashMap<ForgeType, Box<dyn ForgeBackend>> = HashMap::new();
-        backends.insert(ForgeType::GitHub, Box::new(GitHubBackend));
+
+        let github = Box::new(GitHubBackend);
+        debug_assert_eq!(
+            github.name(),
+            ForgeType::GitHub.as_str(),
+            "Backend name mismatch for GitHub"
+        );
+        backends.insert(ForgeType::GitHub, github);
+
         Self { backends }
     }
 
@@ -64,7 +72,17 @@ pub fn detect_forge(worktree_path: &Path) -> Option<ForgeType> {
         }
     };
 
-    let url = remote.url().unwrap_or("");
+    let url = match remote.url() {
+        Some(url) => url,
+        None => {
+            debug!(
+                event = "core.forge.detect_invalid_url",
+                path = %worktree_path.display(),
+                "Remote URL is not valid UTF-8"
+            );
+            return None;
+        }
+    };
 
     if url.contains("github.com") {
         debug!(event = "core.forge.detected", forge = "github", url = url);
@@ -77,10 +95,24 @@ pub fn detect_forge(worktree_path: &Path) -> Option<ForgeType> {
 
 /// Convenience function: detect the forge for a repo and return its backend.
 ///
-/// Combines `detect_forge()` + `get_backend()` + `is_available()` check.
+/// This is the primary entry point for forge operations. It ensures the detected
+/// forge's CLI tooling is actually installed and usable before returning.
+///
+/// Uses `forge_override` (from config) if provided, otherwise auto-detects
+/// from the git remote URL via `detect_forge()`.
+///
 /// Returns `None` if no forge detected, backend not registered, or CLI not available.
-pub fn get_forge_backend(worktree_path: &Path) -> Option<&'static dyn ForgeBackend> {
-    let forge_type = detect_forge(worktree_path)?;
+pub fn get_forge_backend(
+    worktree_path: &Path,
+    forge_override: Option<ForgeType>,
+) -> Option<&'static dyn ForgeBackend> {
+    let forge_type = if let Some(ft) = forge_override {
+        debug!(event = "core.forge.config_override", forge = ft.as_str(),);
+        ft
+    } else {
+        detect_forge(worktree_path)?
+    };
+
     let backend = get_backend(&forge_type)?;
     if backend.is_available() {
         Some(backend)

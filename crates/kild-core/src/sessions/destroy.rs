@@ -369,8 +369,11 @@ pub fn get_destroy_safety_info(name: &str) -> Result<DestroySafetyInfo, SessionE
 
     // 3. Check if PR exists (best-effort, requires forge CLI)
     // Skip PR check for repos without a remote to avoid false "No PR found" warnings
+    let forge_override = crate::config::KildConfig::load_hierarchy()
+        .ok()
+        .and_then(|c| c.git.forge());
     let pr_status = if has_remote_configured(&session.worktree_path) {
-        crate::forge::get_forge_backend(&session.worktree_path)
+        crate::forge::get_forge_backend(&session.worktree_path, forge_override)
             .map(|backend| backend.check_pr_exists(&session.worktree_path, &kild_branch))
             .unwrap_or(PrCheckResult::Unavailable)
     } else {
