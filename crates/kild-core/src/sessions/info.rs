@@ -127,40 +127,43 @@ pub fn determine_process_status(session: &Session) -> ProcessStatus {
     ProcessStatus::Stopped
 }
 
-/// Check if a worktree has uncommitted changes using `git status --porcelain`.
+/// Check if a worktree has uncommitted changes using git2.
 ///
 /// Returns `GitStatus::Dirty` if there are uncommitted changes,
 /// `GitStatus::Clean` if the worktree is clean, or `GitStatus::Unknown`
-/// if the git status check failed.
+/// if the status check failed.
 fn check_git_status(worktree_path: &Path) -> GitStatus {
-    match std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(worktree_path)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            if output.stdout.is_empty() {
-                GitStatus::Clean
-            } else {
-                GitStatus::Dirty
-            }
-        }
-        Ok(output) => {
-            tracing::warn!(
-                event = "core.session.git_status_failed",
-                path = %worktree_path.display(),
-                exit_code = ?output.status.code(),
-                stderr = %String::from_utf8_lossy(&output.stderr),
-                "Git status command failed"
-            );
-            GitStatus::Unknown
-        }
+    let repo = match git2::Repository::open(worktree_path) {
+        Ok(r) => r,
         Err(e) => {
             tracing::warn!(
                 event = "core.session.git_status_error",
                 path = %worktree_path.display(),
                 error = %e,
-                "Failed to execute git status"
+                "Failed to open repository for status check"
+            );
+            return GitStatus::Unknown;
+        }
+    };
+
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true);
+    opts.include_ignored(false);
+
+    match repo.statuses(Some(&mut opts)) {
+        Ok(statuses) => {
+            if statuses.is_empty() {
+                GitStatus::Clean
+            } else {
+                GitStatus::Dirty
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                event = "core.session.git_status_failed",
+                path = %worktree_path.display(),
+                error = %e,
+                "Failed to get git status"
             );
             GitStatus::Unknown
         }

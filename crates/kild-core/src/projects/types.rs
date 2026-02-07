@@ -120,35 +120,30 @@ pub struct ProjectsData {
     pub load_error: Option<String>,
 }
 
-/// Check if a path is a git repository.
+/// Check if a path is a git repository using git2.
 ///
-/// Uses two detection methods:
-/// 1. Checks for a `.git` directory (standard repositories)
-/// 2. Falls back to `git rev-parse --git-dir` (handles worktrees and bare repos)
+/// Uses `git2::Repository::discover` which handles standard repos, worktrees,
+/// and bare repos. Returns `Ok(false)` if the path is not in a git repository.
 ///
 /// # Errors
 ///
-/// Returns `ProjectError::GitCommandFailed` if the `git` command cannot be
-/// executed (e.g., git not installed, permission denied). This is distinct
-/// from returning `Ok(false)` which means "path is not a git repository".
+/// Returns `ProjectError::GitCheckFailed` if the git2 library encounters an
+/// unexpected error (e.g., permission denied). This is distinct from returning
+/// `Ok(false)` which means "path is not a git repository".
 pub fn is_git_repo(path: &Path) -> Result<bool, ProjectError> {
-    if path.join(".git").exists() {
-        return Ok(true);
-    }
-    match std::process::Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(path)
-        .output()
-    {
-        Ok(output) => Ok(output.status.success()),
+    match git2::Repository::discover(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(false),
         Err(e) => {
             tracing::error!(
-                event = "core.projects.git_command_failed",
+                event = "core.projects.git_check_failed",
                 path = %path.display(),
                 error = %e,
-                "Failed to execute git command - git may not be installed or accessible"
+                "Failed to check if path is a git repository"
             );
-            Err(ProjectError::GitCommandFailed { source: e })
+            Err(ProjectError::GitCheckFailed {
+                message: e.to_string(),
+            })
         }
     }
 }

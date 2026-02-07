@@ -51,6 +51,9 @@ pub enum GitError {
         message: String,
     },
 
+    #[error("Failed to delete remote branch '{branch}': {message}")]
+    RemoteBranchDeleteFailed { branch: String, message: String },
+
     #[error("IO error during git operation: {source}")]
     IoError {
         #[from]
@@ -73,6 +76,7 @@ impl KildError for GitError {
             GitError::FetchFailed { .. } => "GIT_FETCH_FAILED",
             GitError::RebaseConflict { .. } => "GIT_REBASE_CONFLICT",
             GitError::RebaseAbortFailed { .. } => "GIT_REBASE_ABORT_FAILED",
+            GitError::RemoteBranchDeleteFailed { .. } => "GIT_REMOTE_BRANCH_DELETE_FAILED",
             GitError::Git2Error { .. } => "GIT2_ERROR",
             GitError::IoError { .. } => "GIT_IO_ERROR",
         }

@@ -67,9 +67,6 @@ pub enum SessionError {
     #[error("Configuration error: {message}")]
     ConfigError { message: String },
 
-    #[error("Failed to delete remote branch '{branch}': {message}")]
-    RemoteBranchDeleteFailed { branch: String, message: String },
-
     #[error(
         "Cannot complete '{name}' with uncommitted changes. Use 'kild destroy --force' to remove."
     )]
@@ -97,7 +94,6 @@ impl KildError for SessionError {
             SessionError::InvalidProcessMetadata => "INVALID_PROCESS_METADATA",
             SessionError::InvalidAgentStatus { .. } => "INVALID_AGENT_STATUS",
             SessionError::ConfigError { .. } => "CONFIG_ERROR",
-            SessionError::RemoteBranchDeleteFailed { .. } => "REMOTE_BRANCH_DELETE_FAILED",
             SessionError::UncommittedChanges { .. } => "SESSION_UNCOMMITTED_CHANGES",
         }
     }
@@ -117,7 +113,6 @@ impl KildError for SessionError {
                 | SessionError::InvalidProcessMetadata
                 | SessionError::InvalidAgentStatus { .. }
                 | SessionError::ConfigError { .. }
-                | SessionError::RemoteBranchDeleteFailed { .. }
                 | SessionError::UncommittedChanges { .. }
         )
     }

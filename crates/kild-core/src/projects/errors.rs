@@ -1,7 +1,7 @@
 use crate::errors::KildError;
 
 /// Note: This type intentionally does not implement `Clone` because
-/// `io::Error` (in `GitCommandFailed` and `CanonicalizationFailed`) is not `Clone`.
+/// `io::Error` (in `CanonicalizationFailed`) is not `Clone`.
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
     #[error("Path is not a directory")]
@@ -10,8 +10,8 @@ pub enum ProjectError {
     #[error("Path is not a git repository")]
     NotAGitRepo,
 
-    #[error("Git command failed: {source}")]
-    GitCommandFailed { source: std::io::Error },
+    #[error("Git check failed: {message}")]
+    GitCheckFailed { message: String },
 
     #[error("Cannot resolve path: {source}")]
     CanonicalizationFailed { source: std::io::Error },
@@ -34,7 +34,7 @@ impl KildError for ProjectError {
         match self {
             ProjectError::NotADirectory => "PROJECT_NOT_A_DIRECTORY",
             ProjectError::NotAGitRepo => "PROJECT_NOT_GIT_REPO",
-            ProjectError::GitCommandFailed { .. } => "PROJECT_GIT_COMMAND_FAILED",
+            ProjectError::GitCheckFailed { .. } => "PROJECT_GIT_CHECK_FAILED",
             ProjectError::CanonicalizationFailed { .. } => "PROJECT_CANONICALIZATION_FAILED",
             ProjectError::NotFound => "PROJECT_NOT_FOUND",
             ProjectError::AlreadyExists => "PROJECT_ALREADY_EXISTS",
@@ -52,7 +52,7 @@ impl KildError for ProjectError {
             | ProjectError::NotFound
             | ProjectError::AlreadyExists => true,
 
-            ProjectError::GitCommandFailed { .. }
+            ProjectError::GitCheckFailed { .. }
             | ProjectError::SaveFailed { .. }
             | ProjectError::LoadCorrupted { .. } => false,
         }
@@ -80,12 +80,12 @@ mod tests {
     }
 
     #[test]
-    fn test_project_error_git_command_failed() {
-        let error = ProjectError::GitCommandFailed {
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "git not found"),
+    fn test_project_error_git_check_failed() {
+        let error = ProjectError::GitCheckFailed {
+            message: "permission denied".to_string(),
         };
-        assert!(error.to_string().contains("Git command failed"));
-        assert_eq!(error.error_code(), "PROJECT_GIT_COMMAND_FAILED");
+        assert!(error.to_string().contains("Git check failed"));
+        assert_eq!(error.error_code(), "PROJECT_GIT_CHECK_FAILED");
         assert!(!error.is_user_error());
     }
 

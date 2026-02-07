@@ -286,182 +286,19 @@ pub fn create_worktree(
     Ok(worktree_info)
 }
 
-/// Validate a git argument to prevent injection.
-///
-/// Rejects:
-/// - Dash-prefixed values (git interprets as flags)
-/// - Control characters (invisible, could confuse terminal)
-/// - `::` sequences (git pseudo-URL refspec syntax)
-pub fn validate_git_arg(value: &str, label: &str) -> Result<(), GitError> {
-    if value.starts_with('-') {
-        return Err(GitError::OperationFailed {
-            message: format!("Invalid {label}: '{value}' (must not start with '-')"),
-        });
-    }
-    if value.chars().any(|c| c.is_control()) {
-        return Err(GitError::OperationFailed {
-            message: format!("Invalid {label}: contains control characters"),
-        });
-    }
-    if value.contains("::") {
-        return Err(GitError::OperationFailed {
-            message: format!("Invalid {label}: '::' sequences are not allowed"),
-        });
-    }
-    Ok(())
-}
-
 /// Fetch a specific branch from a remote using git CLI.
 ///
-/// Uses `git fetch` CLI to inherit the user's existing auth setup
-/// (SSH agent, credential helpers, etc.) with zero auth code.
+/// Delegates to [`super::cli::fetch`] for centralized CLI handling.
 pub fn fetch_remote(repo_path: &Path, remote: &str, branch: &str) -> Result<(), GitError> {
-    validate_git_arg(remote, "remote name")?;
-    validate_git_arg(branch, "branch name")?;
-
-    info!(
-        event = "core.git.fetch_started",
-        remote = remote,
-        branch = branch,
-        repo_path = %repo_path.display()
-    );
-
-    let output = std::process::Command::new("git")
-        .current_dir(repo_path)
-        .args(["fetch", remote, branch])
-        .output()
-        .map_err(|e| GitError::FetchFailed {
-            remote: remote.to_string(),
-            message: format!("Failed to execute git: {}", e),
-        })?;
-
-    if output.status.success() {
-        info!(
-            event = "core.git.fetch_completed",
-            remote = remote,
-            branch = branch
-        );
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            event = "core.git.fetch_failed",
-            remote = remote,
-            branch = branch,
-            stderr = %stderr.trim()
-        );
-        Err(GitError::FetchFailed {
-            remote: remote.to_string(),
-            message: stderr.trim().to_string(),
-        })
-    }
+    super::cli::fetch(repo_path, remote, branch)
 }
 
 /// Rebase a worktree onto the given base branch.
 ///
-/// On conflict, auto-aborts the rebase to leave the worktree clean,
-/// then returns `GitError::RebaseConflict` so the user can resolve manually.
+/// Delegates to [`super::cli::rebase`] for centralized CLI handling.
+/// On conflict, auto-aborts the rebase and returns `GitError::RebaseConflict`.
 pub fn rebase_worktree(worktree_path: &Path, base_branch: &str) -> Result<(), GitError> {
-    validate_git_arg(base_branch, "base branch")?;
-
-    info!(
-        event = "core.git.rebase_started",
-        base = base_branch,
-        path = %worktree_path.display()
-    );
-
-    let output = std::process::Command::new("git")
-        .current_dir(worktree_path)
-        .args(["rebase", base_branch])
-        .output()
-        .map_err(|e| GitError::OperationFailed {
-            message: format!("Failed to execute git rebase: {}", e),
-        })?;
-
-    if output.status.success() {
-        info!(
-            event = "core.git.rebase_completed",
-            base = base_branch,
-            path = %worktree_path.display()
-        );
-        return Ok(());
-    }
-
-    let code = output.status.code().unwrap_or(-1);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // Detect conflicts: exit code 1 with conflict markers in stderr
-    let is_conflict = code == 1
-        && (stderr.contains("CONFLICT")
-            || stderr.contains("failed to merge")
-            || stderr.contains("could not apply"));
-
-    if is_conflict {
-        // Auto-abort to leave worktree clean
-        let abort_result = std::process::Command::new("git")
-            .current_dir(worktree_path)
-            .args(["rebase", "--abort"])
-            .output();
-
-        match abort_result {
-            Ok(abort_output) if abort_output.status.success() => {
-                info!(
-                    event = "core.git.rebase_abort_completed",
-                    base = base_branch,
-                    path = %worktree_path.display()
-                );
-            }
-            Ok(abort_output) => {
-                let abort_stderr = String::from_utf8_lossy(&abort_output.stderr);
-                error!(
-                    event = "core.git.rebase_abort_failed",
-                    base = base_branch,
-                    path = %worktree_path.display(),
-                    stderr = %abort_stderr.trim()
-                );
-                return Err(GitError::RebaseAbortFailed {
-                    base_branch: base_branch.to_string(),
-                    worktree_path: worktree_path.to_path_buf(),
-                    message: abort_stderr.trim().to_string(),
-                });
-            }
-            Err(e) => {
-                error!(
-                    event = "core.git.rebase_abort_failed",
-                    base = base_branch,
-                    path = %worktree_path.display(),
-                    error = %e
-                );
-                return Err(GitError::RebaseAbortFailed {
-                    base_branch: base_branch.to_string(),
-                    worktree_path: worktree_path.to_path_buf(),
-                    message: e.to_string(),
-                });
-            }
-        }
-
-        warn!(
-            event = "core.git.rebase_conflicts",
-            base = base_branch,
-            path = %worktree_path.display()
-        );
-        return Err(GitError::RebaseConflict {
-            base_branch: base_branch.to_string(),
-            worktree_path: worktree_path.to_path_buf(),
-        });
-    }
-
-    // Non-conflict failure
-    error!(
-        event = "core.git.rebase_failed",
-        base = base_branch,
-        path = %worktree_path.display(),
-        code = code,
-        stderr = %stderr.trim()
-    );
-    Err(GitError::OperationFailed {
-        message: format!("git rebase failed (exit {}): {}", code, stderr.trim()),
-    })
+    super::cli::rebase(worktree_path, base_branch)
 }
 
 /// Resolve the base commit for a new branch.
@@ -1483,44 +1320,5 @@ mod tests {
         ));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn test_validate_git_arg_rejects_control_chars() {
-        let result = validate_git_arg("origin\x00evil", "remote name");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("control characters")
-        );
-
-        let result = validate_git_arg("main\ttab", "branch name");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("control characters")
-        );
-    }
-
-    #[test]
-    fn test_validate_git_arg_rejects_pseudo_urls() {
-        let result = validate_git_arg("evil::protocol", "remote name");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("::"));
-
-        let result = validate_git_arg("git::https://evil.com", "remote name");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_validate_git_arg_accepts_valid_values() {
-        assert!(validate_git_arg("origin", "remote name").is_ok());
-        assert!(validate_git_arg("main", "branch name").is_ok());
-        assert!(validate_git_arg("feature/auth", "branch name").is_ok());
-        assert!(validate_git_arg("my-remote", "remote name").is_ok());
     }
 }

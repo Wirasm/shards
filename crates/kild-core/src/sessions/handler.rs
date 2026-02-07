@@ -936,77 +936,13 @@ fn check_pr_merged(worktree_path: &std::path::Path, branch: &str) -> bool {
     }
 }
 
-/// Delete a remote branch using git push.
+/// Delete a branch from the "origin" remote.
 ///
-/// # Arguments
-/// * `worktree_path` - Path to the git worktree (sets working directory for git command)
-/// * `branch` - Branch name to delete from remote
-///
-/// # Returns
-/// * `Ok(())` - Branch deleted successfully or already deleted
-///
-/// # Errors
-/// * `SessionError::RemoteBranchDeleteFailed` - Git command failed (network error, permission denied, etc.)
-///   Note: "remote ref does not exist" is treated as success, not an error.
-///
-/// # Assumptions
-/// Assumes the remote is named "origin". Will fail if the remote has a different name.
+/// Delegates to [`crate::git::cli::delete_remote_branch`] for centralized CLI handling.
+/// Treats "branch already deleted" as success (idempotent).
 fn delete_remote_branch(worktree_path: &std::path::Path, branch: &str) -> Result<(), SessionError> {
-    info!(
-        event = "core.session.complete_remote_delete_started",
-        branch = branch,
-        worktree_path = %worktree_path.display()
-    );
-
-    let output = std::process::Command::new("git")
-        .current_dir(worktree_path)
-        .args(["push", "origin", "--delete", branch])
-        .output()
-        .map_err(|e| SessionError::RemoteBranchDeleteFailed {
-            branch: branch.to_string(),
-            message: format!(
-                "Failed to execute git in {}: {}",
-                worktree_path.display(),
-                e
-            ),
-        })?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        // Common patterns for "branch doesn't exist" across git versions
-        // These indicate the branch is already gone - treat as success
-        let benign_patterns = [
-            "remote ref does not exist",
-            "unable to delete",
-            "does not exist",
-        ];
-
-        let is_already_deleted = benign_patterns
-            .iter()
-            .any(|pattern| stderr.to_lowercase().contains(pattern));
-
-        if is_already_deleted {
-            // Branch already deleted - treat as success
-            info!(
-                event = "core.session.complete_remote_already_deleted",
-                branch = branch
-            );
-            Ok(())
-        } else {
-            debug!(
-                event = "core.session.complete_remote_delete_stderr",
-                branch = branch,
-                stderr = %stderr.trim()
-            );
-            Err(SessionError::RemoteBranchDeleteFailed {
-                branch: branch.to_string(),
-                message: stderr.trim().to_string(),
-            })
-        }
-    }
+    crate::git::cli::delete_remote_branch(worktree_path, "origin", branch)?;
+    Ok(())
 }
 
 /// Get safety information before destroying a kild.
