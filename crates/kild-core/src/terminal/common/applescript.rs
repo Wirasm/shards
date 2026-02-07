@@ -99,81 +99,6 @@ pub fn execute_spawn_script(
 #[cfg(not(target_os = "macos"))]
 pub fn close_applescript_window(_script: &str, _terminal_name: &str, _window_id: &str) {}
 
-/// Action type for AppleScript window operations that return Result.
-pub enum AppleScriptAction {
-    Focus,
-    Hide,
-}
-
-/// Execute an AppleScript window action (focus or hide) with shared logging and error handling.
-///
-/// This unifies the near-identical implementations of `focus_applescript_window`
-/// and `hide_applescript_window` into a single execution path.
-#[cfg(target_os = "macos")]
-fn execute_applescript_action(
-    script: &str,
-    terminal_name: &str,
-    window_id: &str,
-    action: AppleScriptAction,
-) -> Result<(), TerminalError> {
-    use tracing::{error, info};
-
-    let (action_name, make_error): (&str, fn(String) -> TerminalError) = match action {
-        AppleScriptAction::Focus => ("focus", |msg| TerminalError::FocusFailed { message: msg }),
-        AppleScriptAction::Hide => ("hide", |msg| TerminalError::HideFailed { message: msg }),
-    };
-
-    let event_started = format!("core.terminal.{action_name}_started");
-    debug!(
-        event = %event_started,
-        terminal = terminal_name,
-        window_id = %window_id
-    );
-
-    match std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let event_completed = format!("core.terminal.{action_name}_completed");
-            info!(
-                event = %event_completed,
-                terminal = terminal_name,
-                window_id = %window_id
-            );
-            Ok(())
-        }
-        Ok(output) => {
-            let stderr = super::helpers::stderr_lossy(&output);
-            let event_failed = format!("core.terminal.{action_name}_failed");
-            warn!(
-                event = %event_failed,
-                terminal = terminal_name,
-                window_id = %window_id,
-                stderr = %stderr
-            );
-            Err(make_error(format!(
-                "{} {} failed for window {}: {}",
-                terminal_name, action_name, window_id, stderr
-            )))
-        }
-        Err(e) => {
-            let event_failed = format!("core.terminal.{action_name}_failed");
-            error!(
-                event = %event_failed,
-                terminal = terminal_name,
-                window_id = %window_id,
-                error = %e
-            );
-            Err(make_error(format!(
-                "Failed to execute osascript for {} {}: {}",
-                terminal_name, action_name, e
-            )))
-        }
-    }
-}
-
 /// Focus a window via AppleScript.
 ///
 /// Unlike `close_applescript_window` which is fire-and-forget, this returns a Result
@@ -184,7 +109,57 @@ pub fn focus_applescript_window(
     terminal_name: &str,
     window_id: &str,
 ) -> Result<(), TerminalError> {
-    execute_applescript_action(script, terminal_name, window_id, AppleScriptAction::Focus)
+    use tracing::{error, info};
+
+    debug!(
+        event = "core.terminal.focus_started",
+        terminal = terminal_name,
+        window_id = %window_id
+    );
+
+    match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            info!(
+                event = "core.terminal.focus_completed",
+                terminal = terminal_name,
+                window_id = %window_id
+            );
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = super::helpers::stderr_lossy(&output);
+            warn!(
+                event = "core.terminal.focus_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                stderr = %stderr
+            );
+            Err(TerminalError::FocusFailed {
+                message: format!(
+                    "{} focus failed for window {}: {}",
+                    terminal_name, window_id, stderr
+                ),
+            })
+        }
+        Err(e) => {
+            error!(
+                event = "core.terminal.focus_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                error = %e
+            );
+            Err(TerminalError::FocusFailed {
+                message: format!(
+                    "Failed to execute osascript for {} focus: {}",
+                    terminal_name, e
+                ),
+            })
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -208,7 +183,57 @@ pub fn hide_applescript_window(
     terminal_name: &str,
     window_id: &str,
 ) -> Result<(), TerminalError> {
-    execute_applescript_action(script, terminal_name, window_id, AppleScriptAction::Hide)
+    use tracing::{error, info};
+
+    debug!(
+        event = "core.terminal.hide_started",
+        terminal = terminal_name,
+        window_id = %window_id
+    );
+
+    match std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            info!(
+                event = "core.terminal.hide_completed",
+                terminal = terminal_name,
+                window_id = %window_id
+            );
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = super::helpers::stderr_lossy(&output);
+            warn!(
+                event = "core.terminal.hide_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                stderr = %stderr
+            );
+            Err(TerminalError::HideFailed {
+                message: format!(
+                    "{} hide failed for window {}: {}",
+                    terminal_name, window_id, stderr
+                ),
+            })
+        }
+        Err(e) => {
+            error!(
+                event = "core.terminal.hide_failed",
+                terminal = terminal_name,
+                window_id = %window_id,
+                error = %e
+            );
+            Err(TerminalError::HideFailed {
+                message: format!(
+                    "Failed to execute osascript for {} hide: {}",
+                    terminal_name, e
+                ),
+            })
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

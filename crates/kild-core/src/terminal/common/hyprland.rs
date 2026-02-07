@@ -33,67 +33,42 @@ pub fn is_hyprland_available() -> bool {
     false
 }
 
-/// Execute a `hyprctl dispatch` command with shared logging and error handling.
+/// Focus a window by its title using Hyprland IPC.
 ///
-/// This unifies the near-identical implementations of `focus_window_by_title`
-/// and `hide_window_by_title` into a single execution path.
+/// Uses `hyprctl dispatch focuswindow title:X` to focus the window.
 #[cfg(target_os = "linux")]
-fn execute_hyprctl_dispatch(
-    dispatch_cmd: &str,
-    dispatch_arg: &str,
-    action_name: &str,
-    title: &str,
-    make_error: fn(String) -> TerminalError,
-) -> Result<(), TerminalError> {
-    let event_started = format!("core.terminal.hyprland_{action_name}_started");
+pub fn focus_window_by_title(title: &str) -> Result<(), TerminalError> {
     debug!(
-        event = %event_started,
+        event = "core.terminal.hyprland_focus_started",
         title = %title
     );
 
     let output = std::process::Command::new("hyprctl")
         .arg("dispatch")
-        .arg(dispatch_cmd)
-        .arg(dispatch_arg)
+        .arg("focuswindow")
+        .arg(format!("title:{}", title))
         .output()
         .map_err(|e| TerminalError::HyprlandIpcFailed {
             message: format!("Failed to execute hyprctl: {}", e),
         })?;
 
     if output.status.success() {
-        let event_completed = format!("core.terminal.hyprland_{action_name}_completed");
         debug!(
-            event = %event_completed,
+            event = "core.terminal.hyprland_focus_completed",
             title = %title
         );
         Ok(())
     } else {
         let stderr = super::helpers::stderr_lossy(&output);
-        let event_failed = format!("core.terminal.hyprland_{action_name}_failed");
         warn!(
-            event = %event_failed,
+            event = "core.terminal.hyprland_focus_failed",
             title = %title,
             stderr = %stderr
         );
-        Err(make_error(format!(
-            "Hyprland {} failed for '{}': {}",
-            action_name, title, stderr
-        )))
+        Err(TerminalError::FocusFailed {
+            message: format!("Hyprland focus failed for '{}': {}", title, stderr),
+        })
     }
-}
-
-/// Focus a window by its title using Hyprland IPC.
-///
-/// Uses `hyprctl dispatch focuswindow title:X` to focus the window.
-#[cfg(target_os = "linux")]
-pub fn focus_window_by_title(title: &str) -> Result<(), TerminalError> {
-    execute_hyprctl_dispatch(
-        "focuswindow",
-        &format!("title:{}", title),
-        "focus",
-        title,
-        |msg| TerminalError::FocusFailed { message: msg },
-    )
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -109,13 +84,37 @@ pub fn focus_window_by_title(_title: &str) -> Result<(), TerminalError> {
 /// to the special (hidden) workspace.
 #[cfg(target_os = "linux")]
 pub fn hide_window_by_title(title: &str) -> Result<(), TerminalError> {
-    execute_hyprctl_dispatch(
-        "movetoworkspacesilent",
-        &format!("special,title:{}", title),
-        "hide",
-        title,
-        |msg| TerminalError::HideFailed { message: msg },
-    )
+    debug!(
+        event = "core.terminal.hyprland_hide_started",
+        title = %title
+    );
+
+    let output = std::process::Command::new("hyprctl")
+        .arg("dispatch")
+        .arg("movetoworkspacesilent")
+        .arg(format!("special,title:{}", title))
+        .output()
+        .map_err(|e| TerminalError::HyprlandIpcFailed {
+            message: format!("Failed to execute hyprctl: {}", e),
+        })?;
+
+    if output.status.success() {
+        debug!(
+            event = "core.terminal.hyprland_hide_completed",
+            title = %title
+        );
+        Ok(())
+    } else {
+        let stderr = super::helpers::stderr_lossy(&output);
+        warn!(
+            event = "core.terminal.hyprland_hide_failed",
+            title = %title,
+            stderr = %stderr
+        );
+        Err(TerminalError::HideFailed {
+            message: format!("Hyprland hide failed for '{}': {}", title, stderr),
+        })
+    }
 }
 
 #[cfg(not(target_os = "linux"))]

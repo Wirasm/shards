@@ -159,7 +159,6 @@ impl TerminalBackend for AlacrittyBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_alacritty_backend_name() {
@@ -183,6 +182,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_alacritty_spawn_command_structure() {
+        use std::path::PathBuf;
         // Verify the structure of what would be passed to alacritty
         let config = SpawnConfig::new(
             crate::terminal::types::TerminalType::Alacritty,
