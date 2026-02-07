@@ -599,6 +599,7 @@ mod tests {
             remote: Some("origin".to_string()),
             base_branch: Some("main".to_string()),
             fetch_before_create: Some(false),
+            ..Default::default()
         };
 
         // No remote set up, should fall back to HEAD
@@ -633,6 +634,7 @@ mod tests {
             remote: Some("origin".to_string()),
             base_branch: Some("main".to_string()),
             fetch_before_create: Some(false),
+            ..Default::default()
         };
 
         let commit = resolve_base_commit(&repo, &git_config, false).unwrap();
