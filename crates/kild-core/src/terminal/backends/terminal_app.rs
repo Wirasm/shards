@@ -1,7 +1,5 @@
 //! Terminal.app backend implementation.
 
-use tracing::debug;
-
 use crate::terminal::{
     common::detection::app_exists_macos, errors::TerminalError, traits::TerminalBackend,
     types::SpawnConfig,
@@ -71,40 +69,15 @@ impl TerminalBackend for TerminalAppBackend {
         execute_spawn_script(&script, self.display_name())
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn execute_spawn(
-        &self,
-        _config: &SpawnConfig,
-        _window_title: Option<&str>,
-    ) -> Result<Option<String>, TerminalError> {
-        debug!(
-            event = "core.terminal.spawn_terminal_app_not_supported",
-            platform = std::env::consts::OS
-        );
-        Ok(None)
-    }
-
     #[cfg(target_os = "macos")]
     fn close_window(&self, window_id: Option<&str>) {
-        let Some(id) = window_id else {
-            debug!(
-                event = "core.terminal.close_skipped_no_id",
-                terminal = "terminal_app",
-                message = "No window ID available, skipping close to avoid closing wrong window"
-            );
+        let Some(id) = crate::terminal::common::helpers::require_window_id(window_id, self.name())
+        else {
             return;
         };
 
         let script = TERMINAL_CLOSE_SCRIPT.replace("{window_id}", id);
         close_applescript_window(&script, self.name(), id);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn close_window(&self, _window_id: Option<&str>) {
-        debug!(
-            event = "core.terminal.close_not_supported",
-            platform = std::env::consts::OS
-        );
     }
 
     #[cfg(target_os = "macos")]
@@ -117,25 +90,16 @@ impl TerminalBackend for TerminalAppBackend {
         )
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::FocusFailed {
-            message: "Focus not supported on this platform".to_string(),
-        })
-    }
-
     #[cfg(target_os = "macos")]
     fn hide_window(&self, window_id: &str) -> Result<(), TerminalError> {
         let script = TERMINAL_HIDE_SCRIPT.replace("{window_id}", window_id);
         hide_applescript_window(&script, self.display_name(), window_id)
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn hide_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::HideFailed {
-            message: "Hide not supported on this platform".to_string(),
-        })
-    }
+    crate::terminal::common::helpers::platform_unsupported!(
+        not(target_os = "macos"),
+        "terminal_app"
+    );
 }
 
 #[cfg(test)]

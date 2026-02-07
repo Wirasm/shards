@@ -33,42 +33,67 @@ pub fn is_hyprland_available() -> bool {
     false
 }
 
-/// Focus a window by its title using Hyprland IPC.
+/// Execute a `hyprctl dispatch` command with shared logging and error handling.
 ///
-/// Uses `hyprctl dispatch focuswindow title:X` to focus the window.
+/// This unifies the near-identical implementations of `focus_window_by_title`
+/// and `hide_window_by_title` into a single execution path.
 #[cfg(target_os = "linux")]
-pub fn focus_window_by_title(title: &str) -> Result<(), TerminalError> {
+fn execute_hyprctl_dispatch(
+    dispatch_cmd: &str,
+    dispatch_arg: &str,
+    action_name: &str,
+    title: &str,
+    make_error: fn(String) -> TerminalError,
+) -> Result<(), TerminalError> {
+    let event_started = format!("core.terminal.hyprland_{action_name}_started");
     debug!(
-        event = "core.terminal.hyprland_focus_started",
+        event = %event_started,
         title = %title
     );
 
     let output = std::process::Command::new("hyprctl")
         .arg("dispatch")
-        .arg("focuswindow")
-        .arg(format!("title:{}", title))
+        .arg(dispatch_cmd)
+        .arg(dispatch_arg)
         .output()
         .map_err(|e| TerminalError::HyprlandIpcFailed {
             message: format!("Failed to execute hyprctl: {}", e),
         })?;
 
     if output.status.success() {
+        let event_completed = format!("core.terminal.hyprland_{action_name}_completed");
         debug!(
-            event = "core.terminal.hyprland_focus_completed",
+            event = %event_completed,
             title = %title
         );
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = super::helpers::stderr_lossy(&output);
+        let event_failed = format!("core.terminal.hyprland_{action_name}_failed");
         warn!(
-            event = "core.terminal.hyprland_focus_failed",
+            event = %event_failed,
             title = %title,
-            stderr = %stderr.trim()
+            stderr = %stderr
         );
-        Err(TerminalError::FocusFailed {
-            message: format!("Hyprland focus failed for '{}': {}", title, stderr.trim()),
-        })
+        Err(make_error(format!(
+            "Hyprland {} failed for '{}': {}",
+            action_name, title, stderr
+        )))
     }
+}
+
+/// Focus a window by its title using Hyprland IPC.
+///
+/// Uses `hyprctl dispatch focuswindow title:X` to focus the window.
+#[cfg(target_os = "linux")]
+pub fn focus_window_by_title(title: &str) -> Result<(), TerminalError> {
+    execute_hyprctl_dispatch(
+        "focuswindow",
+        &format!("title:{}", title),
+        "focus",
+        title,
+        |msg| TerminalError::FocusFailed { message: msg },
+    )
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -84,37 +109,13 @@ pub fn focus_window_by_title(_title: &str) -> Result<(), TerminalError> {
 /// to the special (hidden) workspace.
 #[cfg(target_os = "linux")]
 pub fn hide_window_by_title(title: &str) -> Result<(), TerminalError> {
-    debug!(
-        event = "core.terminal.hyprland_hide_started",
-        title = %title
-    );
-
-    let output = std::process::Command::new("hyprctl")
-        .arg("dispatch")
-        .arg("movetoworkspacesilent")
-        .arg(format!("special,title:{}", title))
-        .output()
-        .map_err(|e| TerminalError::HyprlandIpcFailed {
-            message: format!("Failed to execute hyprctl: {}", e),
-        })?;
-
-    if output.status.success() {
-        debug!(
-            event = "core.terminal.hyprland_hide_completed",
-            title = %title
-        );
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            event = "core.terminal.hyprland_hide_failed",
-            title = %title,
-            stderr = %stderr.trim()
-        );
-        Err(TerminalError::HideFailed {
-            message: format!("Hyprland hide failed for '{}': {}", title, stderr.trim()),
-        })
-    }
+    execute_hyprctl_dispatch(
+        "movetoworkspacesilent",
+        &format!("special,title:{}", title),
+        "hide",
+        title,
+        |msg| TerminalError::HideFailed { message: msg },
+    )
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -148,11 +149,11 @@ pub fn close_window_by_title(title: &str) {
             );
         }
         Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = super::helpers::stderr_lossy(&output);
             warn!(
                 event = "core.terminal.hyprland_close_failed",
                 title = %title,
-                stderr = %stderr.trim(),
+                stderr = %stderr,
                 message = "hyprctl closewindow failed - window may remain open"
             );
         }
@@ -206,11 +207,11 @@ pub fn window_exists_by_title(title: &str) -> Result<Option<bool>, TerminalError
         })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = super::helpers::stderr_lossy(&output);
         warn!(
             event = "core.terminal.hyprland_window_check_failed",
             title = %title,
-            stderr = %stderr.trim()
+            stderr = %stderr
         );
         return Ok(None);
     }

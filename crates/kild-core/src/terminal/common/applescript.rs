@@ -24,9 +24,9 @@ pub fn execute_spawn_script(
         })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = super::helpers::stderr_lossy(&output);
         return Err(TerminalError::SpawnFailed {
-            message: format!("{} AppleScript failed: {}", terminal_name, stderr.trim()),
+            message: format!("{} AppleScript failed: {}", terminal_name, stderr),
         });
     }
 
@@ -67,12 +67,12 @@ pub fn close_applescript_window(script: &str, terminal_name: &str, window_id: &s
             );
         }
         Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = super::helpers::stderr_lossy(&output);
             warn!(
                 event = "core.terminal.close_failed",
                 terminal = terminal_name,
                 window_id = %window_id,
-                stderr = %stderr.trim(),
+                stderr = %stderr,
                 message = "AppleScript close failed - window may remain open"
             );
         }
@@ -99,21 +99,33 @@ pub fn execute_spawn_script(
 #[cfg(not(target_os = "macos"))]
 pub fn close_applescript_window(_script: &str, _terminal_name: &str, _window_id: &str) {}
 
-/// Focus a window via AppleScript.
+/// Action type for AppleScript window operations that return Result.
+pub enum AppleScriptAction {
+    Focus,
+    Hide,
+}
+
+/// Execute an AppleScript window action (focus or hide) with shared logging and error handling.
 ///
-/// Unlike `close_applescript_window` which is fire-and-forget, this returns a Result
-/// so callers can report focus failures to the user.
+/// This unifies the near-identical implementations of `focus_applescript_window`
+/// and `hide_applescript_window` into a single execution path.
 #[cfg(target_os = "macos")]
-pub fn focus_applescript_window(
+fn execute_applescript_action(
     script: &str,
     terminal_name: &str,
     window_id: &str,
-) -> Result<(), crate::terminal::errors::TerminalError> {
-    use crate::terminal::errors::TerminalError;
+    action: AppleScriptAction,
+) -> Result<(), TerminalError> {
     use tracing::{error, info};
 
+    let (action_name, make_error): (&str, fn(String) -> TerminalError) = match action {
+        AppleScriptAction::Focus => ("focus", |msg| TerminalError::FocusFailed { message: msg }),
+        AppleScriptAction::Hide => ("hide", |msg| TerminalError::HideFailed { message: msg }),
+    };
+
+    let event_started = format!("core.terminal.{action_name}_started");
     debug!(
-        event = "core.terminal.focus_started",
+        event = %event_started,
         terminal = terminal_name,
         window_id = %window_id
     );
@@ -124,45 +136,55 @@ pub fn focus_applescript_window(
         .output()
     {
         Ok(output) if output.status.success() => {
+            let event_completed = format!("core.terminal.{action_name}_completed");
             info!(
-                event = "core.terminal.focus_completed",
+                event = %event_completed,
                 terminal = terminal_name,
                 window_id = %window_id
             );
             Ok(())
         }
         Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = super::helpers::stderr_lossy(&output);
+            let event_failed = format!("core.terminal.{action_name}_failed");
             warn!(
-                event = "core.terminal.focus_failed",
+                event = %event_failed,
                 terminal = terminal_name,
                 window_id = %window_id,
-                stderr = %stderr.trim()
+                stderr = %stderr
             );
-            Err(TerminalError::FocusFailed {
-                message: format!(
-                    "{} focus failed for window {}: {}",
-                    terminal_name,
-                    window_id,
-                    stderr.trim()
-                ),
-            })
+            Err(make_error(format!(
+                "{} {} failed for window {}: {}",
+                terminal_name, action_name, window_id, stderr
+            )))
         }
         Err(e) => {
+            let event_failed = format!("core.terminal.{action_name}_failed");
             error!(
-                event = "core.terminal.focus_failed",
+                event = %event_failed,
                 terminal = terminal_name,
                 window_id = %window_id,
                 error = %e
             );
-            Err(TerminalError::FocusFailed {
-                message: format!(
-                    "Failed to execute osascript for {} focus: {}",
-                    terminal_name, e
-                ),
-            })
+            Err(make_error(format!(
+                "Failed to execute osascript for {} {}: {}",
+                terminal_name, action_name, e
+            )))
         }
     }
+}
+
+/// Focus a window via AppleScript.
+///
+/// Unlike `close_applescript_window` which is fire-and-forget, this returns a Result
+/// so callers can report focus failures to the user.
+#[cfg(target_os = "macos")]
+pub fn focus_applescript_window(
+    script: &str,
+    terminal_name: &str,
+    window_id: &str,
+) -> Result<(), TerminalError> {
+    execute_applescript_action(script, terminal_name, window_id, AppleScriptAction::Focus)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -170,8 +192,8 @@ pub fn focus_applescript_window(
     _script: &str,
     _terminal_name: &str,
     _window_id: &str,
-) -> Result<(), crate::terminal::errors::TerminalError> {
-    Err(crate::terminal::errors::TerminalError::FocusFailed {
+) -> Result<(), TerminalError> {
+    Err(TerminalError::FocusFailed {
         message: "Focus not supported on this platform".to_string(),
     })
 }
@@ -185,61 +207,8 @@ pub fn hide_applescript_window(
     script: &str,
     terminal_name: &str,
     window_id: &str,
-) -> Result<(), crate::terminal::errors::TerminalError> {
-    use crate::terminal::errors::TerminalError;
-    use tracing::{error, info};
-
-    debug!(
-        event = "core.terminal.hide_started",
-        terminal = terminal_name,
-        window_id = %window_id
-    );
-
-    match std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            info!(
-                event = "core.terminal.hide_completed",
-                terminal = terminal_name,
-                window_id = %window_id
-            );
-            Ok(())
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(
-                event = "core.terminal.hide_failed",
-                terminal = terminal_name,
-                window_id = %window_id,
-                stderr = %stderr.trim()
-            );
-            Err(TerminalError::HideFailed {
-                message: format!(
-                    "{} hide failed for window {}: {}",
-                    terminal_name,
-                    window_id,
-                    stderr.trim()
-                ),
-            })
-        }
-        Err(e) => {
-            error!(
-                event = "core.terminal.hide_failed",
-                terminal = terminal_name,
-                window_id = %window_id,
-                error = %e
-            );
-            Err(TerminalError::HideFailed {
-                message: format!(
-                    "Failed to execute osascript for {} hide: {}",
-                    terminal_name, e
-                ),
-            })
-        }
-    }
+) -> Result<(), TerminalError> {
+    execute_applescript_action(script, terminal_name, window_id, AppleScriptAction::Hide)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -247,8 +216,8 @@ pub fn hide_applescript_window(
     _script: &str,
     _terminal_name: &str,
     _window_id: &str,
-) -> Result<(), crate::terminal::errors::TerminalError> {
-    Err(crate::terminal::errors::TerminalError::HideFailed {
+) -> Result<(), TerminalError> {
+    Err(TerminalError::HideFailed {
         message: "Hide not supported on this platform".to_string(),
     })
 }

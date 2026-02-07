@@ -768,27 +768,10 @@ impl TerminalBackend for GhosttyBackend {
         Ok(Some(title.to_string()))
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn execute_spawn(
-        &self,
-        _config: &SpawnConfig,
-        _window_title: Option<&str>,
-    ) -> Result<Option<String>, TerminalError> {
-        debug!(
-            event = "core.terminal.spawn_ghostty_not_supported",
-            platform = std::env::consts::OS
-        );
-        Ok(None)
-    }
-
     #[cfg(target_os = "macos")]
     fn close_window(&self, window_id: Option<&str>) {
-        let Some(id) = window_id else {
-            debug!(
-                event = "core.terminal.close_skipped_no_id",
-                terminal = "ghostty",
-                message = "No window ID available, skipping close to avoid closing wrong window"
-            );
+        let Some(id) = crate::terminal::common::helpers::require_window_id(window_id, self.name())
+        else {
             return;
         };
 
@@ -838,36 +821,14 @@ impl TerminalBackend for GhosttyBackend {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn close_window(&self, _window_id: Option<&str>) {
-        debug!(
-            event = "core.terminal.close_not_supported",
-            platform = std::env::consts::OS
-        );
-    }
-
     #[cfg(target_os = "macos")]
     fn focus_window(&self, window_id: &str) -> Result<(), TerminalError> {
         with_ghostty_window(window_id, "focus", focus_by_pid, focus_by_title)
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn focus_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::FocusFailed {
-            message: "Focus not supported on this platform".to_string(),
-        })
-    }
-
     #[cfg(target_os = "macos")]
     fn hide_window(&self, window_id: &str) -> Result<(), TerminalError> {
         with_ghostty_window(window_id, "hide", hide_by_pid, hide_by_title)
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn hide_window(&self, _window_id: &str) -> Result<(), TerminalError> {
-        Err(TerminalError::HideFailed {
-            message: "Hide not supported on this platform".to_string(),
-        })
     }
 
     #[cfg(target_os = "macos")]
@@ -880,9 +841,10 @@ impl TerminalBackend for GhosttyBackend {
         )
     }
 
+    crate::terminal::common::helpers::platform_unsupported!(not(target_os = "macos"), "ghostty");
+
     #[cfg(not(target_os = "macos"))]
     fn is_window_open(&self, _window_id: &str) -> Result<Option<bool>, TerminalError> {
-        // Non-macOS: window detection not supported, use PID-based detection instead
         Ok(None)
     }
 }
