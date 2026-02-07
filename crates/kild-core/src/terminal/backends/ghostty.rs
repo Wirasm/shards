@@ -1,13 +1,14 @@
 //! Ghostty terminal backend implementation.
 
-use tracing::debug;
 #[cfg(target_os = "macos")]
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::terminal::{
     common::detection::app_exists_macos, errors::TerminalError, traits::TerminalBackend,
-    types::SpawnConfig,
 };
+
+#[cfg(target_os = "macos")]
+use crate::terminal::types::SpawnConfig;
 
 #[cfg(target_os = "macos")]
 use crate::terminal::common::escape::{

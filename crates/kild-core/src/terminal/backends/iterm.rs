@@ -1,9 +1,9 @@
 //! iTerm2 terminal backend implementation.
 
-use crate::terminal::{
-    common::detection::app_exists_macos, errors::TerminalError, traits::TerminalBackend,
-    types::SpawnConfig,
-};
+use crate::terminal::{common::detection::app_exists_macos, traits::TerminalBackend};
+
+#[cfg(target_os = "macos")]
+use crate::terminal::{errors::TerminalError, types::SpawnConfig};
 
 #[cfg(target_os = "macos")]
 use crate::terminal::common::{
