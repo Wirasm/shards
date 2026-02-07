@@ -174,6 +174,7 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app, Alacritty)
 - `agents/` - Agent backend system (amp, claude, kiro, gemini, codex, opencode)
 - `git/` - Git worktree operations via git2
+- `forge/` - Forge backend system (GitHub, future: GitLab, Bitbucket, Gitea) for PR operations
 - `config/` - Hierarchical TOML config (defaults → user → project → CLI)
 - `projects/` - Project management (types, validation, persistence, manager)
 - `cleanup/` - Orphaned resource cleanup with multiple strategies
@@ -243,7 +244,7 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
-**Domains:** `session`, `terminal`, `git`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`
+**Domains:** `session`, `terminal`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`
 
 Note: `projects` domain events are `core.projects.*` (in kild-core), while UI-specific events use `ui.*` prefix.
 
@@ -266,6 +267,11 @@ warn!(event = "core.session.agent_not_available", agent = agent);
 info!(event = "core.git.worktree.create_started", branch = branch);
 info!(event = "core.git.worktree.create_completed", path = %worktree_path.display());
 info!(event = "core.git.branch.create_completed", branch = branch);
+
+// Forge domain for PR operations
+info!(event = "core.forge.pr_merge_check_started", branch = branch);
+info!(event = "core.forge.pr_merge_check_completed", merged = true);
+info!(event = "core.forge.pr_info_fetch_completed", pr_number = pr.number, state = ?pr.state);
 
 // Debug level for internal operations
 debug!(event = "core.pid_file.read_attempt", attempt = attempt, path = %pid_file.display());
@@ -316,6 +322,7 @@ grep 'event":"peek\.cli\.'  # kild-peek CLI events
 grep 'core\.session\.'  # Session events
 grep 'core\.terminal\.' # Terminal events
 grep 'core\.git\.'      # Git events
+grep 'core\.forge\.'    # Forge/PR events
 grep 'core\.projects\.' # Project management events
 grep 'ui\.watcher\.'    # File watcher events
 grep 'peek\.core\.window\.'     # Window enumeration events
@@ -349,6 +356,25 @@ Backends registered in `terminal/registry.rs`. Detection preference varies by pl
 - Linux: Alacritty (requires Hyprland window manager)
 
 Status detection uses PID tracking by default. Ghostty uses window-based detection as fallback when PID is unavailable. Alacritty on Linux uses Hyprland IPC for window management.
+
+## Forge Backend Pattern
+
+```rust
+pub trait ForgeBackend: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
+    fn is_available(&self) -> bool;
+    fn is_pr_merged(&self, worktree_path: &Path, branch: &str) -> bool;
+    fn check_pr_exists(&self, worktree_path: &Path, branch: &str) -> PrCheckResult;
+    fn fetch_pr_info(&self, worktree_path: &Path, branch: &str) -> Option<PrInfo>;
+}
+```
+
+Backends registered in `forge/registry.rs`. Forge detection via `detect_forge()` inspects git remote URL. Currently supports:
+- GitHub (via `gh` CLI)
+- Future: GitLab, Bitbucket, Gitea
+
+Override auto-detection with `[git] forge = "github"` in config. PR types (PrInfo, PrState, CiStatus, ReviewStatus) defined in `forge/types.rs`.
 
 ## Configuration Hierarchy
 
