@@ -146,6 +146,17 @@ impl UncommittedDetails {
     }
 }
 
+/// Aggregated git statistics for a worktree.
+///
+/// Combines diff stats and worktree status into a single response.
+/// Both fields are optional to support graceful degradation when
+/// individual git operations fail.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GitStats {
+    pub diff_stats: Option<DiffStats>,
+    pub worktree_status: Option<WorktreeStatus>,
+}
+
 impl ProjectInfo {
     pub fn new(id: String, name: String, path: PathBuf, remote_url: Option<String>) -> Self {
         Self {

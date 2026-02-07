@@ -203,6 +203,50 @@ impl EditorConfig {
         self.default = Some(editor);
     }
 
+    /// Resolve which editor to use based on priority chain:
+    /// CLI override > config default > $EDITOR env var > "zed" fallback.
+    pub fn resolve_editor(&self, cli_override: Option<&str>) -> String {
+        cli_override
+            .map(String::from)
+            .or_else(|| self.default().map(String::from))
+            .or_else(|| std::env::var("EDITOR").ok())
+            .unwrap_or_else(|| "zed".to_string())
+    }
+
+    /// Build a shell command string for terminal-mode editors.
+    ///
+    /// The worktree path is shell-escaped for safe interpretation.
+    /// Flags are inserted between the editor command and the path.
+    pub fn build_terminal_command(&self, editor: &str, worktree_path: &std::path::Path) -> String {
+        use crate::terminal::common::escape::shell_escape;
+        let escaped_path = shell_escape(&worktree_path.display().to_string());
+
+        if let Some(flags) = self.flags() {
+            format!("{} {} {}", editor, flags, escaped_path)
+        } else {
+            format!("{} {}", editor, escaped_path)
+        }
+    }
+
+    /// Build a `Command` for GUI-mode editors.
+    ///
+    /// Flags are split by whitespace into separate arguments.
+    /// The worktree path is added as the final argument.
+    pub fn build_gui_command(
+        &self,
+        editor: &str,
+        worktree_path: &std::path::Path,
+    ) -> std::process::Command {
+        let mut cmd = std::process::Command::new(editor);
+        if let Some(flags) = self.flags() {
+            for flag in flags.split_whitespace() {
+                cmd.arg(flag);
+            }
+        }
+        cmd.arg(worktree_path);
+        cmd
+    }
+
     /// Merge two editor configs. `other` takes precedence for set fields.
     pub fn merge(self, other: EditorConfig) -> EditorConfig {
         EditorConfig {
@@ -444,5 +488,70 @@ default = "code"
         assert_eq!(config.editor.default(), Some("code"));
         assert!(config.editor.flags().is_none());
         assert!(!config.editor.terminal());
+    }
+
+    // --- EditorConfig resolve_editor / build_command tests ---
+
+    #[test]
+    fn test_resolve_editor_cli_override() {
+        let config = <EditorConfig as Default>::default();
+        assert_eq!(config.resolve_editor(Some("vim")), "vim");
+    }
+
+    #[test]
+    fn test_resolve_editor_config_default() {
+        let mut config = <EditorConfig as Default>::default();
+        config.set_default("code".to_string());
+        assert_eq!(config.resolve_editor(None), "code");
+    }
+
+    #[test]
+    fn test_resolve_editor_cli_overrides_config() {
+        let mut config = <EditorConfig as Default>::default();
+        config.set_default("code".to_string());
+        assert_eq!(config.resolve_editor(Some("vim")), "vim");
+    }
+
+    #[test]
+    fn test_resolve_editor_fallback() {
+        let config = <EditorConfig as Default>::default();
+        let result = config.resolve_editor(None);
+        // Result is either $EDITOR value or "zed" fallback
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_build_terminal_command_no_flags() {
+        let config = <EditorConfig as Default>::default();
+        let cmd = config.build_terminal_command("vim", std::path::Path::new("/tmp/worktree"));
+        assert!(cmd.contains("vim"));
+        assert!(cmd.contains("/tmp/worktree"));
+    }
+
+    #[test]
+    fn test_build_terminal_command_with_flags() {
+        let config: EditorConfig = toml::from_str(r#"flags = "--new-window""#).unwrap();
+        let cmd = config.build_terminal_command("code", std::path::Path::new("/tmp/worktree"));
+        assert!(cmd.contains("code"));
+        assert!(cmd.contains("--new-window"));
+        assert!(cmd.contains("/tmp/worktree"));
+    }
+
+    #[test]
+    fn test_build_gui_command_no_flags() {
+        let config = <EditorConfig as Default>::default();
+        let cmd = config.build_gui_command("code", std::path::Path::new("/tmp/worktree"));
+        assert_eq!(cmd.get_program(), "code");
+    }
+
+    #[test]
+    fn test_build_gui_command_with_flags() {
+        let config: EditorConfig = toml::from_str(r#"flags = "--new-window --wait""#).unwrap();
+        let cmd = config.build_gui_command("code", std::path::Path::new("/tmp/worktree"));
+        assert_eq!(cmd.get_program(), "code");
+        // Flags are split by whitespace, so "--new-window" and "--wait" become separate args
+        let args: Vec<_> = cmd.get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--new-window")));
+        assert!(args.contains(&std::ffi::OsStr::new("--wait")));
     }
 }
