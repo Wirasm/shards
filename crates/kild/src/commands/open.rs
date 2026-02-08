@@ -5,7 +5,9 @@ use kild_core::SessionStatus;
 use kild_core::events;
 use kild_core::session_ops;
 
-use super::helpers::{FailedOperation, OpenedKild, resolve_open_mode};
+use super::helpers::{
+    FailedOperation, OpenedKild, format_partial_failure_error, resolve_open_mode,
+};
 
 pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let mode = resolve_open_mode(matches);
@@ -119,7 +121,6 @@ fn handle_open_all(mode: kild_core::OpenMode) -> Result<(), Box<dyn std::error::
     // Return error if any failures (for exit code)
     if !errors.is_empty() {
         let total_count = opened.len() + errors.len();
-        use super::helpers::format_partial_failure_error;
         return Err(format_partial_failure_error("open", errors.len(), total_count).into());
     }
 

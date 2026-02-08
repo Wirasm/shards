@@ -35,10 +35,10 @@ pub(crate) fn handle_agent_status_command(
 
     info!(event = "cli.agent_status_started", branch = %branch, status = %status);
 
-    session_ops::update_agent_status(&branch, status).map_err(|e| {
+    if let Err(e) = session_ops::update_agent_status(&branch, status) {
         error!(event = "cli.agent_status_failed", error = %e);
-        e
-    })?;
+        return Err(e.into());
+    }
 
     info!(event = "cli.agent_status_completed", branch = %branch, status = %status);
     Ok(())
