@@ -4,7 +4,7 @@ mod app;
 mod commands;
 mod table;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let app = app::build_cli();
     let matches = app.get_matches();
 
@@ -12,7 +12,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quiet = !verbose;
     init_logging(quiet);
 
-    commands::run_command(&matches)?;
-
-    Ok(())
+    if let Err(e) = commands::run_command(&matches) {
+        drop(e);
+        std::process::exit(1);
+    }
 }
