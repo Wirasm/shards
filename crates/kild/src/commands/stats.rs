@@ -30,6 +30,8 @@ enum MergeReadiness {
     NeedsRebase,
     /// Cannot merge cleanly into base
     HasConflicts,
+    /// Conflict detection failed — status unknown, treat as blocked
+    ConflictCheckFailed,
     /// Pushed but no PR exists
     NeedsPr,
     /// PR exists but CI is failing
@@ -45,6 +47,7 @@ impl fmt::Display for MergeReadiness {
             MergeReadiness::NeedsPush => write!(f, "Needs push"),
             MergeReadiness::NeedsRebase => write!(f, "Needs rebase"),
             MergeReadiness::HasConflicts => write!(f, "Has conflicts"),
+            MergeReadiness::ConflictCheckFailed => write!(f, "Conflict check failed"),
             MergeReadiness::NeedsPr => write!(f, "Needs PR"),
             MergeReadiness::CiFailing => write!(f, "CI failing"),
             MergeReadiness::ReadyLocal => write!(f, "Ready (local)"),
@@ -54,14 +57,22 @@ impl fmt::Display for MergeReadiness {
 
 /// Compute merge readiness from git health metrics, worktree status, and optional PR info.
 ///
-/// Priority: HasConflicts > NeedsRebase > NeedsPush > NeedsPr > CiFailing > Ready/ReadyLocal
+/// Priority order (highest severity first):
+/// 1. HasConflicts / ConflictCheckFailed — blocks merge entirely
+/// 2. NeedsRebase — behind base, conflicts likely if not rebased
+/// 3. NeedsPush — local-only commits, PR can't be created/updated
+/// 4. NeedsPr — pushed but no tracking PR exists
+/// 5. CiFailing — PR exists but not passing checks
+/// 6. Ready / ReadyLocal — all checks passed
 fn compute_merge_readiness(
     health: &BranchHealth,
     worktree_status: &Option<WorktreeStatus>,
     pr_info: Option<&kild_core::PrInfo>,
 ) -> MergeReadiness {
-    if health.conflict_status != ConflictStatus::Clean {
-        return MergeReadiness::HasConflicts;
+    match health.conflict_status {
+        ConflictStatus::Conflicts => return MergeReadiness::HasConflicts,
+        ConflictStatus::Unknown => return MergeReadiness::ConflictCheckFailed,
+        ConflictStatus::Clean => {}
     }
 
     if health.drift.behind > 0 {
@@ -447,7 +458,7 @@ mod tests {
         let h = make_health(ConflictStatus::Unknown, 0, true);
         assert_eq!(
             compute_merge_readiness(&h, &None, None),
-            MergeReadiness::HasConflicts
+            MergeReadiness::ConflictCheckFailed
         );
     }
 
@@ -567,6 +578,10 @@ mod tests {
         assert_eq!(MergeReadiness::NeedsPush.to_string(), "Needs push");
         assert_eq!(MergeReadiness::NeedsRebase.to_string(), "Needs rebase");
         assert_eq!(MergeReadiness::HasConflicts.to_string(), "Has conflicts");
+        assert_eq!(
+            MergeReadiness::ConflictCheckFailed.to_string(),
+            "Conflict check failed"
+        );
         assert_eq!(MergeReadiness::NeedsPr.to_string(), "Needs PR");
         assert_eq!(MergeReadiness::CiFailing.to_string(), "CI failing");
         assert_eq!(MergeReadiness::ReadyLocal.to_string(), "Ready (local)");
@@ -579,6 +594,9 @@ mod tests {
 
         let json = serde_json::to_string(&MergeReadiness::HasConflicts).unwrap();
         assert_eq!(json, "\"has_conflicts\"");
+
+        let json = serde_json::to_string(&MergeReadiness::ConflictCheckFailed).unwrap();
+        assert_eq!(json, "\"conflict_check_failed\"");
 
         let json = serde_json::to_string(&MergeReadiness::ReadyLocal).unwrap();
         assert_eq!(json, "\"ready_local\"");

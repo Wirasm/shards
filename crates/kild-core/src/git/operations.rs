@@ -544,6 +544,9 @@ fn find_merge_base(repo: &Repository, oid_a: Oid, oid_b: Oid) -> Option<Oid> {
 }
 
 /// Count commits reachable from `branch_oid` but not from `base_oid`.
+///
+/// Returns 0 on revwalk failure (errors are logged as warnings).
+/// Callers cannot distinguish between "no commits" and "check failed".
 fn count_commits_since(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> usize {
     let mut walk = match repo.revwalk() {
         Ok(rw) => rw,
@@ -599,6 +602,7 @@ fn get_last_commit_time(repo: &Repository) -> Option<String> {
 /// Compute diff stats between merge base tree and branch tip tree.
 ///
 /// Shows the total changes introduced by the branch (how big the PR will be).
+/// Returns `None` if commits cannot be resolved or diff computation fails (logged as warnings).
 fn diff_against_base(repo: &Repository, branch_oid: Oid, merge_base_oid: Oid) -> Option<DiffStats> {
     let base_commit = match repo.find_commit(merge_base_oid) {
         Ok(c) => c,
@@ -649,7 +653,10 @@ fn diff_against_base(repo: &Repository, branch_oid: Oid, merge_base_oid: Oid) ->
     })
 }
 
-/// Check for merge conflicts between branch tip and base tip.
+/// Check for merge conflicts between branch tip and base tip (in-memory).
+///
+/// Performs an in-memory merge without modifying the working tree.
+/// Returns `Unknown` if the merge cannot be performed (logged as warnings).
 fn check_conflicts(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> ConflictStatus {
     let branch_commit = match repo.find_commit(branch_oid) {
         Ok(c) => c,
@@ -750,6 +757,10 @@ fn repo_has_remote(repo: &Repository) -> bool {
 ///
 /// Returns pure git metrics only. Merge readiness (which depends on
 /// forge/PR data) is computed separately by the caller.
+///
+/// - `branch`: User branch name (without `kild/` prefix).
+/// - `base_branch`: Base branch for drift comparison (e.g., "main").
+/// - `created_at`: Session creation timestamp (RFC3339), passed through to result.
 ///
 /// Returns `Err` if the worktree cannot be opened or branch refs cannot be resolved.
 pub fn collect_branch_health(
@@ -1660,6 +1671,57 @@ mod tests {
         let health = health.unwrap();
         assert_eq!(health.drift.ahead, 1);
         assert_eq!(health.drift.behind, 2);
+    }
+
+    #[test]
+    fn test_collect_branch_health_with_conflicts() {
+        let dir = TempDir::new().unwrap();
+        init_git_repo(dir.path());
+
+        // Create initial commit on main
+        fs::write(dir.path().join("shared.txt"), "original content").unwrap();
+        git_add_commit(dir.path(), "initial on main");
+
+        Command::new("git")
+            .args(["branch", "-M", "main"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        // Create kild branch that modifies the same file
+        Command::new("git")
+            .args(["checkout", "-b", "kild/test-conflicts"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        fs::write(dir.path().join("shared.txt"), "branch version of content").unwrap();
+        git_add_commit(dir.path(), "branch change to shared file");
+
+        // Go back to main and modify the same file differently
+        Command::new("git")
+            .args(["checkout", "main"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        fs::write(dir.path().join("shared.txt"), "main version of content").unwrap();
+        git_add_commit(dir.path(), "main change to shared file");
+
+        // Switch back to kild branch for HEAD
+        Command::new("git")
+            .args(["checkout", "kild/test-conflicts"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+
+        let health =
+            collect_branch_health(dir.path(), "test-conflicts", "main", "2026-02-09T10:00:00Z");
+        assert!(health.is_ok());
+        let health = health.unwrap();
+        assert_eq!(
+            health.conflict_status,
+            ConflictStatus::Conflicts,
+            "Branches modifying the same file should detect conflicts"
+        );
     }
 
     #[test]

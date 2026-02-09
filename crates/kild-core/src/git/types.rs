@@ -1,11 +1,12 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// Git diff statistics for a worktree.
+/// Git diff statistics.
 ///
-/// Represents the number of lines added, removed, and files changed
-/// between the index (staging area) and the working directory.
-/// This captures **unstaged changes only**, not staged changes.
+/// Generic container for insertions, deletions, and files changed.
+/// Context-dependent meaning:
+/// - In `GitStats.diff_stats`: unstaged changes (index vs working directory).
+/// - In `BranchHealth.diff_vs_base`: total branch changes (merge base vs branch tip).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct DiffStats {
     /// Number of lines added
@@ -179,7 +180,7 @@ pub struct CommitActivity {
 }
 
 /// Base branch drift metrics.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BaseBranchDrift {
     /// Commits ahead of base branch (on kild branch, not on base).
     pub ahead: usize,
@@ -212,6 +213,13 @@ impl std::fmt::Display for ConflictStatus {
 }
 
 /// Comprehensive branch health for a kild.
+///
+/// # Field Relationships
+/// - `conflict_status`: Result of merging this branch into `drift.base_branch` (in-memory).
+/// - `drift.ahead/behind`: Commit counts relative to base. Meaningful even without a remote.
+/// - `diff_vs_base`: `None` if merge base calculation failed (logged as warning).
+/// - `has_remote`: When false, push/PR-related readiness checks are skipped (local-only repo).
+/// - `created_at`: Passthrough from session metadata, not validated here.
 #[derive(Debug, Clone, Serialize)]
 pub struct BranchHealth {
     pub branch: String,
@@ -219,10 +227,11 @@ pub struct BranchHealth {
     pub commit_activity: CommitActivity,
     pub drift: BaseBranchDrift,
     /// Total diff from merge base to branch tip (how big the PR will be).
+    /// `None` if merge base could not be found or diff computation failed.
     pub diff_vs_base: Option<DiffStats>,
     /// Result of in-memory merge conflict detection.
     pub conflict_status: ConflictStatus,
-    /// Whether a remote is configured for this repository.
+    /// Whether any remote is configured. When false, PR-based readiness is skipped.
     pub has_remote: bool,
 }
 
@@ -419,11 +428,15 @@ mod tests {
     }
 
     #[test]
-    fn test_base_branch_drift_default() {
-        let drift = BaseBranchDrift::default();
-        assert_eq!(drift.ahead, 0);
-        assert_eq!(drift.behind, 0);
-        assert_eq!(drift.base_branch, "");
+    fn test_base_branch_drift_construction() {
+        let drift = BaseBranchDrift {
+            ahead: 3,
+            behind: 5,
+            base_branch: "main".to_string(),
+        };
+        assert_eq!(drift.ahead, 3);
+        assert_eq!(drift.behind, 5);
+        assert_eq!(drift.base_branch, "main");
     }
 
     #[test]
