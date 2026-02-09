@@ -230,14 +230,8 @@ impl SessionManager {
         }
 
         // PTY may already be gone (e.g., process exited naturally)
-        if self.pty_manager.get(session_id).is_some()
-            && let Err(e) = self.pty_manager.destroy(session_id)
-        {
-            warn!(
-                event = "daemon.session.stop_pty_destroy_failed",
-                session_id = session_id,
-                error = %e,
-            );
+        if self.pty_manager.get(session_id).is_some() {
+            self.pty_manager.destroy(session_id)?;
         }
 
         if let Some(session) = self.sessions.get_mut(session_id) {
@@ -253,16 +247,24 @@ impl SessionManager {
     }
 
     /// Destroy a session entirely.
-    pub fn destroy_session(&mut self, session_id: &str) -> Result<(), DaemonError> {
+    ///
+    /// When `force` is true, PTY kill failures are logged but don't block cleanup.
+    /// When `force` is false, a PTY kill failure returns an error (session is still removed).
+    pub fn destroy_session(&mut self, session_id: &str, force: bool) -> Result<(), DaemonError> {
         info!(
             event = "daemon.session.destroy_started",
             session_id = session_id,
+            force = force,
         );
 
         // Kill PTY if it exists
-        if self.pty_manager.get(session_id).is_some()
-            && let Err(e) = self.pty_manager.destroy(session_id)
-        {
+        let pty_error = if self.pty_manager.get(session_id).is_some() {
+            self.pty_manager.destroy(session_id).err()
+        } else {
+            None
+        };
+
+        if let Some(ref e) = pty_error {
             warn!(
                 event = "daemon.session.destroy_pty_failed",
                 session_id = session_id,
@@ -275,12 +277,18 @@ impl SessionManager {
             );
         }
 
+        // Always remove the session state during destroy
         self.sessions.remove(session_id);
 
         info!(
             event = "daemon.session.destroy_completed",
             session_id = session_id,
         );
+
+        // Propagate PTY kill error unless force mode
+        if !force && let Some(e) = pty_error {
+            return Err(e);
+        }
 
         Ok(())
     }
@@ -464,7 +472,7 @@ mod tests {
         assert_eq!(mgr.client_count("s1"), Some(3));
 
         // Cleanup
-        let _ = mgr.destroy_session("s1");
+        let _ = mgr.destroy_session("s1", true);
     }
 
     #[tokio::test]
@@ -482,7 +490,7 @@ mod tests {
         assert_eq!(mgr.client_count("s1"), Some(0));
 
         // Cleanup
-        let _ = mgr.destroy_session("s1");
+        let _ = mgr.destroy_session("s1", true);
     }
 
     #[tokio::test]
@@ -502,7 +510,7 @@ mod tests {
         }
 
         // Cleanup
-        let _ = mgr.destroy_session("s1");
+        let _ = mgr.destroy_session("s1", true);
     }
 
     #[test]

@@ -141,11 +141,11 @@ async fn dispatch_message(
             rows,
             cols,
         } => {
-            let (rx, scrollback) = {
+            let (rx, scrollback, resize_failed) = {
                 let mut mgr = session_manager.lock().await;
 
                 // Resize to client dimensions
-                if let Err(e) = mgr.resize_pty(&session_id, rows, cols) {
+                let resize_failed = if let Err(e) = mgr.resize_pty(&session_id, rows, cols) {
                     warn!(
                         event = "daemon.connection.resize_failed",
                         session_id = session_id,
@@ -153,8 +153,13 @@ async fn dispatch_message(
                         cols = cols,
                         error = %e,
                     );
-                }
+                    true
+                } else {
+                    false
+                };
 
+                // Subscribe to broadcast BEFORE capturing scrollback to avoid
+                // losing output produced between capture and stream start.
                 let rx = match mgr.attach_client(&session_id, client_id) {
                     Ok(rx) => rx,
                     Err(e) => {
@@ -168,12 +173,15 @@ async fn dispatch_message(
 
                 let scrollback = mgr.scrollback_contents(&session_id).unwrap_or_default();
 
-                (rx, scrollback)
+                (rx, scrollback, resize_failed)
             };
 
-            // Send ack first
+            // Hold the writer lock for ack + scrollback + buffered drain so
+            // the streaming task cannot interleave before replay is complete.
             {
                 let mut w = writer.lock().await;
+
+                // Send ack
                 if let Err(e) = write_message(&mut *w, &DaemonMessage::Ack { id }).await {
                     warn!(
                         event = "daemon.connection.ack_write_failed",
@@ -183,27 +191,48 @@ async fn dispatch_message(
                     );
                     return None;
                 }
-            }
 
-            // Send scrollback replay so attaching client has context
-            if !scrollback.is_empty() {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&scrollback);
-                let scrollback_msg = DaemonMessage::PtyOutput {
-                    session_id: session_id.clone(),
-                    data: encoded,
-                };
-                let mut w = writer.lock().await;
-                if let Err(e) = write_message(&mut *w, &scrollback_msg).await {
-                    warn!(
-                        event = "daemon.connection.scrollback_write_failed",
-                        session_id = session_id,
-                        client_id = client_id,
-                        error = %e,
-                    );
+                // Notify client if resize failed (non-fatal)
+                if resize_failed {
+                    let resize_warning = DaemonMessage::SessionEvent {
+                        event: "resize_failed".to_string(),
+                        session_id: session_id.clone(),
+                        details: Some(serde_json::json!({
+                            "message": "Terminal resize failed. Display may be garbled. Try detaching and reattaching."
+                        })),
+                    };
+                    if let Err(e) = write_message(&mut *w, &resize_warning).await {
+                        warn!(
+                            event = "daemon.connection.resize_warning_write_failed",
+                            session_id = session_id,
+                            client_id = client_id,
+                            error = %e,
+                        );
+                    }
+                }
+
+                // Send scrollback replay so attaching client has context
+                if !scrollback.is_empty() {
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&scrollback);
+                    let scrollback_msg = DaemonMessage::PtyOutput {
+                        session_id: session_id.clone(),
+                        data: encoded,
+                    };
+                    if let Err(e) = write_message(&mut *w, &scrollback_msg).await {
+                        warn!(
+                            event = "daemon.connection.scrollback_write_failed",
+                            session_id = session_id,
+                            client_id = client_id,
+                            error = %e,
+                        );
+                    }
                 }
             }
+            // Writer lock released — streaming task can now write freely.
 
-            // Spawn streaming task for PTY output
+            // Spawn streaming task for PTY output.
+            // Any output that arrived between subscribe and now is buffered in
+            // the broadcast receiver and will be drained by the streaming loop.
             let writer_clone = writer.clone();
             let session_id_clone = session_id.clone();
             let shutdown_clone = shutdown.clone();
@@ -286,10 +315,10 @@ async fn dispatch_message(
         ClientMessage::DestroySession {
             id,
             session_id,
-            force: _,
+            force,
         } => {
             let mut mgr = session_manager.lock().await;
-            match mgr.destroy_session(&session_id) {
+            match mgr.destroy_session(&session_id, force) {
                 Ok(()) => Some(DaemonMessage::Ack { id }),
                 Err(e) => Some(DaemonMessage::Error {
                     id,

@@ -39,22 +39,26 @@ pub struct DaemonConfig {
 }
 
 impl DaemonConfig {
-    /// Validate configuration values. Panics on invalid config.
+    /// Validate configuration values.
     ///
     /// Called after loading config to catch misconfiguration early.
-    pub fn validate(&self) {
-        assert!(
-            self.scrollback_buffer_size > 0,
-            "scrollback_buffer_size must be > 0"
-        );
-        assert!(
-            self.client_buffer_size > 0,
-            "client_buffer_size must be > 0"
-        );
-        assert!(
-            self.shutdown_timeout_secs > 0,
-            "shutdown_timeout_secs must be > 0"
-        );
+    pub fn validate(&self) -> Result<(), crate::errors::DaemonError> {
+        if self.scrollback_buffer_size == 0 {
+            return Err(crate::errors::DaemonError::ConfigInvalid(
+                "scrollback_buffer_size must be > 0".to_string(),
+            ));
+        }
+        if self.client_buffer_size == 0 {
+            return Err(crate::errors::DaemonError::ConfigInvalid(
+                "client_buffer_size must be > 0".to_string(),
+            ));
+        }
+        if self.shutdown_timeout_secs == 0 {
+            return Err(crate::errors::DaemonError::ConfigInvalid(
+                "shutdown_timeout_secs must be > 0".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -115,7 +119,7 @@ struct ConfigFile {
 ///
 /// Reads the `[daemon]` section from the user's config file. Falls back to
 /// defaults if the file doesn't exist or the section is missing.
-pub fn load_daemon_config() -> DaemonConfig {
+pub fn load_daemon_config() -> Result<DaemonConfig, crate::errors::DaemonError> {
     let config_path = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
         .join(".kild")
@@ -143,8 +147,8 @@ pub fn load_daemon_config() -> DaemonConfig {
             DaemonConfig::default()
         }
     };
-    config.validate();
-    config
+    config.validate()?;
+    Ok(config)
 }
 
 /// Runtime status of the daemon process.
@@ -261,6 +265,36 @@ default = "claude"
         // Should get all defaults when [daemon] section is missing
         assert_eq!(file.daemon.scrollback_buffer_size, 65536);
         assert_eq!(file.daemon.shutdown_timeout_secs, 5);
+    }
+
+    #[test]
+    fn test_validate_defaults_ok() {
+        let config = DaemonConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_scrollback_fails() {
+        let mut config = DaemonConfig::default();
+        config.scrollback_buffer_size = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("scrollback_buffer_size"));
+    }
+
+    #[test]
+    fn test_validate_zero_client_buffer_fails() {
+        let mut config = DaemonConfig::default();
+        config.client_buffer_size = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("client_buffer_size"));
+    }
+
+    #[test]
+    fn test_validate_zero_shutdown_timeout_fails() {
+        let mut config = DaemonConfig::default();
+        config.shutdown_timeout_secs = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("shutdown_timeout_secs"));
     }
 
     #[test]

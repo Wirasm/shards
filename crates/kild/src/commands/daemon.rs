@@ -30,7 +30,7 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             "Starting daemon in foreground (PID: {})...",
             std::process::id()
         );
-        let config = kild_daemon::DaemonConfig::default();
+        let config = kild_daemon::load_daemon_config()?;
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(async {
             if let Err(e) = kild_daemon::run_server(config).await {
@@ -60,7 +60,10 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
                 break;
             }
             if start.elapsed() > timeout {
-                return Err("Daemon started but socket not available after 5s".into());
+                eprintln!("Daemon started but socket not available after 5s.");
+                eprintln!("Try: kild daemon start --foreground  (to see startup errors)");
+                eprintln!("Try: ps aux | grep 'kild daemon'     (to check process status)");
+                return Err("Daemon socket not available after 5s".into());
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }

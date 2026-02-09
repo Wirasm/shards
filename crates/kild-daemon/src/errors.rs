@@ -26,6 +26,9 @@ pub enum DaemonError {
     #[error("PTY error: {0}")]
     PtyError(String),
 
+    #[error("invalid daemon config: {0}")]
+    ConfigInvalid(String),
+
     #[error("daemon already running (pid {0})")]
     AlreadyRunning(u32),
 
@@ -55,6 +58,7 @@ impl KildError for DaemonError {
             DaemonError::SessionAlreadyExists(_) => "session_already_exists",
             DaemonError::SessionNotRunning(_) => "session_not_running",
             DaemonError::PtyError(_) => "pty_error",
+            DaemonError::ConfigInvalid(_) => "config_invalid",
             DaemonError::AlreadyRunning(_) => "daemon_already_running",
             DaemonError::ShutdownTimeout => "shutdown_timeout",
             DaemonError::Io(_) => "io_error",
@@ -70,6 +74,7 @@ impl KildError for DaemonError {
             DaemonError::SessionNotFound(_)
                 | DaemonError::SessionAlreadyExists(_)
                 | DaemonError::SessionNotRunning(_)
+                | DaemonError::ConfigInvalid(_)
                 | DaemonError::AlreadyRunning(_)
         )
     }
@@ -115,6 +120,10 @@ mod tests {
                 DaemonError::PtyError("alloc failed".to_string()),
                 "pty_error",
             ),
+            (
+                DaemonError::ConfigInvalid("bad value".to_string()),
+                "config_invalid",
+            ),
             (DaemonError::AlreadyRunning(1234), "daemon_already_running"),
             (DaemonError::ShutdownTimeout, "shutdown_timeout"),
         ];
@@ -130,6 +139,7 @@ mod tests {
         assert!(DaemonError::SessionAlreadyExists("x".to_string()).is_user_error());
         assert!(DaemonError::SessionNotRunning("x".to_string()).is_user_error());
         assert!(DaemonError::AlreadyRunning(123).is_user_error());
+        assert!(DaemonError::ConfigInvalid("x".to_string()).is_user_error());
 
         assert!(!DaemonError::NotRunning.is_user_error());
         assert!(!DaemonError::PtyError("x".to_string()).is_user_error());

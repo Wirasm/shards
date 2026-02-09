@@ -66,6 +66,8 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
             tracing::error!(
                 event = "daemon.server.signal_handler_failed",
                 error = %e,
+                "Signal handler failed — SIGTERM/SIGINT will not trigger graceful shutdown. \
+                 Use 'kild daemon stop' (IPC) to shut down the daemon instead.",
             );
         }
     });

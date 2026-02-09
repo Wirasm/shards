@@ -215,6 +215,37 @@ pub fn stop_daemon_session(daemon_session_id: &str) -> Result<(), DaemonClientEr
     Ok(())
 }
 
+/// Destroy a daemon-managed session (kill the PTY process and remove session state).
+pub fn destroy_daemon_session(
+    daemon_session_id: &str,
+    force: bool,
+) -> Result<(), DaemonClientError> {
+    let socket_path = crate::daemon::socket_path();
+
+    info!(
+        event = "core.daemon.destroy_session_started",
+        daemon_session_id = daemon_session_id,
+        force = force,
+    );
+
+    let request = serde_json::json!({
+        "id": format!("destroy-{}", daemon_session_id),
+        "type": "destroy_session",
+        "session_id": daemon_session_id,
+        "force": force,
+    });
+
+    let mut stream = connect(&socket_path)?;
+    send_request(&mut stream, request)?;
+
+    info!(
+        event = "core.daemon.destroy_session_completed",
+        daemon_session_id = daemon_session_id,
+    );
+
+    Ok(())
+}
+
 /// Check if the daemon is running and responsive.
 pub fn ping_daemon() -> Result<bool, DaemonClientError> {
     let socket_path = crate::daemon::socket_path();

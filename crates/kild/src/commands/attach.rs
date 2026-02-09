@@ -169,15 +169,18 @@ fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
             Ok(s) => s,
             Err(e) => {
                 error!(event = "cli.attach.stdin_serialize_failed", error = %e);
-                continue;
+                eprintln!("\r\nError: Failed to encode input. Detaching.");
+                break;
             }
         };
         if let Err(e) = writeln!(stream, "{}", serialized) {
             error!(event = "cli.attach.stdin_write_failed", error = %e);
+            eprintln!("\r\nError: Connection to daemon lost. Detaching.");
             break;
         }
         if let Err(e) = stream.flush() {
             error!(event = "cli.attach.stdin_flush_failed", error = %e);
+            eprintln!("\r\nError: Connection to daemon lost. Detaching.");
             break;
         }
     }
@@ -207,7 +210,10 @@ fn forward_daemon_to_stdout_buffered(
             Ok(v) => v,
             Err(e) => {
                 error!(event = "cli.attach.parse_failed", error = %e);
-                eprintln!("\r\nWarning: received malformed message from daemon.");
+                eprintln!(
+                    "\r\nWarning: received malformed message from daemon. \
+                     If this persists, try: kild daemon stop && kild daemon start"
+                );
                 continue;
             }
         };
@@ -224,11 +230,22 @@ fn forward_daemon_to_stdout_buffered(
             Some("pty_output_dropped") => {}
 
             Some("session_event") => {
-                if let Some(event) = msg.get("event").and_then(|e| e.as_str())
-                    && event == "stopped"
-                {
-                    eprintln!("\r\nSession process exited.");
-                    break;
+                if let Some(event) = msg.get("event").and_then(|e| e.as_str()) {
+                    match event {
+                        "stopped" => {
+                            eprintln!("\r\nSession process exited.");
+                            break;
+                        }
+                        "resize_failed" => {
+                            let detail = msg
+                                .get("details")
+                                .and_then(|d| d.get("message"))
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("Terminal resize failed. Display may be garbled.");
+                            eprintln!("\r\nWarning: {}", detail);
+                        }
+                        _ => {}
+                    }
                 }
             }
             _ => {

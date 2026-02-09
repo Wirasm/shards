@@ -110,7 +110,7 @@ cargo run -p kild -- daemon start --foreground   # Start daemon in foreground (d
 cargo run -p kild -- daemon stop                 # Stop running daemon
 cargo run -p kild -- daemon status               # Show daemon status
 cargo run -p kild -- daemon status --json        # JSON output for daemon status
-cargo run -p kild -- attach my-branch            # Attach to daemon-managed kild (Ctrl+B d to detach)
+cargo run -p kild -- attach my-branch            # Attach to daemon-managed kild (Ctrl+C to detach)
 cargo run -p kild -- stop my-branch              # Stop agent, preserve kild
 cargo run -p kild -- stop --all                  # Stop all running kilds
 cargo run -p kild -- destroy my-branch           # Destroy kild
@@ -424,7 +424,7 @@ Runtime mode resolution for `kild create`:
 3. Config `daemon.enabled = true` → Daemon mode
 4. Default → Terminal mode
 
-Sessions created with `--daemon` store `daemon_session_id` in `AgentProcess`. Use `kild attach <branch>` to connect (Ctrl+B d to detach).
+Sessions created with `--daemon` store `daemon_session_id` in `AgentProcess`. Use `kild attach <branch>` to connect (Ctrl+C to detach).
 
 ## Error Handling
 

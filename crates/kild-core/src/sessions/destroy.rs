@@ -133,13 +133,13 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
         let mut kill_errors: Vec<(u32, String)> = Vec::new();
         for agent_proc in session.agents() {
             if let Some(daemon_sid) = agent_proc.daemon_session_id() {
-                // Daemon-managed: stop via IPC
+                // Daemon-managed: destroy via IPC
                 info!(
                     event = "core.session.destroy_daemon_session",
                     daemon_session_id = daemon_sid,
                     agent = agent_proc.agent()
                 );
-                if let Err(e) = crate::daemon::client::stop_daemon_session(daemon_sid) {
+                if let Err(e) = crate::daemon::client::destroy_daemon_session(daemon_sid, force) {
                     if force {
                         warn!(
                             event = "core.session.destroy_daemon_failed_force_continue",
@@ -147,7 +147,8 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
                             error = %e
                         );
                     } else {
-                        kill_errors.push((0, e.to_string()));
+                        let pid = agent_proc.process_id().unwrap_or(0);
+                        kill_errors.push((pid, e.to_string()));
                     }
                 }
             } else {

@@ -237,7 +237,7 @@ kild daemon status --json
 
 # Attach to daemon-managed session
 kild attach <branch>
-# Press Ctrl+B d to detach
+# Press Ctrl+C to detach
 ```
 
 ### Stop a kild

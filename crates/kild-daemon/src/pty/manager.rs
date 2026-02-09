@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::errors::DaemonError;
 
@@ -213,13 +213,7 @@ impl PtyManager {
                 event = "daemon.pty.destroy_started",
                 session_id = session_id,
             );
-            if let Err(e) = pty.kill() {
-                error!(
-                    event = "daemon.pty.destroy_kill_failed",
-                    session_id = session_id,
-                    error = %e,
-                );
-            }
+            pty.kill()?;
             info!(
                 event = "daemon.pty.destroy_completed",
                 session_id = session_id,

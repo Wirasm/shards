@@ -372,3 +372,129 @@ async fn test_destroy_nonexistent_session_ok() {
     let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_stop_session_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Create a session
+    client
+        .create_session(
+            "idempotent-stop",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        )
+        .await
+        .unwrap();
+
+    // First stop should succeed
+    client.stop_session("idempotent-stop").await.unwrap();
+
+    // Verify stopped
+    let info = client.get_session("idempotent-stop").await.unwrap();
+    assert_eq!(info.status, "stopped");
+
+    // Second stop should also succeed (idempotent)
+    client.stop_session("idempotent-stop").await.unwrap();
+
+    // Still stopped
+    let info = client.get_session("idempotent-stop").await.unwrap();
+    assert_eq!(info.status, "stopped");
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_destroy_running_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Create a running session
+    let session = client
+        .create_session(
+            "destroy-running",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        )
+        .await
+        .unwrap();
+    assert_eq!(session.status, "running");
+
+    // Destroy it while running (force=true)
+    client
+        .destroy_session("destroy-running", true)
+        .await
+        .unwrap();
+
+    // Session should be gone
+    let sessions = client.list_sessions(None).await.unwrap();
+    assert!(
+        sessions.is_empty(),
+        "Destroyed session should not appear in list"
+    );
+
+    // Getting it should fail
+    let result = client.get_session("destroy-running").await;
+    assert!(result.is_err(), "Destroyed session should not be found");
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_invalid_json_does_not_crash_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Send raw garbage over a unix socket connection
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut raw_stream = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+        raw_stream.write_all(b"this is not json\n").await.unwrap();
+        raw_stream.flush().await.unwrap();
+        // Drop the connection
+    }
+
+    // Give the server a moment to process the bad input
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Server should still be responsive to valid clients
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+    let sessions = client.list_sessions(None).await.unwrap();
+    assert!(sessions.is_empty());
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
