@@ -13,17 +13,28 @@ use crate::terminal::common::{
 
 /// AppleScript template for iTerm window launching (with window ID capture).
 ///
-/// On cold start (iTerm not running), `tell application "iTerm"` launches iTerm which
-/// automatically opens a default window. We reuse that window instead of creating a
-/// second one. When iTerm is already running, we create a new window as before.
+/// Handles cold start vs warm start to avoid duplicate windows:
+/// - **Cold start** (iTerm not running): `tell application "iTerm"` launches iTerm,
+///   which automatically creates a default window. We reuse that window instead of
+///   creating a second one. A retry loop polls for the window because `activate` is
+///   asynchronous and the default window may not be ready immediately. If the window
+///   doesn't appear within ~1s, `current window` will error (surfaced to the user).
+/// - **Warm start** (iTerm already running): Creates a new window as normal.
+///
+/// The running-state check (`set iTermWasRunning`) must happen *before* the `tell`
+/// block because `tell application "iTerm"` itself launches iTerm, making it always
+/// appear as running inside the block.
 #[cfg(target_os = "macos")]
 const ITERM_SCRIPT: &str = r#"set iTermWasRunning to application "iTerm" is running
     tell application "iTerm"
         activate
         if not iTermWasRunning then
-            -- iTerm just launched. Wait for the default window to initialize
-            -- before reusing it (activate is asynchronous).
-            delay 0.5
+            -- iTerm just launched. Poll for the default window to appear
+            -- (activate is asynchronous, window may not exist yet).
+            repeat 10 times
+                if (count of windows) > 0 then exit repeat
+                delay 0.1
+            end repeat
             set newWindow to current window
         else
             set newWindow to (create window with default profile)
