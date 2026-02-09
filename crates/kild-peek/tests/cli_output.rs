@@ -42,33 +42,23 @@ fn run_peek_verbose_list_windows() -> std::process::Output {
 // Default Mode (Quiet) Behavioral Tests
 // =============================================================================
 
-/// Verify that default mode (no flags) suppresses INFO-level logs
+/// Verify that default mode (no flags) suppresses all log levels
 #[test]
-fn test_default_mode_suppresses_info_logs() {
+fn test_default_mode_suppresses_all_logs() {
     let output = run_peek_list_windows();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should NOT contain INFO-level log events
-    assert!(
-        !stderr.contains(r#""level":"INFO""#),
-        "Default mode should suppress INFO logs, but stderr contains: {}",
-        stderr
-    );
-
-    // Should NOT contain DEBUG-level log events
-    assert!(
-        !stderr.contains(r#""level":"DEBUG""#),
-        "Default mode should suppress DEBUG logs, but stderr contains: {}",
-        stderr
-    );
-
-    // Should NOT contain WARN-level log events
-    assert!(
-        !stderr.contains(r#""level":"WARN""#),
-        "Default mode should suppress WARN logs, but stderr contains: {}",
-        stderr
-    );
+    // Should NOT contain any log level — quiet mode is OFF, not ERROR
+    for level in &["INFO", "DEBUG", "WARN", "ERROR", "TRACE"] {
+        let pattern = format!(r#""level":"{}""#, level);
+        assert!(
+            !stderr.contains(&pattern),
+            "Default mode should suppress {} logs, but stderr contains: {}",
+            level,
+            stderr
+        );
+    }
 }
 
 /// Verify that stdout contains only user-facing output (no JSON logs)
@@ -124,6 +114,76 @@ fn test_verbose_flag_long_form_emits_logs() {
     assert!(
         stderr.contains(r#""level":"INFO""#),
         "--verbose long form should emit INFO logs, but stderr is: {}",
+        stderr
+    );
+}
+
+// =============================================================================
+// Clean Error Output Tests
+// =============================================================================
+
+/// Verify that error output in default mode contains ONLY the user-facing message
+#[test]
+fn test_error_output_is_clean_in_default_mode() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild-peek"))
+        .args(["diff", "/nonexistent/img1.png", "/nonexistent/img2.png"])
+        .output()
+        .expect("Failed to execute 'kild-peek diff'");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain the user-facing error message
+    assert!(
+        stderr.contains("Failed"),
+        "Should contain user-facing error message, got: {}",
+        stderr
+    );
+
+    // Should NOT contain JSON log lines
+    assert!(
+        !stderr.contains(r#""level":"ERROR""#),
+        "Default mode should suppress ERROR JSON logs, got: {}",
+        stderr
+    );
+
+    // Should NOT contain raw Rust Debug representation
+    assert!(
+        !stderr.contains("Error: "),
+        "Should not show Rust Debug error representation, got: {}",
+        stderr
+    );
+}
+
+/// Verify that verbose mode shows JSON logs on error
+#[test]
+fn test_error_output_verbose_shows_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild-peek"))
+        .args([
+            "-v",
+            "diff",
+            "/nonexistent/img1.png",
+            "/nonexistent/img2.png",
+        ])
+        .output()
+        .expect("Failed to execute 'kild-peek -v diff'");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain user-facing error
+    assert!(
+        stderr.contains("Failed"),
+        "Should contain user-facing error message, got: {}",
+        stderr
+    );
+
+    // Should contain JSON error logs in verbose mode
+    assert!(
+        stderr.contains(r#""level":"ERROR""#),
+        "Verbose mode should show ERROR JSON logs, got: {}",
         stderr
     );
 }

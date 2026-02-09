@@ -54,15 +54,12 @@ fn test_list_stdout_is_clean() {
         stdout
     );
 
-    // stderr should be empty in default (quiet) mode, or only contain errors
-    if !stderr.is_empty() {
-        // If there's output on stderr, it should only be ERROR level
-        assert!(
-            !stderr.contains(r#""level":"INFO""#),
-            "Default mode should not emit INFO logs, got: {}",
-            stderr
-        );
-    }
+    // stderr should be empty in default (quiet) mode — all log levels suppressed
+    assert!(
+        stderr.is_empty(),
+        "Default quiet mode should have empty stderr, got: {}",
+        stderr
+    );
 }
 
 /// Verify stdout has no JSON lines and is suitable for piping
@@ -92,33 +89,23 @@ fn test_output_is_pipeable() {
 // Default Mode (Quiet) Behavioral Tests
 // =============================================================================
 
-/// Verify that default mode (no flags) suppresses INFO-level logs
+/// Verify that default mode (no flags) suppresses all log levels
 #[test]
-fn test_default_mode_suppresses_info_logs() {
+fn test_default_mode_suppresses_all_logs() {
     let output = run_kild_list();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should NOT contain INFO-level log events
-    assert!(
-        !stderr.contains(r#""level":"INFO""#),
-        "Default mode should suppress INFO logs, but stderr contains: {}",
-        stderr
-    );
-
-    // Should NOT contain DEBUG-level log events
-    assert!(
-        !stderr.contains(r#""level":"DEBUG""#),
-        "Default mode should suppress DEBUG logs, but stderr contains: {}",
-        stderr
-    );
-
-    // Should NOT contain WARN-level log events
-    assert!(
-        !stderr.contains(r#""level":"WARN""#),
-        "Default mode should suppress WARN logs, but stderr contains: {}",
-        stderr
-    );
+    // Should NOT contain any log level — quiet mode is OFF, not ERROR
+    for level in &["INFO", "DEBUG", "WARN", "ERROR", "TRACE"] {
+        let pattern = format!(r#""level":"{}""#, level);
+        assert!(
+            !stderr.contains(&pattern),
+            "Default mode should suppress {} logs, but stderr contains: {}",
+            level,
+            stderr
+        );
+    }
 }
 
 /// Verify that default mode preserves user-facing stdout output
@@ -241,6 +228,20 @@ fn test_diff_nonexistent_branch_error() {
         "Error output should mention the branch name, got stderr: {}",
         stderr
     );
+
+    // Should NOT contain JSON log lines
+    assert!(
+        !stderr.contains(r#""level":"ERROR""#),
+        "Default mode should suppress ERROR JSON logs in error output, got: {}",
+        stderr
+    );
+
+    // Should NOT contain raw Rust Debug error representation
+    assert!(
+        !stderr.contains("Error: "),
+        "Should not show Rust Debug error representation, got: {}",
+        stderr
+    );
 }
 
 /// Verify that RUST_LOG env var is respected alongside verbose flag
@@ -261,12 +262,73 @@ fn test_rust_log_overrides_default_quiet() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Without -v flag, the default quiet directive (kild=error) is added
+    // Without -v flag, the default quiet directive (kild=off) is added
     // which takes precedence via add_directive. So RUST_LOG alone shouldn't
     // override the quiet default.
     assert!(
         !stderr.contains(r#""level":"INFO""#),
         "Default quiet should take precedence over RUST_LOG, stderr: {}",
+        stderr
+    );
+}
+
+// =============================================================================
+// Clean Error Output Tests
+// =============================================================================
+
+/// Verify that error output in default mode contains ONLY the user-facing message
+#[test]
+fn test_error_output_is_clean_in_default_mode() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild"))
+        .args(["status", "nonexistent-branch-that-does-not-exist"])
+        .output()
+        .expect("Failed to execute 'kild status'");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain the user-facing error message
+    assert!(
+        stderr.contains("❌"),
+        "Should contain user-facing error indicator, got: {}",
+        stderr
+    );
+
+    // Should NOT contain JSON log lines
+    assert!(
+        !stderr.contains(r#""level":"ERROR""#),
+        "Default mode should suppress ERROR JSON logs, got: {}",
+        stderr
+    );
+
+    // Should NOT contain raw Rust Debug representation
+    assert!(
+        !stderr.contains("Error: NotFound"),
+        "Should not show Rust Debug error representation, got: {}",
+        stderr
+    );
+}
+
+/// Verify that verbose mode shows JSON logs on error
+#[test]
+fn test_error_output_verbose_shows_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild"))
+        .args(["-v", "status", "nonexistent-branch-that-does-not-exist"])
+        .output()
+        .expect("Failed to execute 'kild -v status'");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain user-facing error
+    assert!(stderr.contains("❌"));
+
+    // Should contain JSON error logs in verbose mode
+    assert!(
+        stderr.contains(r#""level":"ERROR""#),
+        "Verbose mode should show ERROR JSON logs, got: {}",
         stderr
     );
 }

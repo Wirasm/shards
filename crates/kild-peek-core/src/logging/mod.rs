@@ -2,11 +2,11 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 /// Initialize logging with optional quiet mode.
 ///
-/// When `quiet` is true, only error-level events are emitted.
+/// When `quiet` is true, all log output is suppressed.
 /// When `quiet` is false, info-level and above events are emitted (default).
 pub fn init_logging(quiet: bool) {
     let directive = if quiet {
-        "kild_peek=error"
+        "kild_peek=off"
     } else {
         "kild_peek=info"
     };
