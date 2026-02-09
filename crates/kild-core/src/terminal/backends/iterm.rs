@@ -12,9 +12,27 @@ use crate::terminal::common::{
 };
 
 /// AppleScript template for iTerm window launching (with window ID capture).
+///
+/// Avoids duplicate windows on cold start:
+/// - **Cold start**: Reuses iTerm's auto-created default window (polls up to 1s for it to appear)
+/// - **Warm start**: Creates a new window as normal
+///
+/// The running-state check must occur before the `tell` block since `tell application "iTerm"`
+/// launches iTerm, making it always appear running inside the block.
 #[cfg(target_os = "macos")]
-const ITERM_SCRIPT: &str = r#"tell application "iTerm"
-        set newWindow to (create window with default profile)
+const ITERM_SCRIPT: &str = r#"set iTermWasRunning to application "iTerm" is running
+    tell application "iTerm"
+        activate
+        if iTermWasRunning then
+            set newWindow to (create window with default profile)
+        else
+            -- Cold start: poll for default window (activate is async)
+            repeat 10 times
+                if (count of windows) > 0 then exit repeat
+                delay 0.1
+            end repeat
+            set newWindow to current window
+        end if
         set windowId to id of newWindow
         tell current session of newWindow
             write text "{command}"
@@ -160,5 +178,23 @@ mod tests {
         assert!(script.contains("/tmp"));
         assert!(script.contains("echo hello"));
         assert!(script.contains("iTerm"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_iterm_script_checks_running_state() {
+        assert!(ITERM_SCRIPT.contains(r#"application "iTerm" is running"#));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_iterm_script_handles_cold_start() {
+        assert!(ITERM_SCRIPT.contains("current window"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_iterm_script_handles_warm_start() {
+        assert!(ITERM_SCRIPT.contains("create window with default profile"));
     }
 }
