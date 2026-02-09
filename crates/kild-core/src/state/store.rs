@@ -111,10 +111,9 @@ mod tests {
         let events = store
             .dispatch(Command::CreateKild {
                 branch: "feat".to_string(),
-                agent: None,
+                agent_mode: crate::state::types::AgentMode::DefaultAgent,
                 note: None,
                 project_path: None,
-                no_agent: false,
             })
             .unwrap();
         assert!(matches!(&events[0], Event::KildCreated { branch, .. } if branch == "feat"));
@@ -222,10 +221,9 @@ mod tests {
         let commands: Vec<Command> = vec![
             Command::CreateKild {
                 branch: "b".to_string(),
-                agent: None,
+                agent_mode: crate::state::types::AgentMode::DefaultAgent,
                 note: None,
                 project_path: None,
-                no_agent: false,
             },
             Command::DestroyKild {
                 branch: "b".to_string(),

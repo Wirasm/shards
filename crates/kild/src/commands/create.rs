@@ -18,15 +18,16 @@ pub(crate) fn handle_create_command(
     let mut config = load_config_with_warning();
     let no_agent = matches.get_flag("no-agent");
 
-    // Apply CLI overrides only if provided (skip agent-specific overrides when --no-agent)
-    let agent_override = if no_agent {
-        None
-    } else {
-        matches.get_one::<String>("agent").cloned()
-    };
-    if let Some(agent) = &agent_override {
+    // Determine agent mode from CLI flags
+    let agent_mode = if no_agent {
+        kild_core::AgentMode::BareShell
+    } else if let Some(agent) = matches.get_one::<String>("agent").cloned() {
         config.agent.default = agent.clone();
-    }
+        kild_core::AgentMode::Agent(agent)
+    } else {
+        kild_core::AgentMode::DefaultAgent
+    };
+
     if let Some(terminal) = matches.get_one::<String>("terminal") {
         config.terminal.preferred = Some(terminal.clone());
     }
@@ -42,25 +43,23 @@ pub(crate) fn handle_create_command(
     info!(
         event = "cli.create_started",
         branch = branch,
-        agent = config.agent.default,
-        no_agent = no_agent,
+        agent_mode = ?agent_mode,
         note = ?note
     );
 
     let base_branch = matches.get_one::<String>("base").cloned();
     let no_fetch = matches.get_flag("no-fetch");
 
-    let request = CreateSessionRequest::new(branch.clone(), agent_override, note)
+    let request = CreateSessionRequest::new(branch.clone(), agent_mode, note)
         .with_base_branch(base_branch)
-        .with_no_fetch(no_fetch)
-        .with_no_agent(no_agent);
+        .with_no_fetch(no_fetch);
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {
             println!("✅ KILD created successfully!");
             println!("   Branch: {}", session.branch);
-            if no_agent {
-                println!("   Agent: {} (default, not running)", session.agent);
+            if session.agent == "shell" {
+                println!("   Agent: (none - bare shell)");
             } else {
                 println!("   Agent: {}", session.agent);
             }

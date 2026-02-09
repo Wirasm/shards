@@ -68,13 +68,13 @@ pub fn create_kild(
         return Err("Branch name cannot be empty".to_string());
     }
 
+    // UI always creates with an agent — bare shell (AgentMode::BareShell) is CLI-only.
     dispatch_command(
         Command::CreateKild {
             branch,
-            agent: Some(agent),
+            agent_mode: kild_core::AgentMode::Agent(agent),
             note,
             project_path,
-            no_agent: false,
         },
         "ui.create_kild",
     )
