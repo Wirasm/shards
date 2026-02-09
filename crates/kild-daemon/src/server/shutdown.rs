@@ -5,13 +5,13 @@ use tracing::info;
 ///
 /// When the signal is received, cancels the provided token to notify
 /// all tasks to drain gracefully.
-pub async fn wait_for_shutdown_signal(token: CancellationToken) {
+pub async fn wait_for_shutdown_signal(token: CancellationToken) -> Result<(), std::io::Error> {
     let ctrl_c = tokio::signal::ctrl_c();
 
     #[cfg(unix)]
     {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
         tokio::select! {
             _ = ctrl_c => {
@@ -30,4 +30,5 @@ pub async fn wait_for_shutdown_signal(token: CancellationToken) {
     }
 
     token.cancel();
+    Ok(())
 }

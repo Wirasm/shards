@@ -61,7 +61,14 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
 
     // Spawn signal handler
     let signal_shutdown = shutdown.clone();
-    tokio::spawn(shutdown::wait_for_shutdown_signal(signal_shutdown));
+    tokio::spawn(async move {
+        if let Err(e) = shutdown::wait_for_shutdown_signal(signal_shutdown).await {
+            tracing::error!(
+                event = "daemon.server.signal_handler_failed",
+                error = %e,
+            );
+        }
+    });
 
     // Accept loop
     loop {

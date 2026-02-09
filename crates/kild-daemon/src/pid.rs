@@ -82,12 +82,19 @@ pub fn check_daemon_running(pid_path: &Path) -> Option<u32> {
     if is_process_alive(pid) {
         Some(pid)
     } else {
-        debug!(
+        warn!(
             event = "daemon.pid.stale_detected",
             pid = pid,
             path = %pid_path.display(),
         );
-        let _ = remove_pid_file(pid_path);
+        if let Err(e) = remove_pid_file(pid_path) {
+            warn!(
+                event = "daemon.pid.stale_remove_failed",
+                pid = pid,
+                path = %pid_path.display(),
+                error = %e,
+            );
+        }
         None
     }
 }

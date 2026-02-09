@@ -20,6 +20,14 @@ pub struct ManagedPty {
     size: PtySize,
 }
 
+impl std::fmt::Debug for ManagedPty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedPty")
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ManagedPty {
     pub fn size(&self) -> PtySize {
         self.size
@@ -171,10 +179,9 @@ impl PtyManager {
             pid = ?pid,
         );
 
-        Ok(self
-            .ptys
-            .get(session_id)
-            .expect("PTY just inserted must exist"))
+        self.ptys.get(session_id).ok_or_else(|| {
+            DaemonError::PtyError("HashMap corruption: just-inserted PTY missing".to_string())
+        })
     }
 
     /// Get a reference to a managed PTY.
@@ -237,5 +244,99 @@ impl PtyManager {
 impl Default for PtyManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_with_nonexistent_command_returns_error() {
+        let mut mgr = PtyManager::new();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let result = mgr.create(
+            "s1",
+            "/nonexistent/binary/that/does/not/exist",
+            &[],
+            tmpdir.path(),
+            24,
+            80,
+            &[],
+        );
+        match result {
+            Err(DaemonError::PtyError(msg)) => {
+                assert!(msg.contains("spawn"), "expected spawn error, got: {}", msg)
+            }
+            Err(other) => panic!("expected PtyError, got: {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+        // No PTY should be tracked after failure
+        assert_eq!(mgr.count(), 0);
+    }
+
+    #[test]
+    fn test_create_with_duplicate_session_id_fails() {
+        let mut mgr = PtyManager::new();
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        mgr.create("s1", "sleep", &["10"], tmpdir.path(), 24, 80, &[])
+            .unwrap();
+        assert_eq!(mgr.count(), 1);
+
+        let result = mgr.create("s1", "sleep", &["10"], tmpdir.path(), 24, 80, &[]);
+        match result {
+            Err(DaemonError::SessionAlreadyExists(id)) => assert_eq!(id, "s1"),
+            Err(other) => panic!("expected SessionAlreadyExists, got: {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+
+        // Cleanup
+        let _ = mgr.destroy("s1");
+    }
+
+    #[test]
+    fn test_no_pty_tracked_after_failed_create() {
+        let mut mgr = PtyManager::new();
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        let _ = mgr.create(
+            "fail-session",
+            "/this/binary/does/not/exist",
+            &[],
+            tmpdir.path(),
+            24,
+            80,
+            &[],
+        );
+
+        assert!(mgr.get("fail-session").is_none());
+        assert_eq!(mgr.count(), 0);
+    }
+
+    #[test]
+    fn test_create_and_destroy_lifecycle() {
+        let mut mgr = PtyManager::new();
+        let tmpdir = tempfile::tempdir().unwrap();
+
+        mgr.create("s1", "sleep", &["10"], tmpdir.path(), 24, 80, &[])
+            .unwrap();
+        assert_eq!(mgr.count(), 1);
+        assert!(mgr.get("s1").is_some());
+
+        mgr.destroy("s1").unwrap();
+        assert_eq!(mgr.count(), 0);
+        assert!(mgr.get("s1").is_none());
+    }
+
+    #[test]
+    fn test_destroy_nonexistent_returns_error() {
+        let mut mgr = PtyManager::new();
+        let result = mgr.destroy("nonexistent");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DaemonError::SessionNotFound(id) => assert_eq!(id, "nonexistent"),
+            other => panic!("expected SessionNotFound, got: {:?}", other),
+        }
     }
 }

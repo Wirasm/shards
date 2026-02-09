@@ -195,3 +195,180 @@ async fn test_session_not_found_error() {
     let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_duplicate_session_id_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Create first session
+    client
+        .create_session("dup-test", "/tmp", "/bin/sh", &[], &HashMap::new(), 24, 80)
+        .await
+        .unwrap();
+
+    // Try to create a session with the same ID
+    let result = client
+        .create_session("dup-test", "/tmp", "/bin/sh", &[], &HashMap::new(), 24, 80)
+        .await;
+    assert!(result.is_err());
+
+    // Clean up
+    client.stop_session("dup-test").await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_create_session_with_invalid_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Try to create a session with a non-existent command
+    let result = client
+        .create_session(
+            "bad-cmd",
+            "/tmp",
+            "/nonexistent/command/that/does/not/exist",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        )
+        .await;
+    assert!(result.is_err(), "Should fail with invalid command");
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_multiple_clients_attach_to_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Create session with first client
+    let mut client1 = DaemonClient::connect(&socket_path).await.unwrap();
+    client1
+        .create_session(
+            "multi-attach",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        )
+        .await
+        .unwrap();
+
+    // Attach first client
+    client1.attach("multi-attach", 24, 80).await.unwrap();
+
+    // Attach second client
+    let mut client2 = DaemonClient::connect(&socket_path).await.unwrap();
+    client2.attach("multi-attach", 24, 80).await.unwrap();
+
+    // Attach third client
+    let mut client3 = DaemonClient::connect(&socket_path).await.unwrap();
+    client3.attach("multi-attach", 24, 80).await.unwrap();
+
+    // Verify session still running with a fresh connection
+    let mut admin_client = DaemonClient::connect(&socket_path).await.unwrap();
+    let info = admin_client.get_session("multi-attach").await.unwrap();
+    assert_eq!(info.status, "running");
+    assert_eq!(info.client_count, Some(3));
+
+    // Clean up
+    admin_client.stop_session("multi-attach").await.unwrap();
+    admin_client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_pty_exit_transitions_session_to_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Create a session that will exit immediately (run `true` which exits 0)
+    client
+        .create_session(
+            "exit-test",
+            "/tmp",
+            "/usr/bin/true",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        )
+        .await
+        .unwrap();
+
+    // Wait for the process to exit and the daemon to handle it
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Session should have transitioned to stopped
+    let info = client.get_session("exit-test").await.unwrap();
+    assert_eq!(
+        info.status, "stopped",
+        "Session should be stopped after PTY exit"
+    );
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_destroy_nonexistent_session_ok() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Destroy should succeed for non-existent session (idempotent)
+    // or return an error — either way it should not crash the server
+    let _result = client.destroy_session("nonexistent", false).await;
+
+    // Server should still be responsive
+    let sessions = client.list_sessions(None).await.unwrap();
+    assert!(sessions.is_empty());
+
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}

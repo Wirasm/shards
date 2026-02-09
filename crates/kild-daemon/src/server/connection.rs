@@ -365,7 +365,15 @@ async fn stream_pty_output(
                             bytes_dropped: n as usize,
                         };
                         let mut w = writer.lock().await;
-                        let _ = write_message(&mut *w, &msg).await;
+                        if let Err(e) = write_message(&mut *w, &msg).await {
+                            error!(
+                                event = "daemon.connection.lag_notification_failed",
+                                session_id = session_id,
+                                bytes_dropped = n,
+                                error = %e,
+                            );
+                            break;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         debug!(

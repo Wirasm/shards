@@ -155,29 +155,69 @@ fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
             Err(_) => break,
         };
 
-        // Check for detach sequence: Ctrl+B followed by 'd'
+        // Filter out detach sequence bytes (Ctrl+B + 'd') and build clean buffer
+        let mut filtered = Vec::with_capacity(n);
+        let mut detach = false;
+
         for &byte in &buf[..n] {
-            if ctrl_b_pressed && byte == b'd' {
-                let detach_msg = serde_json::json!({
-                    "id": "detach-1",
-                    "type": "detach",
-                    "session_id": session_id,
-                });
-                let _ = writeln!(stream, "{}", serde_json::to_string(&detach_msg).unwrap());
-                return;
+            if ctrl_b_pressed {
+                if byte == b'd' {
+                    // Detach sequence complete — send detach, don't forward anything
+                    detach = true;
+                    break;
+                }
+                // Ctrl+B was not followed by 'd', emit the held Ctrl+B
+                filtered.push(0x02);
+                ctrl_b_pressed = false;
             }
-            ctrl_b_pressed = byte == 0x02; // Ctrl+B
+
+            if byte == 0x02 {
+                // Hold Ctrl+B until we see what comes next
+                ctrl_b_pressed = true;
+            } else {
+                filtered.push(byte);
+            }
         }
 
-        // Forward input to daemon
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+        if detach {
+            let detach_msg = serde_json::json!({
+                "id": "detach-1",
+                "type": "detach",
+                "session_id": session_id,
+            });
+            match serde_json::to_string(&detach_msg) {
+                Ok(msg) => {
+                    let _ = writeln!(stream, "{}", msg);
+                    let _ = stream.flush();
+                }
+                Err(e) => {
+                    error!(event = "cli.attach.detach_serialize_failed", error = %e);
+                }
+            }
+            return;
+        }
+
+        // Nothing to forward if all bytes were filtered out
+        if filtered.is_empty() {
+            continue;
+        }
+
+        // Forward filtered input to daemon
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&filtered);
         let input_msg = serde_json::json!({
-            "id": format!("write-{}", n),
+            "id": format!("write-{}", filtered.len()),
             "type": "write_stdin",
             "session_id": session_id,
             "data": encoded,
         });
-        if let Err(e) = writeln!(stream, "{}", serde_json::to_string(&input_msg).unwrap()) {
+        let serialized = match serde_json::to_string(&input_msg) {
+            Ok(s) => s,
+            Err(e) => {
+                error!(event = "cli.attach.stdin_serialize_failed", error = %e);
+                continue;
+            }
+        };
+        if let Err(e) = writeln!(stream, "{}", serialized) {
             error!(event = "cli.attach.stdin_write_failed", error = %e);
             eprintln!("\r\nConnection to daemon lost.");
             break;

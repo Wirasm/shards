@@ -289,3 +289,81 @@ impl DaemonClient {
         Ok(msg)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_error_session_not_found() {
+        let msg = DaemonMessage::Error {
+            id: "req-1".to_string(),
+            code: "session_not_found".to_string(),
+            message: "no such session".to_string(),
+        };
+        let result = DaemonClient::check_error(&msg);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            DaemonError::SessionNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn test_check_error_session_already_exists() {
+        let msg = DaemonMessage::Error {
+            id: "req-2".to_string(),
+            code: "session_already_exists".to_string(),
+            message: "duplicate".to_string(),
+        };
+        let result = DaemonClient::check_error(&msg);
+        assert!(matches!(
+            result.unwrap_err(),
+            DaemonError::SessionAlreadyExists(_)
+        ));
+    }
+
+    #[test]
+    fn test_check_error_session_not_running() {
+        let msg = DaemonMessage::Error {
+            id: "req-3".to_string(),
+            code: "session_not_running".to_string(),
+            message: "stopped".to_string(),
+        };
+        let result = DaemonClient::check_error(&msg);
+        assert!(matches!(
+            result.unwrap_err(),
+            DaemonError::SessionNotRunning(_)
+        ));
+    }
+
+    #[test]
+    fn test_check_error_pty_error() {
+        let msg = DaemonMessage::Error {
+            id: "req-4".to_string(),
+            code: "pty_error".to_string(),
+            message: "alloc failed".to_string(),
+        };
+        let result = DaemonClient::check_error(&msg);
+        assert!(matches!(result.unwrap_err(), DaemonError::PtyError(_)));
+    }
+
+    #[test]
+    fn test_check_error_unknown_code_maps_to_protocol_error() {
+        let msg = DaemonMessage::Error {
+            id: "req-5".to_string(),
+            code: "some_unknown_error".to_string(),
+            message: "unexpected".to_string(),
+        };
+        let result = DaemonClient::check_error(&msg);
+        assert!(matches!(result.unwrap_err(), DaemonError::ProtocolError(_)));
+    }
+
+    #[test]
+    fn test_check_error_non_error_message_ok() {
+        let msg = DaemonMessage::Ack {
+            id: "req-1".to_string(),
+        };
+        assert!(DaemonClient::check_error(&msg).is_ok());
+    }
+}

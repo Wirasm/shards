@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use tokio::sync::broadcast;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::errors::DaemonError;
 use crate::pty::manager::PtyManager;
@@ -39,7 +39,7 @@ impl SessionManager {
     /// Allocate a new client ID.
     pub fn next_client_id(&mut self) -> ClientId {
         let id = self.next_client_id;
-        self.next_client_id += 1;
+        self.next_client_id = self.next_client_id.wrapping_add(1);
         id
     }
 
@@ -245,6 +245,11 @@ impl SessionManager {
                 session_id = session_id,
                 error = %e,
             );
+            warn!(
+                event = "daemon.session.possible_orphaned_process",
+                session_id = session_id,
+                message = "PTY kill failed during destroy — child process may still be running",
+            );
         }
 
         self.sessions.remove(session_id);
@@ -313,6 +318,12 @@ impl SessionManager {
         None
     }
 
+    /// Get client count for a session (test helper).
+    #[cfg(test)]
+    pub fn client_count(&self, session_id: &str) -> Option<usize> {
+        self.sessions.get(session_id).map(|s| s.client_count())
+    }
+
     /// Stop all running sessions (called during shutdown).
     pub fn stop_all(&mut self) {
         let session_ids: Vec<String> = self
@@ -322,6 +333,7 @@ impl SessionManager {
             .map(|s| s.id().to_string())
             .collect();
 
+        let mut failed_stops: Vec<String> = Vec::new();
         for session_id in session_ids {
             if let Err(e) = self.stop_session(&session_id) {
                 warn!(
@@ -329,7 +341,152 @@ impl SessionManager {
                     session_id = session_id,
                     error = %e,
                 );
+                failed_stops.push(session_id);
             }
         }
+
+        if !failed_stops.is_empty() {
+            error!(
+                event = "daemon.session.shutdown_incomplete",
+                failed_count = failed_stops.len(),
+                failed_sessions = ?failed_stops,
+                message = "Some sessions failed to stop — possible orphaned processes",
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pty::output::PtyExitEvent;
+    use crate::types::DaemonConfig;
+
+    fn test_manager() -> (
+        SessionManager,
+        tokio::sync::mpsc::UnboundedReceiver<PtyExitEvent>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let config = DaemonConfig::default();
+        (SessionManager::new(config, tx), rx)
+    }
+
+    #[tokio::test]
+    async fn test_handle_pty_exit_transitions_to_stopped() {
+        let (mut mgr, _rx) = test_manager();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wd = tmpdir.path().to_str().unwrap();
+
+        // Create a session running "echo hello" (exits immediately)
+        mgr.create_session("s1", wd, "echo", &["hello".to_string()], &[], 24, 80)
+            .unwrap();
+
+        // Verify it starts as Running
+        let info = mgr.get_session("s1").unwrap();
+        assert_eq!(info.status, "running");
+
+        // Simulate PTY exit
+        mgr.handle_pty_exit("s1");
+
+        // Session should now be Stopped
+        let info = mgr.get_session("s1").unwrap();
+        assert_eq!(info.status, "stopped");
+    }
+
+    #[test]
+    fn test_handle_pty_exit_nonexistent_session_returns_none() {
+        let (mut mgr, _rx) = test_manager();
+
+        // Should not panic, should return None
+        let result = mgr.handle_pty_exit("nonexistent");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handle_pty_exit_removes_pty() {
+        let (mut mgr, _rx) = test_manager();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wd = tmpdir.path().to_str().unwrap();
+
+        mgr.create_session("s1", wd, "echo", &["hi".to_string()], &[], 24, 80)
+            .unwrap();
+
+        assert_eq!(mgr.active_pty_count(), 1);
+
+        mgr.handle_pty_exit("s1");
+
+        // PTY should be removed
+        assert_eq!(mgr.active_pty_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_attach_multiple_clients_tracks_count() {
+        let (mut mgr, _rx) = test_manager();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wd = tmpdir.path().to_str().unwrap();
+
+        // Use "sleep" to keep the session running during the test
+        mgr.create_session("s1", wd, "sleep", &["10".to_string()], &[], 24, 80)
+            .unwrap();
+
+        assert_eq!(mgr.client_count("s1"), Some(0));
+
+        let _rx1 = mgr.attach_client("s1", 1).unwrap();
+        assert_eq!(mgr.client_count("s1"), Some(1));
+
+        let _rx2 = mgr.attach_client("s1", 2).unwrap();
+        assert_eq!(mgr.client_count("s1"), Some(2));
+
+        let _rx3 = mgr.attach_client("s1", 3).unwrap();
+        assert_eq!(mgr.client_count("s1"), Some(3));
+
+        // Cleanup
+        let _ = mgr.destroy_session("s1");
+    }
+
+    #[tokio::test]
+    async fn test_detach_without_prior_attach_is_idempotent() {
+        let (mut mgr, _rx) = test_manager();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wd = tmpdir.path().to_str().unwrap();
+
+        mgr.create_session("s1", wd, "sleep", &["10".to_string()], &[], 24, 80)
+            .unwrap();
+
+        // Detaching a client that was never attached should succeed without error
+        let result = mgr.detach_client("s1", 42);
+        assert!(result.is_ok());
+        assert_eq!(mgr.client_count("s1"), Some(0));
+
+        // Cleanup
+        let _ = mgr.destroy_session("s1");
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_session_fails() {
+        let (mut mgr, _rx) = test_manager();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wd = tmpdir.path().to_str().unwrap();
+
+        mgr.create_session("s1", wd, "sleep", &["10".to_string()], &[], 24, 80)
+            .unwrap();
+
+        let result = mgr.create_session("s1", wd, "sleep", &["10".to_string()], &[], 24, 80);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DaemonError::SessionAlreadyExists(id) => assert_eq!(id, "s1"),
+            other => panic!("expected SessionAlreadyExists, got: {:?}", other),
+        }
+
+        // Cleanup
+        let _ = mgr.destroy_session("s1");
+    }
+
+    #[test]
+    fn test_next_client_id_increments() {
+        let (mut mgr, _rx) = test_manager();
+        assert_eq!(mgr.next_client_id(), 1);
+        assert_eq!(mgr.next_client_id(), 2);
+        assert_eq!(mgr.next_client_id(), 3);
     }
 }

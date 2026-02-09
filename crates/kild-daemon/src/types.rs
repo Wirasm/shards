@@ -38,6 +38,26 @@ pub struct DaemonConfig {
     pub shutdown_timeout_secs: u64,
 }
 
+impl DaemonConfig {
+    /// Validate configuration values. Panics on invalid config.
+    ///
+    /// Called after loading config to catch misconfiguration early.
+    pub fn validate(&self) {
+        assert!(
+            self.scrollback_buffer_size > 0,
+            "scrollback_buffer_size must be > 0"
+        );
+        assert!(
+            self.client_buffer_size > 0,
+            "client_buffer_size must be > 0"
+        );
+        assert!(
+            self.shutdown_timeout_secs > 0,
+            "shutdown_timeout_secs must be > 0"
+        );
+    }
+}
+
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
@@ -101,7 +121,7 @@ pub fn load_daemon_config() -> DaemonConfig {
         .join(".kild")
         .join("config.toml");
 
-    match std::fs::read_to_string(&config_path) {
+    let config = match std::fs::read_to_string(&config_path) {
         Ok(contents) => match toml::from_str::<ConfigFile>(&contents) {
             Ok(file) => file.daemon,
             Err(e) => {
@@ -122,7 +142,9 @@ pub fn load_daemon_config() -> DaemonConfig {
             );
             DaemonConfig::default()
         }
-    }
+    };
+    config.validate();
+    config
 }
 
 /// Runtime status of the daemon process.

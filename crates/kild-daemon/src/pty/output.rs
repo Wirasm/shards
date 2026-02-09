@@ -13,6 +13,7 @@ pub struct ScrollbackBuffer {
 
 impl ScrollbackBuffer {
     pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "ScrollbackBuffer capacity must be non-zero");
         Self {
             buffer: VecDeque::with_capacity(capacity),
             capacity,
@@ -120,8 +121,18 @@ pub fn spawn_pty_reader(
                 Ok(n) => {
                     let data = buf[..n].to_vec();
                     // Feed scrollback buffer for replay on attach
-                    if let Ok(mut sb) = scrollback.lock() {
-                        sb.push(&data);
+                    match scrollback.lock() {
+                        Ok(mut sb) => sb.push(&data),
+                        Err(e) => {
+                            error!(
+                                event = "daemon.pty.scrollback_lock_failed",
+                                session_id = session_id,
+                                error = %e,
+                                "Scrollback mutex poisoned, terminal history may be incomplete",
+                            );
+                            // Recover: a poisoned mutex still holds valid data
+                            e.into_inner().push(&data);
+                        }
                     }
                     // Ignore send errors — no receivers is fine
                     let _ = output_tx.send(data);
@@ -136,7 +147,10 @@ pub fn spawn_pty_reader(
                 }
             }
         }
-        // Notify that the PTY reader has exited
+        // Notify that the PTY reader has exited.
+        // Send failure here means the receiver (daemon main loop) has been dropped,
+        // which only happens during daemon shutdown. The error log is sufficient
+        // since shutdown will clean up all sessions regardless.
         if let Some(tx) = exit_tx
             && tx
                 .send(PtyExitEvent {
@@ -248,5 +262,27 @@ mod tests {
         // Feed with no receivers should not panic
         broadcaster.feed(b"no one listening");
         assert_eq!(broadcaster.scrollback_contents(), b"no one listening");
+    }
+
+    #[test]
+    fn test_scrollback_buffer_single_byte_capacity() {
+        let mut buf = ScrollbackBuffer::new(1);
+        buf.push(b"abc");
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.contents(), b"c");
+    }
+
+    #[test]
+    fn test_scrollback_buffer_push_larger_than_capacity() {
+        let mut buf = ScrollbackBuffer::new(3);
+        buf.push(b"abcdefghij");
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.contents(), b"hij");
+    }
+
+    #[test]
+    #[should_panic(expected = "ScrollbackBuffer capacity must be non-zero")]
+    fn test_scrollback_buffer_zero_capacity_panics() {
+        ScrollbackBuffer::new(0);
     }
 }
