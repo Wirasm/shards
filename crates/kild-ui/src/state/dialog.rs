@@ -25,10 +25,7 @@ pub enum DialogState {
         error: Option<String>,
     },
     /// Add project dialog is open.
-    AddProject {
-        form: AddProjectFormState,
-        error: Option<String>,
-    },
+    AddProject { error: Option<String> },
 }
 
 impl DialogState {
@@ -64,30 +61,29 @@ impl DialogState {
         }
     }
 
-    /// Open the add project dialog with default form state.
+    /// Open the add project dialog.
     pub fn open_add_project() -> Self {
-        DialogState::AddProject {
-            form: AddProjectFormState::default(),
-            error: None,
-        }
+        DialogState::AddProject { error: None }
     }
 }
 
 /// Which field is focused in the create dialog.
+///
+/// Used for the agent selector focus state (Input fields manage their own focus).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum CreateDialogField {
     #[default]
     BranchName,
     Agent,
-    Note,
 }
 
 /// Form state for creating a new kild.
+///
+/// Text input state is managed by gpui-component's `InputState` entities
+/// in MainView. This struct only tracks agent selection and focus state.
 #[derive(Clone, Debug)]
 pub struct CreateFormState {
-    pub branch_name: String,
     pub selected_agent_index: usize,
-    pub note: String,
     pub focused_field: CreateDialogField,
 }
 
@@ -125,9 +121,7 @@ impl Default for CreateFormState {
                 "Agent list is empty - using hardcoded fallback"
             );
             return Self {
-                branch_name: String::new(),
                 selected_agent_index: 0,
-                note: String::new(),
                 focused_field: CreateDialogField::default(),
             };
         }
@@ -146,28 +140,10 @@ impl Default for CreateFormState {
             });
 
         Self {
-            branch_name: String::new(),
             selected_agent_index: index,
-            note: String::new(),
             focused_field: CreateDialogField::default(),
         }
     }
-}
-
-/// Which field is focused in the add project dialog.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum AddProjectDialogField {
-    #[default]
-    Path,
-    Name,
-}
-
-/// Form state for adding a new project.
-#[derive(Clone, Debug, Default)]
-pub struct AddProjectFormState {
-    pub path: String,
-    pub name: String,
-    pub focused_field: AddProjectDialogField,
 }
 
 #[cfg(test)]
@@ -202,37 +178,6 @@ mod tests {
     #[test]
     fn test_create_dialog_field_default_is_branch_name() {
         let field = CreateDialogField::default();
-        assert_eq!(field, CreateDialogField::BranchName);
-    }
-
-    #[test]
-    fn test_tab_navigation_cycles_correctly() {
-        // Simulates the tab navigation state machine:
-        // BranchName -> Agent -> Note -> BranchName
-        let mut field = CreateDialogField::BranchName;
-
-        // Tab 1: BranchName -> Agent
-        field = match field {
-            CreateDialogField::BranchName => CreateDialogField::Agent,
-            CreateDialogField::Agent => CreateDialogField::Note,
-            CreateDialogField::Note => CreateDialogField::BranchName,
-        };
-        assert_eq!(field, CreateDialogField::Agent);
-
-        // Tab 2: Agent -> Note
-        field = match field {
-            CreateDialogField::BranchName => CreateDialogField::Agent,
-            CreateDialogField::Agent => CreateDialogField::Note,
-            CreateDialogField::Note => CreateDialogField::BranchName,
-        };
-        assert_eq!(field, CreateDialogField::Note);
-
-        // Tab 3: Note -> BranchName (cycle complete)
-        field = match field {
-            CreateDialogField::BranchName => CreateDialogField::Agent,
-            CreateDialogField::Agent => CreateDialogField::Note,
-            CreateDialogField::Note => CreateDialogField::BranchName,
-        };
         assert_eq!(field, CreateDialogField::BranchName);
     }
 
