@@ -422,6 +422,26 @@ impl Session {
     pub fn set_agents(&mut self, agents: Vec<AgentProcess>) {
         self.agents = agents;
     }
+
+    /// Create a minimal Session for testing purposes.
+    #[cfg(test)]
+    pub fn new_for_test(branch: String, worktree_path: PathBuf) -> Self {
+        Self {
+            id: format!("test-{}", branch),
+            project_id: "test-project".to_string(),
+            branch,
+            worktree_path,
+            agent: "claude".to_string(),
+            status: SessionStatus::Active,
+            created_at: "2026-02-09T10:00:00Z".to_string(),
+            port_range_start: 0,
+            port_range_end: 0,
+            port_count: 0,
+            last_activity: None,
+            note: None,
+            agents: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -235,6 +235,24 @@ pub struct BranchHealth {
     pub has_remote: bool,
 }
 
+/// A single file that is modified by multiple kilds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileOverlap {
+    /// The file path relative to the repository root.
+    pub file: PathBuf,
+    /// Branch names (user names, not kild/ prefixed) that modify this file.
+    pub branches: Vec<String>,
+}
+
+/// Report of file overlaps across kilds in a project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OverlapReport {
+    /// Files modified by more than one kild.
+    pub overlapping_files: Vec<FileOverlap>,
+    /// Kilds with no file overlaps (branch name, changed file count).
+    pub clean_kilds: Vec<(String, usize)>,
+}
+
 impl ProjectInfo {
     pub fn new(id: String, name: String, path: PathBuf, remote_url: Option<String>) -> Self {
         Self {
@@ -504,5 +522,44 @@ mod tests {
         assert_eq!(value["staged_files"], 1);
         assert_eq!(value["modified_files"], 2);
         assert_eq!(value["untracked_files"], 3);
+    }
+
+    #[test]
+    fn test_file_overlap_serializes_to_json() {
+        let overlap = FileOverlap {
+            file: PathBuf::from("src/config.rs"),
+            branches: vec!["feature-auth".to_string(), "feature-api".to_string()],
+        };
+        let value = serde_json::to_value(&overlap).expect("FileOverlap should serialize");
+        assert_eq!(value["file"], "src/config.rs");
+        assert_eq!(value["branches"][0], "feature-auth");
+        assert_eq!(value["branches"][1], "feature-api");
+    }
+
+    #[test]
+    fn test_overlap_report_serializes_to_json() {
+        let report = OverlapReport {
+            overlapping_files: vec![FileOverlap {
+                file: PathBuf::from("src/lib.rs"),
+                branches: vec!["branch-a".to_string(), "branch-b".to_string()],
+            }],
+            clean_kilds: vec![("branch-c".to_string(), 5)],
+        };
+        let value = serde_json::to_value(&report).expect("OverlapReport should serialize");
+        assert_eq!(value["overlapping_files"].as_array().unwrap().len(), 1);
+        assert_eq!(value["overlapping_files"][0]["file"], "src/lib.rs");
+        assert_eq!(value["clean_kilds"][0][0], "branch-c");
+        assert_eq!(value["clean_kilds"][0][1], 5);
+    }
+
+    #[test]
+    fn test_overlap_report_empty_serializes_to_json() {
+        let report = OverlapReport {
+            overlapping_files: vec![],
+            clean_kilds: vec![],
+        };
+        let value = serde_json::to_value(&report).expect("Empty OverlapReport should serialize");
+        assert!(value["overlapping_files"].as_array().unwrap().is_empty());
+        assert!(value["clean_kilds"].as_array().unwrap().is_empty());
     }
 }

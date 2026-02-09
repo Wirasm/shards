@@ -20,6 +20,7 @@ mod health;
 mod hide;
 mod list;
 mod open;
+mod overlaps;
 mod pr;
 mod rebase;
 mod restart;
@@ -47,6 +48,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("commits", sub_matches)) => commits::handle_commits_command(sub_matches),
         Some(("pr", sub_matches)) => pr::handle_pr_command(sub_matches),
         Some(("stats", sub_matches)) => stats::handle_stats_command(sub_matches),
+        Some(("overlaps", sub_matches)) => overlaps::handle_overlaps_command(sub_matches),
         Some(("status", sub_matches)) => status::handle_status_command(sub_matches),
         Some(("agent-status", sub_matches)) => {
             agent_status::handle_agent_status_command(sub_matches)

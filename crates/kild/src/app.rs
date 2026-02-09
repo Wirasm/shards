@@ -454,6 +454,22 @@ pub fn build_cli() -> Command {
                 )
         )
         .subcommand(
+            Command::new("overlaps")
+                .about("Detect file overlaps across kilds in the current project")
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .help("Output in JSON format")
+                        .action(ArgAction::SetTrue)
+                )
+                .arg(
+                    Arg::new("base")
+                        .long("base")
+                        .short('b')
+                        .help("Base branch to compare against (overrides config, default: main)")
+                )
+        )
+        .subcommand(
             Command::new("health")
                 .about("Show health status and metrics for kild")
                 .arg(
@@ -1695,5 +1711,50 @@ mod tests {
         let app = build_cli();
         let matches = app.try_get_matches_from(vec!["kild", "stats"]);
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_overlaps_command() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "overlaps"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("overlaps").unwrap();
+        assert!(!sub.get_flag("json"));
+        assert!(sub.get_one::<String>("base").is_none());
+    }
+
+    #[test]
+    fn test_cli_overlaps_json_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "overlaps", "--json"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("overlaps").unwrap();
+        assert!(sub.get_flag("json"));
+    }
+
+    #[test]
+    fn test_cli_overlaps_base_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "overlaps", "--base", "dev"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("overlaps").unwrap();
+        assert_eq!(sub.get_one::<String>("base").unwrap(), "dev");
+    }
+
+    #[test]
+    fn test_cli_overlaps_base_short_flag() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "overlaps", "-b", "develop"]);
+        assert!(matches.is_ok());
+
+        let matches = matches.unwrap();
+        let sub = matches.subcommand_matches("overlaps").unwrap();
+        assert_eq!(sub.get_one::<String>("base").unwrap(), "develop");
     }
 }
