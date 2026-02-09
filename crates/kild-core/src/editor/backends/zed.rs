@@ -27,12 +27,6 @@ impl EditorBackend for ZedBackend {
     }
 
     fn open(&self, path: &Path, flags: &[String], _config: &KildConfig) -> Result<(), EditorError> {
-        info!(
-            event = "core.editor.open_started",
-            editor = "zed",
-            path = %path.display()
-        );
-
         let mut cmd = Command::new("zed");
         for flag in flags {
             cmd.arg(flag);

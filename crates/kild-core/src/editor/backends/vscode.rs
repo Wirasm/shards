@@ -27,12 +27,6 @@ impl EditorBackend for VSCodeBackend {
     }
 
     fn open(&self, path: &Path, flags: &[String], _config: &KildConfig) -> Result<(), EditorError> {
-        info!(
-            event = "core.editor.open_started",
-            editor = "code",
-            path = %path.display()
-        );
-
         let mut cmd = Command::new("code");
         for flag in flags {
             cmd.arg(flag);
