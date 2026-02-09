@@ -149,3 +149,18 @@ patterns = [
 # default = "nvim"
 # flags = "--nofork"
 # terminal = true
+
+# =============================================================================
+# DAEMON RUNTIME CONFIGURATION (Experimental)
+# =============================================================================
+
+[daemon]
+# Whether daemon mode is the default for new sessions
+# When true, `kild create` uses daemon-owned PTY unless --no-daemon is passed
+# When false, `kild create` uses external terminal unless --daemon is passed
+# Default: false
+enabled = false
+
+# Auto-start the daemon if not running when daemon mode is requested
+# Default: true
+auto_start = true
