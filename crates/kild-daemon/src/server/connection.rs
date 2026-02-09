@@ -1,0 +1,361 @@
+use std::sync::Arc;
+
+use base64::Engine;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
+
+use crate::protocol::codec::{read_message, write_message};
+use crate::protocol::messages::{ClientMessage, DaemonMessage};
+use crate::session::manager::SessionManager;
+use crate::session::state::ClientId;
+
+/// Handle a single client connection.
+///
+/// Reads JSONL messages from the client, dispatches them to the session manager,
+/// and sends responses back. For `attach` requests, enters streaming mode.
+pub async fn handle_connection(
+    stream: UnixStream,
+    session_manager: Arc<Mutex<SessionManager>>,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    let client_id = {
+        let mut mgr = session_manager.lock().await;
+        mgr.next_client_id()
+    };
+
+    debug!(event = "daemon.connection.accepted", client_id = client_id,);
+
+    let (reader, writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
+    let writer = Arc::new(Mutex::new(writer));
+
+    loop {
+        tokio::select! {
+            result = read_message::<_, ClientMessage>(&mut reader) => {
+                match result {
+                    Ok(Some(msg)) => {
+                        let response = dispatch_message(
+                            msg,
+                            client_id,
+                            &session_manager,
+                            writer.clone(),
+                            &shutdown,
+                        ).await;
+
+                        if let Some(response) = response {
+                            let mut w = writer.lock().await;
+                            if let Err(e) = write_message(&mut *w, &response).await {
+                                error!(
+                                    event = "daemon.connection.write_failed",
+                                    client_id = client_id,
+                                    error = %e,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        debug!(
+                            event = "daemon.connection.closed",
+                            client_id = client_id,
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        warn!(
+                            event = "daemon.connection.read_error",
+                            client_id = client_id,
+                            error = %e,
+                        );
+                        break;
+                    }
+                }
+            }
+            _ = shutdown.cancelled() => {
+                debug!(
+                    event = "daemon.connection.shutdown",
+                    client_id = client_id,
+                );
+                break;
+            }
+        }
+    }
+
+    // Clean up: detach client from all sessions
+    let mut mgr = session_manager.lock().await;
+    mgr.detach_client_from_all(client_id);
+}
+
+/// Dispatch a client message to the session manager and return a response.
+///
+/// Returns `None` for messages that don't generate a direct response (handled inline).
+async fn dispatch_message(
+    msg: ClientMessage,
+    client_id: ClientId,
+    session_manager: &Arc<Mutex<SessionManager>>,
+    writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    shutdown: &tokio_util::sync::CancellationToken,
+) -> Option<DaemonMessage> {
+    match msg {
+        ClientMessage::CreateSession {
+            id,
+            branch,
+            agent,
+            note,
+            project_path,
+            base_branch: _,
+            no_fetch: _,
+        } => {
+            let mut mgr = session_manager.lock().await;
+            let worktree_path = project_path.as_deref().unwrap_or(".");
+            let agent_name = agent.as_deref().unwrap_or("shell");
+
+            match mgr.create_session(
+                &branch, // session_id (simplified for Phase 1b)
+                "default",
+                &branch,
+                worktree_path,
+                agent_name,
+                note,
+                agent_name, // command (simplified)
+                &[],
+                &[],
+            ) {
+                Ok(session_info) => Some(DaemonMessage::SessionCreated {
+                    id,
+                    session: session_info,
+                }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::Attach {
+            id,
+            session_id,
+            rows,
+            cols,
+        } => {
+            let (rx, scrollback) = {
+                let mut mgr = session_manager.lock().await;
+
+                // Resize to client dimensions
+                let _ = mgr.resize_pty(&session_id, rows, cols);
+
+                let rx = match mgr.attach_client(&session_id, client_id) {
+                    Ok(rx) => rx,
+                    Err(e) => {
+                        return Some(DaemonMessage::Error {
+                            id,
+                            code: e.error_code().to_string(),
+                            message: e.to_string(),
+                        });
+                    }
+                };
+
+                let scrollback = mgr.scrollback_contents(&session_id).unwrap_or_default();
+
+                (rx, scrollback)
+            };
+
+            // Send ack first
+            {
+                let mut w = writer.lock().await;
+                let _ = write_message(&mut *w, &DaemonMessage::Ack { id }).await;
+            }
+
+            // Send scrollback replay so attaching client has context
+            if !scrollback.is_empty() {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&scrollback);
+                let scrollback_msg = DaemonMessage::PtyOutput {
+                    session_id: session_id.clone(),
+                    data: encoded,
+                };
+                let mut w = writer.lock().await;
+                let _ = write_message(&mut *w, &scrollback_msg).await;
+            }
+
+            // Spawn streaming task for PTY output
+            let writer_clone = writer.clone();
+            let session_id_clone = session_id.clone();
+            let shutdown_clone = shutdown.clone();
+
+            tokio::spawn(async move {
+                stream_pty_output(rx, &session_id_clone, writer_clone, shutdown_clone).await;
+            });
+
+            None // Response already sent
+        }
+
+        ClientMessage::Detach { id, session_id } => {
+            let mut mgr = session_manager.lock().await;
+            match mgr.detach_client(&session_id, client_id) {
+                Ok(()) => Some(DaemonMessage::Ack { id }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::ResizePty {
+            id,
+            session_id,
+            rows,
+            cols,
+        } => {
+            let mut mgr = session_manager.lock().await;
+            match mgr.resize_pty(&session_id, rows, cols) {
+                Ok(()) => Some(DaemonMessage::Ack { id }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::WriteStdin {
+            id,
+            session_id,
+            data,
+        } => {
+            let decoded = match base64::engine::general_purpose::STANDARD.decode(&data) {
+                Ok(d) => d,
+                Err(e) => {
+                    return Some(DaemonMessage::Error {
+                        id,
+                        code: "base64_decode_error".to_string(),
+                        message: e.to_string(),
+                    });
+                }
+            };
+
+            let mgr = session_manager.lock().await;
+            match mgr.write_stdin(&session_id, &decoded) {
+                Ok(()) => Some(DaemonMessage::Ack { id }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::StopSession { id, session_id } => {
+            let mut mgr = session_manager.lock().await;
+            match mgr.stop_session(&session_id) {
+                Ok(()) => Some(DaemonMessage::Ack { id }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::DestroySession {
+            id,
+            session_id,
+            force: _,
+        } => {
+            let mut mgr = session_manager.lock().await;
+            match mgr.destroy_session(&session_id) {
+                Ok(()) => Some(DaemonMessage::Ack { id }),
+                Err(e) => Some(DaemonMessage::Error {
+                    id,
+                    code: e.error_code().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        }
+
+        ClientMessage::ListSessions { id, project_id } => {
+            let mgr = session_manager.lock().await;
+            let sessions = mgr.list_sessions(project_id.as_deref());
+            Some(DaemonMessage::SessionList { id, sessions })
+        }
+
+        ClientMessage::GetSession { id, session_id } => {
+            let mgr = session_manager.lock().await;
+            match mgr.get_session(&session_id) {
+                Some(session) => Some(DaemonMessage::SessionInfo { id, session }),
+                None => Some(DaemonMessage::Error {
+                    id,
+                    code: "session_not_found".to_string(),
+                    message: format!("No session found with id '{}'", session_id),
+                }),
+            }
+        }
+
+        ClientMessage::DaemonStop { id } => {
+            info!(
+                event = "daemon.server.stop_requested",
+                client_id = client_id
+            );
+            shutdown.cancel();
+            Some(DaemonMessage::Ack { id })
+        }
+
+        ClientMessage::Ping { id } => Some(DaemonMessage::Ack { id }),
+    }
+}
+
+/// Stream PTY output to a client until detach, shutdown, or channel close.
+async fn stream_pty_output(
+    mut rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    session_id: &str,
+    writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(data) => {
+                        let encoded = engine.encode(&data);
+                        let msg = DaemonMessage::PtyOutput {
+                            session_id: session_id.to_string(),
+                            data: encoded,
+                        };
+                        let mut w = writer.lock().await;
+                        if let Err(e) = write_message(&mut *w, &msg).await {
+                            debug!(
+                                event = "daemon.connection.stream_write_failed",
+                                session_id = session_id,
+                                error = %e,
+                            );
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        let msg = DaemonMessage::PtyOutputDropped {
+                            session_id: session_id.to_string(),
+                            bytes_dropped: n as usize,
+                        };
+                        let mut w = writer.lock().await;
+                        let _ = write_message(&mut *w, &msg).await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        debug!(
+                            event = "daemon.connection.stream_closed",
+                            session_id = session_id,
+                        );
+                        break;
+                    }
+                }
+            }
+            _ = shutdown.cancelled() => {
+                break;
+            }
+        }
+    }
+}

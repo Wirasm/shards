@@ -87,6 +87,10 @@ pub struct KildConfig {
     /// Editor configuration for `kild code`
     #[serde(default)]
     pub editor: EditorConfig,
+
+    /// Daemon runtime configuration
+    #[serde(default)]
+    pub daemon: DaemonRuntimeConfig,
 }
 
 impl Default for KildConfig {
@@ -99,6 +103,38 @@ impl Default for KildConfig {
             health: HealthConfig::default(),
             git: GitConfig::default(),
             editor: <EditorConfig as Default>::default(),
+            daemon: DaemonRuntimeConfig::default(),
+        }
+    }
+}
+
+/// Daemon runtime configuration.
+///
+/// Controls whether the daemon is the default runtime for new sessions
+/// and auto-start behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonRuntimeConfig {
+    /// Whether daemon mode is the default for new sessions.
+    /// When true, `kild create` uses daemon unless `--no-daemon` is passed.
+    /// Default: false
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Auto-start the daemon if not running when daemon mode is requested.
+    /// Default: true
+    #[serde(default = "default_daemon_auto_start")]
+    pub auto_start: bool,
+}
+
+fn default_daemon_auto_start() -> bool {
+    true
+}
+
+impl Default for DaemonRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_start: default_daemon_auto_start(),
         }
     }
 }
