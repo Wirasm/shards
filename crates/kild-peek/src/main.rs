@@ -13,6 +13,9 @@ fn main() {
     init_logging(quiet);
 
     if let Err(e) = commands::run_command(&matches) {
+        // Error already printed to user via eprintln! in command handlers.
+        // In verbose mode, JSON logs were also emitted.
+        // Exit with non-zero code without printing Rust's Debug representation.
         drop(e);
         std::process::exit(1);
     }
