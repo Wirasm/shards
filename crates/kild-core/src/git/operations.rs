@@ -665,18 +665,19 @@ fn check_conflicts(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> Conflic
             return ConflictStatus::Unknown;
         }
     };
-    match repo.merge_commits(&branch_commit, &base_commit, None) {
-        Ok(index) => {
-            if index.has_conflicts() {
-                ConflictStatus::Conflicts
-            } else {
-                ConflictStatus::Clean
-            }
-        }
+
+    let index = match repo.merge_commits(&branch_commit, &base_commit, None) {
+        Ok(idx) => idx,
         Err(e) => {
             warn!(event = "core.git.stats.merge_check_failed", error = %e);
-            ConflictStatus::Unknown
+            return ConflictStatus::Unknown;
         }
+    };
+
+    if index.has_conflicts() {
+        ConflictStatus::Conflicts
+    } else {
+        ConflictStatus::Clean
     }
 }
 

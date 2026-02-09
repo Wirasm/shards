@@ -81,16 +81,15 @@ fn compute_merge_readiness(
         return MergeReadiness::NeedsPush;
     }
 
-    match pr_info {
-        None => MergeReadiness::NeedsPr,
-        Some(pr) => {
-            if pr.ci_status == CiStatus::Failing {
-                MergeReadiness::CiFailing
-            } else {
-                MergeReadiness::Ready
-            }
-        }
+    let Some(pr) = pr_info else {
+        return MergeReadiness::NeedsPr;
+    };
+
+    if pr.ci_status == CiStatus::Failing {
+        return MergeReadiness::CiFailing;
     }
+
+    MergeReadiness::Ready
 }
 
 /// Combined output for JSON: git health + computed readiness.
@@ -284,14 +283,14 @@ fn print_single_health(branch: &str, h: &BranchHealth, readiness: &MergeReadines
     );
 
     // Diff vs base
-    if let Some(ref diff) = h.diff_vs_base {
-        println!(
-            "Diff vs base: +{} -{} ({} files)",
+    let diff_str = match &h.diff_vs_base {
+        Some(diff) => format!(
+            "+{} -{} ({} files)",
             diff.insertions, diff.deletions, diff.files_changed
-        );
-    } else {
-        println!("Diff vs base: unavailable");
-    }
+        ),
+        None => "unavailable".to_string(),
+    };
+    println!("Diff vs base: {}", diff_str);
 
     // Position
     println!(
@@ -300,11 +299,12 @@ fn print_single_health(branch: &str, h: &BranchHealth, readiness: &MergeReadines
     );
 
     // Merge status
-    match h.conflict_status {
-        ConflictStatus::Clean => println!("Merge:        Clean (no conflicts)"),
-        ConflictStatus::Conflicts => println!("Merge:        Conflicts detected"),
-        ConflictStatus::Unknown => println!("Merge:        Unknown (check failed)"),
-    }
+    let merge_str = match h.conflict_status {
+        ConflictStatus::Clean => "Clean (no conflicts)",
+        ConflictStatus::Conflicts => "Conflicts detected",
+        ConflictStatus::Unknown => "Unknown (check failed)",
+    };
+    println!("Merge:        {}", merge_str);
 
     // Readiness
     let readiness_detail = match readiness {
@@ -394,11 +394,11 @@ fn print_fleet_table(results: &[(BranchHealth, MergeReadiness)]) {
 
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
+        return s.to_string();
     }
+
+    let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+    format!("{}...", truncated)
 }
 
 #[cfg(test)]
