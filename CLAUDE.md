@@ -84,6 +84,11 @@ cargo run -p kild -- diff my-branch --staged     # Show only staged changes
 cargo run -p kild -- diff my-branch --stat       # Show diffstat summary
 cargo run -p kild -- commits my-branch           # Show recent commits in kild's branch
 cargo run -p kild -- commits my-branch -n 5      # Show last 5 commits
+cargo run -p kild -- stats my-branch             # Show branch health and merge readiness
+cargo run -p kild -- stats my-branch --json      # JSON output for branch health
+cargo run -p kild -- stats my-branch -b dev      # Override base branch
+cargo run -p kild -- stats --all                 # Fleet summary table (all kilds)
+cargo run -p kild -- stats --all --json          # JSON array of all kild health
 cargo run -p kild -- pr my-branch                # Show PR status for kild
 cargo run -p kild -- pr my-branch --json         # JSON output for PR status
 cargo run -p kild -- pr my-branch --refresh      # Force refresh PR data from GitHub

@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::fmt;
 use std::path::PathBuf;
 
 /// Git diff statistics for a worktree.
@@ -170,40 +169,6 @@ impl GitStats {
     }
 }
 
-/// Computed merge readiness status for a branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MergeReadiness {
-    /// Clean, pushed, PR open, CI passing
-    Ready,
-    /// Has unpushed commits
-    NeedsPush,
-    /// Behind base branch significantly
-    NeedsRebase,
-    /// Cannot merge cleanly into base
-    HasConflicts,
-    /// Pushed but no PR exists
-    NeedsPr,
-    /// PR exists but CI is failing
-    CiFailing,
-    /// Ready to merge locally (no remote configured)
-    ReadyLocal,
-}
-
-impl fmt::Display for MergeReadiness {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MergeReadiness::Ready => write!(f, "Ready"),
-            MergeReadiness::NeedsPush => write!(f, "Needs push"),
-            MergeReadiness::NeedsRebase => write!(f, "Needs rebase"),
-            MergeReadiness::HasConflicts => write!(f, "Has conflicts"),
-            MergeReadiness::NeedsPr => write!(f, "Needs PR"),
-            MergeReadiness::CiFailing => write!(f, "CI failing"),
-            MergeReadiness::ReadyLocal => write!(f, "Ready (local)"),
-        }
-    }
-}
-
 /// Commit activity metrics for a branch.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct CommitActivity {
@@ -224,6 +189,28 @@ pub struct BaseBranchDrift {
     pub base_branch: String,
 }
 
+/// Result of in-memory merge conflict detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictStatus {
+    /// No conflicts detected — branch can merge cleanly.
+    Clean,
+    /// Conflicts detected — branch cannot merge without resolution.
+    Conflicts,
+    /// Check failed — conflict status is unreliable.
+    Unknown,
+}
+
+impl std::fmt::Display for ConflictStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConflictStatus::Clean => write!(f, "Clean"),
+            ConflictStatus::Conflicts => write!(f, "Conflicts"),
+            ConflictStatus::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
 /// Comprehensive branch health for a kild.
 #[derive(Debug, Clone, Serialize)]
 pub struct BranchHealth {
@@ -233,12 +220,8 @@ pub struct BranchHealth {
     pub drift: BaseBranchDrift,
     /// Total diff from merge base to branch tip (how big the PR will be).
     pub diff_vs_base: Option<DiffStats>,
-    /// Whether the branch can merge cleanly into base.
-    pub has_conflicts: bool,
-    /// Whether conflict detection failed (result unreliable).
-    pub conflict_check_failed: bool,
-    /// Computed readiness status.
-    pub merge_readiness: MergeReadiness,
+    /// Result of in-memory merge conflict detection.
+    pub conflict_status: ConflictStatus,
     /// Whether a remote is configured for this repository.
     pub has_remote: bool,
 }
@@ -428,31 +411,6 @@ mod tests {
         assert_eq!(details["untracked_files"], 1);
     }
 
-    // --- MergeReadiness tests ---
-
-    #[test]
-    fn test_merge_readiness_display() {
-        assert_eq!(MergeReadiness::Ready.to_string(), "Ready");
-        assert_eq!(MergeReadiness::NeedsPush.to_string(), "Needs push");
-        assert_eq!(MergeReadiness::NeedsRebase.to_string(), "Needs rebase");
-        assert_eq!(MergeReadiness::HasConflicts.to_string(), "Has conflicts");
-        assert_eq!(MergeReadiness::NeedsPr.to_string(), "Needs PR");
-        assert_eq!(MergeReadiness::CiFailing.to_string(), "CI failing");
-        assert_eq!(MergeReadiness::ReadyLocal.to_string(), "Ready (local)");
-    }
-
-    #[test]
-    fn test_merge_readiness_serde() {
-        let json = serde_json::to_string(&MergeReadiness::NeedsRebase).unwrap();
-        assert_eq!(json, "\"needs_rebase\"");
-
-        let json = serde_json::to_string(&MergeReadiness::HasConflicts).unwrap();
-        assert_eq!(json, "\"has_conflicts\"");
-
-        let json = serde_json::to_string(&MergeReadiness::ReadyLocal).unwrap();
-        assert_eq!(json, "\"ready_local\"");
-    }
-
     #[test]
     fn test_commit_activity_default() {
         let activity = CommitActivity::default();
@@ -487,9 +445,7 @@ mod tests {
                 deletions: 30,
                 files_changed: 12,
             }),
-            has_conflicts: false,
-            conflict_check_failed: false,
-            merge_readiness: MergeReadiness::NeedsRebase,
+            conflict_status: ConflictStatus::Clean,
             has_remote: true,
         };
         let value = serde_json::to_value(&health).expect("BranchHealth should serialize");
@@ -497,9 +453,31 @@ mod tests {
         assert_eq!(value["commit_activity"]["commits_since_base"], 4);
         assert_eq!(value["drift"]["behind"], 12);
         assert_eq!(value["diff_vs_base"]["insertions"], 450);
-        assert_eq!(value["has_conflicts"], false);
-        assert_eq!(value["merge_readiness"], "needs_rebase");
+        assert_eq!(value["conflict_status"], "clean");
         assert_eq!(value["has_remote"], true);
+    }
+
+    #[test]
+    fn test_conflict_status_display() {
+        assert_eq!(ConflictStatus::Clean.to_string(), "Clean");
+        assert_eq!(ConflictStatus::Conflicts.to_string(), "Conflicts");
+        assert_eq!(ConflictStatus::Unknown.to_string(), "Unknown");
+    }
+
+    #[test]
+    fn test_conflict_status_serde() {
+        assert_eq!(
+            serde_json::to_string(&ConflictStatus::Clean).unwrap(),
+            "\"clean\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConflictStatus::Conflicts).unwrap(),
+            "\"conflicts\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConflictStatus::Unknown).unwrap(),
+            "\"unknown\""
+        );
     }
 
     #[test]

@@ -1,12 +1,105 @@
+use std::fmt;
+
 use clap::ArgMatches;
+use serde::Serialize;
 use tracing::{error, info};
 
+use kild_core::BranchHealth;
+use kild_core::ConflictStatus;
 use kild_core::events;
+use kild_core::forge::types::CiStatus;
+use kild_core::git::types::WorktreeStatus;
 use kild_core::session_ops;
 
 use super::helpers::{
     FailedOperation, format_partial_failure_error, is_valid_branch_name, load_config_with_warning,
 };
+
+/// Computed merge readiness status for a branch.
+///
+/// Lives in the CLI layer because it combines git metrics with forge/PR data.
+/// The git module provides raw metrics; readiness is a presentation concern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MergeReadiness {
+    /// Clean, pushed, PR open, CI passing
+    Ready,
+    /// Has unpushed commits
+    NeedsPush,
+    /// Behind base branch significantly
+    NeedsRebase,
+    /// Cannot merge cleanly into base
+    HasConflicts,
+    /// Pushed but no PR exists
+    NeedsPr,
+    /// PR exists but CI is failing
+    CiFailing,
+    /// Ready to merge locally (no remote configured)
+    ReadyLocal,
+}
+
+impl fmt::Display for MergeReadiness {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MergeReadiness::Ready => write!(f, "Ready"),
+            MergeReadiness::NeedsPush => write!(f, "Needs push"),
+            MergeReadiness::NeedsRebase => write!(f, "Needs rebase"),
+            MergeReadiness::HasConflicts => write!(f, "Has conflicts"),
+            MergeReadiness::NeedsPr => write!(f, "Needs PR"),
+            MergeReadiness::CiFailing => write!(f, "CI failing"),
+            MergeReadiness::ReadyLocal => write!(f, "Ready (local)"),
+        }
+    }
+}
+
+/// Compute merge readiness from git health metrics, worktree status, and optional PR info.
+///
+/// Priority: HasConflicts > NeedsRebase > NeedsPush > NeedsPr > CiFailing > Ready/ReadyLocal
+fn compute_merge_readiness(
+    health: &BranchHealth,
+    worktree_status: &Option<WorktreeStatus>,
+    pr_info: Option<&kild_core::PrInfo>,
+) -> MergeReadiness {
+    if health.conflict_status != ConflictStatus::Clean {
+        return MergeReadiness::HasConflicts;
+    }
+
+    if health.drift.behind > 0 {
+        return MergeReadiness::NeedsRebase;
+    }
+
+    if !health.has_remote {
+        return MergeReadiness::ReadyLocal;
+    }
+
+    // Check if there are unpushed commits
+    let has_unpushed = worktree_status
+        .as_ref()
+        .is_some_and(|ws| ws.unpushed_commit_count > 0 || !ws.has_remote_branch);
+
+    if has_unpushed {
+        return MergeReadiness::NeedsPush;
+    }
+
+    match pr_info {
+        None => MergeReadiness::NeedsPr,
+        Some(pr) => {
+            if pr.ci_status == CiStatus::Failing {
+                MergeReadiness::CiFailing
+            } else {
+                MergeReadiness::Ready
+            }
+        }
+    }
+}
+
+/// Combined output for JSON: git health + computed readiness.
+#[derive(Serialize)]
+struct StatsOutput {
+    #[serde(flatten)]
+    health: BranchHealth,
+    merge_readiness: MergeReadiness,
+}
 
 pub(crate) fn handle_stats_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     if matches.get_flag("all") {
@@ -57,33 +150,40 @@ fn handle_single_stats(
         }
     };
 
-    // Fetch PR info (read-only from cache)
-    let pr_info = session_ops::read_pr_info(&session.id);
-
     let health = kild_core::git::operations::collect_branch_health(
         &session.worktree_path,
         branch,
         base_branch,
         &session.created_at,
-        pr_info.as_ref(),
     );
 
     match health {
-        Some(h) => {
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&h)?);
-            } else {
-                print_single_health(branch, &h);
-            }
+        Ok(h) => {
+            // Compose: git health + worktree status + PR info → readiness
+            let worktree_status =
+                kild_core::git::operations::get_worktree_status(&session.worktree_path).ok();
+            let pr_info = session_ops::read_pr_info(&session.id);
+            let readiness = compute_merge_readiness(&h, &worktree_status, pr_info.as_ref());
+
             info!(
                 event = "cli.stats_completed",
                 branch = branch,
-                readiness = %h.merge_readiness
+                readiness = %readiness
             );
+
+            if json_output {
+                let output = StatsOutput {
+                    health: h,
+                    merge_readiness: readiness,
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                print_single_health(branch, &h, &readiness);
+            }
             Ok(())
         }
-        None => {
-            eprintln!("Could not compute branch health for '{}'", branch);
+        Err(msg) => {
+            eprintln!("Could not compute branch health for '{}': {}", branch, msg);
             error!(
                 event = "cli.stats_failed",
                 branch = branch,
@@ -114,49 +214,59 @@ fn handle_all_stats(
         return Ok(());
     }
 
-    let mut results: Vec<kild_core::BranchHealth> = Vec::new();
+    let mut results: Vec<(BranchHealth, MergeReadiness)> = Vec::new();
     let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in &sessions {
-        let pr_info = session_ops::read_pr_info(&session.id);
         match kild_core::git::operations::collect_branch_health(
             &session.worktree_path,
             &session.branch,
             base_branch,
             &session.created_at,
-            pr_info.as_ref(),
         ) {
-            Some(h) => results.push(h),
-            None => {
-                errors.push((
-                    session.branch.clone(),
-                    "Could not compute branch health".to_string(),
-                ));
+            Ok(h) => {
+                let worktree_status =
+                    kild_core::git::operations::get_worktree_status(&session.worktree_path).ok();
+                let pr_info = session_ops::read_pr_info(&session.id);
+                let readiness = compute_merge_readiness(&h, &worktree_status, pr_info.as_ref());
+                results.push((h, readiness));
+            }
+            Err(msg) => {
+                errors.push((session.branch.clone(), msg));
             }
         }
     }
 
+    let result_count = results.len();
+
+    info!(
+        event = "cli.stats_all_completed",
+        count = result_count,
+        failed = errors.len()
+    );
+
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&results)?);
+        let output: Vec<StatsOutput> = results
+            .into_iter()
+            .map(|(health, merge_readiness)| StatsOutput {
+                health,
+                merge_readiness,
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         print_fleet_table(&results);
     }
 
-    info!(
-        event = "cli.stats_all_completed",
-        count = results.len(),
-        failed = errors.len()
-    );
-
     if !errors.is_empty() {
-        let total = results.len() + errors.len();
+        let total = result_count + errors.len();
         return Err(format_partial_failure_error("compute stats", errors.len(), total).into());
     }
 
     Ok(())
 }
 
-fn print_single_health(branch: &str, h: &kild_core::BranchHealth) {
+fn print_single_health(branch: &str, h: &BranchHealth, readiness: &MergeReadiness) {
     let kild_branch = kild_core::git::operations::kild_branch_name(branch);
 
     println!("Branch:       {} ({})", branch, kild_branch);
@@ -190,32 +300,30 @@ fn print_single_health(branch: &str, h: &kild_core::BranchHealth) {
     );
 
     // Merge status
-    if h.conflict_check_failed {
-        println!("Merge:        Unknown (check failed)");
-    } else if h.has_conflicts {
-        println!("Merge:        Conflicts detected");
-    } else {
-        println!("Merge:        Clean (no conflicts)");
+    match h.conflict_status {
+        ConflictStatus::Clean => println!("Merge:        Clean (no conflicts)"),
+        ConflictStatus::Conflicts => println!("Merge:        Conflicts detected"),
+        ConflictStatus::Unknown => println!("Merge:        Unknown (check failed)"),
     }
 
     // Readiness
-    let readiness_detail = match &h.merge_readiness {
-        kild_core::MergeReadiness::NeedsRebase => {
+    let readiness_detail = match readiness {
+        MergeReadiness::NeedsRebase => {
             format!(
                 "{} ({} behind {})",
-                h.merge_readiness, h.drift.behind, h.drift.base_branch
+                readiness, h.drift.behind, h.drift.base_branch
             )
         }
-        _ => h.merge_readiness.to_string(),
+        _ => readiness.to_string(),
     };
     println!("Readiness:    {}", readiness_detail);
 }
 
-fn print_fleet_table(results: &[kild_core::BranchHealth]) {
+fn print_fleet_table(results: &[(BranchHealth, MergeReadiness)]) {
     // Dynamic column widths
     let branch_w = results
         .iter()
-        .map(|h| h.branch.len())
+        .map(|(h, _)| h.branch.len())
         .max()
         .unwrap_or(6)
         .clamp(6, 30);
@@ -250,17 +358,15 @@ fn print_fleet_table(results: &[kild_core::BranchHealth]) {
     );
 
     // Rows
-    for h in results {
+    for (h, readiness) in results {
         let diff_str = h.diff_vs_base.as_ref().map_or_else(
             || "-".to_string(),
             |d| format!("+{} -{}", d.insertions, d.deletions),
         );
-        let conflicts_str = if h.conflict_check_failed {
-            "Unknown"
-        } else if h.has_conflicts {
-            "Yes"
-        } else {
-            "Clean"
+        let conflicts_str = match h.conflict_status {
+            ConflictStatus::Clean => "Clean",
+            ConflictStatus::Conflicts => "Yes",
+            ConflictStatus::Unknown => "Unknown",
         };
 
         println!(
@@ -270,7 +376,7 @@ fn print_fleet_table(results: &[kild_core::BranchHealth]) {
             truncate_str(&diff_str, diff_w),
             h.drift.behind,
             conflicts_str,
-            truncate_str(&h.merge_readiness.to_string(), readiness_w),
+            truncate_str(&readiness.to_string(), readiness_w),
         );
     }
 
@@ -292,5 +398,209 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
         format!("{}...", truncated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kild_core::git::types::{BaseBranchDrift, CommitActivity, DiffStats};
+
+    fn make_health(
+        conflict_status: ConflictStatus,
+        behind: usize,
+        has_remote: bool,
+    ) -> BranchHealth {
+        BranchHealth {
+            branch: "test".to_string(),
+            created_at: "2026-02-09T10:00:00Z".to_string(),
+            commit_activity: CommitActivity {
+                commits_since_base: 3,
+                last_commit_time: None,
+            },
+            drift: BaseBranchDrift {
+                ahead: 3,
+                behind,
+                base_branch: "main".to_string(),
+            },
+            diff_vs_base: Some(DiffStats {
+                insertions: 10,
+                deletions: 2,
+                files_changed: 1,
+            }),
+            conflict_status,
+            has_remote,
+        }
+    }
+
+    #[test]
+    fn test_readiness_has_conflicts() {
+        let h = make_health(ConflictStatus::Conflicts, 0, true);
+        assert_eq!(
+            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::HasConflicts
+        );
+    }
+
+    #[test]
+    fn test_readiness_conflict_check_failed() {
+        let h = make_health(ConflictStatus::Unknown, 0, true);
+        assert_eq!(
+            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::HasConflicts
+        );
+    }
+
+    #[test]
+    fn test_readiness_needs_rebase() {
+        let h = make_health(ConflictStatus::Clean, 5, true);
+        assert_eq!(
+            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::NeedsRebase
+        );
+    }
+
+    #[test]
+    fn test_readiness_ready_local() {
+        let h = make_health(ConflictStatus::Clean, 0, false);
+        assert_eq!(
+            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::ReadyLocal
+        );
+    }
+
+    #[test]
+    fn test_readiness_needs_push() {
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 3,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::NeedsPush
+        );
+    }
+
+    #[test]
+    fn test_readiness_needs_push_never_pushed() {
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::NeedsPush
+        );
+    }
+
+    #[test]
+    fn test_readiness_needs_pr() {
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::NeedsPr
+        );
+    }
+
+    #[test]
+    fn test_readiness_ci_failing() {
+        use kild_core::forge::types::{PrInfo, PrState, ReviewStatus};
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        let pr = PrInfo {
+            number: 1,
+            url: "https://example.com/pull/1".to_string(),
+            state: PrState::Open,
+            ci_status: CiStatus::Failing,
+            ci_summary: None,
+            review_status: ReviewStatus::Unknown,
+            review_summary: None,
+            updated_at: "2026-02-09T12:00:00Z".to_string(),
+        };
+        assert_eq!(
+            compute_merge_readiness(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::CiFailing
+        );
+    }
+
+    #[test]
+    fn test_readiness_ready() {
+        use kild_core::forge::types::{PrInfo, PrState, ReviewStatus};
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        let pr = PrInfo {
+            number: 1,
+            url: "https://example.com/pull/1".to_string(),
+            state: PrState::Open,
+            ci_status: CiStatus::Passing,
+            ci_summary: None,
+            review_status: ReviewStatus::Approved,
+            review_summary: None,
+            updated_at: "2026-02-09T12:00:00Z".to_string(),
+        };
+        assert_eq!(
+            compute_merge_readiness(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::Ready
+        );
+    }
+
+    #[test]
+    fn test_readiness_display() {
+        assert_eq!(MergeReadiness::Ready.to_string(), "Ready");
+        assert_eq!(MergeReadiness::NeedsPush.to_string(), "Needs push");
+        assert_eq!(MergeReadiness::NeedsRebase.to_string(), "Needs rebase");
+        assert_eq!(MergeReadiness::HasConflicts.to_string(), "Has conflicts");
+        assert_eq!(MergeReadiness::NeedsPr.to_string(), "Needs PR");
+        assert_eq!(MergeReadiness::CiFailing.to_string(), "CI failing");
+        assert_eq!(MergeReadiness::ReadyLocal.to_string(), "Ready (local)");
+    }
+
+    #[test]
+    fn test_readiness_serde() {
+        let json = serde_json::to_string(&MergeReadiness::NeedsRebase).unwrap();
+        assert_eq!(json, "\"needs_rebase\"");
+
+        let json = serde_json::to_string(&MergeReadiness::HasConflicts).unwrap();
+        assert_eq!(json, "\"has_conflicts\"");
+
+        let json = serde_json::to_string(&MergeReadiness::ReadyLocal).unwrap();
+        assert_eq!(json, "\"ready_local\"");
+    }
+
+    #[test]
+    fn test_truncate_str_exact_length() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_shorter() {
+        assert_eq!(truncate_str("hi", 5), "hi");
+    }
+
+    #[test]
+    fn test_truncate_str_longer() {
+        assert_eq!(truncate_str("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_str_zero_max() {
+        assert_eq!(truncate_str("hello", 0), "...");
     }
 }

@@ -34,7 +34,7 @@ pub use editor::{EditorBackend, EditorError, EditorType};
 pub use forge::types::{CiStatus, PrCheckResult, PrInfo, PrState, ReviewStatus};
 pub use forge::{ForgeBackend, ForgeError, ForgeType};
 pub use git::types::{
-    BaseBranchDrift, BranchHealth, CommitActivity, DiffStats, GitStats, MergeReadiness,
+    BaseBranchDrift, BranchHealth, CommitActivity, ConflictStatus, DiffStats, GitStats,
     UncommittedDetails, WorktreeStatus,
 };
 pub use projects::{Project, ProjectError, ProjectManager, ProjectsData};

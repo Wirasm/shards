@@ -170,6 +170,24 @@ kild commits <branch> -n 5
 kild commits <branch> --count 5
 ```
 
+### View branch health
+```bash
+# Show branch health and merge readiness
+kild stats <branch>
+
+# JSON output
+kild stats <branch> --json
+
+# Override base branch
+kild stats <branch> --base dev
+
+# View health for all kilds (fleet summary)
+kild stats --all
+
+# JSON output for all kilds
+kild stats --all --json
+```
+
 ### Show PR status
 ```bash
 # Show cached PR status
