@@ -117,8 +117,8 @@ impl DaemonClient {
 
     /// Attach to a session's PTY output.
     ///
-    /// Returns immediately after sending the attach request. After this call,
-    /// use `read_message` on the client to receive `PtyOutput` messages.
+    /// Sends an attach request and waits for acknowledgment. After this call,
+    /// use `read_next()` to receive streaming `PtyOutput` messages.
     pub async fn attach(
         &mut self,
         session_id: &str,
@@ -273,6 +273,10 @@ impl DaemonClient {
 
     /// Read the next daemon message (for streaming after attach).
     pub async fn read_next(&mut self) -> Result<Option<DaemonMessage>, DaemonError> {
-        read_message(&mut self.reader).await
+        let msg = read_message(&mut self.reader).await?;
+        if let Some(ref m) = msg {
+            Self::check_error(m)?;
+        }
+        Ok(msg)
     }
 }

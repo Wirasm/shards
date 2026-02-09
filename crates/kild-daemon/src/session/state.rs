@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
+use tracing::error;
 
 use crate::pty::output::ScrollbackBuffer;
 use crate::types::SessionInfo;
@@ -29,24 +30,24 @@ impl std::fmt::Display for SessionState {
 
 /// A session managed by the daemon, combining metadata with PTY runtime state.
 pub struct DaemonSession {
-    pub id: String,
-    pub project_id: String,
-    pub branch: String,
-    pub worktree_path: String,
-    pub agent: String,
-    pub note: Option<String>,
-    pub created_at: String,
-    pub state: SessionState,
+    id: String,
+    project_id: String,
+    branch: String,
+    worktree_path: String,
+    agent: String,
+    note: Option<String>,
+    created_at: String,
+    state: SessionState,
     /// Broadcast sender for PTY output distribution to attached clients.
     /// Only present when Running.
-    pub output_tx: Option<broadcast::Sender<Vec<u8>>>,
+    output_tx: Option<broadcast::Sender<Vec<u8>>>,
     /// Ring buffer of recent PTY output for replay on attach.
     /// Shared with the PTY reader task so it can feed output into the buffer.
-    pub scrollback: Arc<Mutex<ScrollbackBuffer>>,
+    scrollback: Arc<Mutex<ScrollbackBuffer>>,
     /// Set of attached client IDs.
-    pub attached_clients: HashSet<ClientId>,
+    attached_clients: HashSet<ClientId>,
     /// Child process PID (only when Running).
-    pub pty_pid: Option<u32>,
+    pty_pid: Option<u32>,
 }
 
 impl DaemonSession {
@@ -77,6 +78,48 @@ impl DaemonSession {
             pty_pid: None,
         }
     }
+
+    // --- Getters ---
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    pub fn state(&self) -> SessionState {
+        self.state
+    }
+
+    pub fn pty_pid(&self) -> Option<u32> {
+        self.pty_pid
+    }
+
+    pub fn created_at(&self) -> &str {
+        &self.created_at
+    }
+
+    pub fn command(&self) -> Option<&str> {
+        // DaemonSession doesn't store command; return None
+        None
+    }
+
+    pub fn cwd(&self) -> Option<&str> {
+        Some(&self.worktree_path)
+    }
+
+    pub fn has_output(&self) -> bool {
+        self.output_tx.is_some()
+    }
+
+    /// Clone the output broadcast sender (for notification after state transitions).
+    pub fn output_tx(&self) -> Option<broadcast::Sender<Vec<u8>>> {
+        self.output_tx.clone()
+    }
+
+    // --- State transitions ---
 
     /// Transition to Running state with a broadcast sender for PTY output.
     pub fn set_running(&mut self, output_tx: broadcast::Sender<Vec<u8>>, pty_pid: Option<u32>) {
@@ -114,10 +157,16 @@ impl DaemonSession {
 
     /// Get scrollback buffer contents for replay on attach.
     pub fn scrollback_contents(&self) -> Vec<u8> {
-        self.scrollback
-            .lock()
-            .map(|sb| sb.contents())
-            .unwrap_or_default()
+        match self.scrollback.lock() {
+            Ok(sb) => sb.contents(),
+            Err(poisoned) => {
+                error!(
+                    event = "daemon.session.scrollback_lock_poisoned",
+                    session_id = %self.id,
+                );
+                poisoned.into_inner().contents()
+            }
+        }
     }
 
     /// Get a clone of the shared scrollback buffer for the PTY reader task.
@@ -162,10 +211,10 @@ mod tests {
     #[test]
     fn test_new_session_starts_creating() {
         let session = test_session();
-        assert_eq!(session.state, SessionState::Creating);
-        assert!(session.output_tx.is_none());
-        assert!(session.attached_clients.is_empty());
-        assert!(session.pty_pid.is_none());
+        assert_eq!(session.state(), SessionState::Creating);
+        assert!(!session.has_output());
+        assert_eq!(session.client_count(), 0);
+        assert!(session.pty_pid().is_none());
     }
 
     #[test]
@@ -173,9 +222,9 @@ mod tests {
         let mut session = test_session();
         let (tx, _) = broadcast::channel(16);
         session.set_running(tx, Some(12345));
-        assert_eq!(session.state, SessionState::Running);
-        assert!(session.output_tx.is_some());
-        assert_eq!(session.pty_pid, Some(12345));
+        assert_eq!(session.state(), SessionState::Running);
+        assert!(session.has_output());
+        assert_eq!(session.pty_pid(), Some(12345));
     }
 
     #[test]
@@ -184,9 +233,9 @@ mod tests {
         let (tx, _) = broadcast::channel(16);
         session.set_running(tx, Some(12345));
         session.set_stopped();
-        assert_eq!(session.state, SessionState::Stopped);
-        assert!(session.output_tx.is_none());
-        assert!(session.pty_pid.is_none());
+        assert_eq!(session.state(), SessionState::Stopped);
+        assert!(!session.has_output());
+        assert!(session.pty_pid().is_none());
     }
 
     #[test]

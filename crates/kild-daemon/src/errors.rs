@@ -1,5 +1,7 @@
 use std::io;
 
+use kild_core::errors::KildError;
+
 /// All error types for the kild-daemon crate.
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -43,9 +45,8 @@ pub enum DaemonError {
     Session(#[from] kild_core::sessions::errors::SessionError),
 }
 
-impl DaemonError {
-    /// Error code string for the IPC protocol.
-    pub fn error_code(&self) -> &'static str {
+impl KildError for DaemonError {
+    fn error_code(&self) -> &'static str {
         match self {
             DaemonError::NotRunning => "daemon_not_running",
             DaemonError::ConnectionFailed(_) => "connection_failed",
@@ -63,8 +64,7 @@ impl DaemonError {
         }
     }
 
-    /// Whether this error is caused by user input.
-    pub fn is_user_error(&self) -> bool {
+    fn is_user_error(&self) -> bool {
         matches!(
             self,
             DaemonError::SessionNotFound(_)

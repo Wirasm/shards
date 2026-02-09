@@ -137,7 +137,7 @@ impl SessionManager {
             .get_mut(session_id)
             .ok_or_else(|| DaemonError::SessionNotFound(session_id.to_string()))?;
 
-        if session.state != SessionState::Running {
+        if session.state() != SessionState::Running {
             return Err(DaemonError::SessionNotRunning(session_id.to_string()));
         }
 
@@ -234,8 +234,14 @@ impl SessionManager {
         );
 
         // Kill PTY if it exists
-        if self.pty_manager.get(session_id).is_some() {
-            let _ = self.pty_manager.destroy(session_id);
+        if self.pty_manager.get(session_id).is_some()
+            && let Err(e) = self.pty_manager.destroy(session_id)
+        {
+            warn!(
+                event = "daemon.session.destroy_pty_failed",
+                session_id = session_id,
+                error = %e,
+            );
         }
 
         self.sessions.remove(session_id);
@@ -257,7 +263,7 @@ impl SessionManager {
     pub fn list_sessions(&self, project_id: Option<&str>) -> Vec<SessionInfo> {
         self.sessions
             .values()
-            .filter(|s| project_id.is_none_or(|pid| s.project_id == pid))
+            .filter(|s| project_id.is_none_or(|pid| s.project_id() == pid))
             .map(|s| s.to_session_info())
             .collect()
     }
@@ -297,7 +303,7 @@ impl SessionManager {
 
         // Transition session to Stopped
         if let Some(session) = self.sessions.get_mut(session_id) {
-            let output_tx = session.output_tx.clone();
+            let output_tx = session.output_tx();
             session.set_stopped();
             return output_tx;
         }
@@ -310,8 +316,8 @@ impl SessionManager {
         let session_ids: Vec<String> = self
             .sessions
             .values()
-            .filter(|s| s.state == SessionState::Running)
-            .map(|s| s.id.clone())
+            .filter(|s| s.state() == SessionState::Running)
+            .map(|s| s.id().to_string())
             .collect();
 
         for session_id in session_ids {

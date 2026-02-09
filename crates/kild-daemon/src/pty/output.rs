@@ -137,10 +137,17 @@ pub fn spawn_pty_reader(
             }
         }
         // Notify that the PTY reader has exited
-        if let Some(tx) = exit_tx {
-            let _ = tx.send(PtyExitEvent {
-                session_id: session_id.clone(),
-            });
+        if let Some(tx) = exit_tx
+            && tx
+                .send(PtyExitEvent {
+                    session_id: session_id.clone(),
+                })
+                .is_err()
+        {
+            error!(
+                event = "daemon.pty.exit_notification_failed",
+                session_id = session_id,
+            );
         }
     })
 }

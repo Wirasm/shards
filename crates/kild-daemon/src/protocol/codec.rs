@@ -3,6 +3,8 @@ use serde::de::DeserializeOwned;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::errors::DaemonError;
+#[cfg(test)]
+use kild_core::errors::KildError;
 
 /// Read a single JSONL message from an async buffered reader.
 ///

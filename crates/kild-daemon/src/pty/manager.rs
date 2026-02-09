@@ -171,7 +171,10 @@ impl PtyManager {
             pid = ?pid,
         );
 
-        Ok(self.ptys.get(session_id).unwrap())
+        Ok(self
+            .ptys
+            .get(session_id)
+            .expect("PTY just inserted must exist"))
     }
 
     /// Get a reference to a managed PTY.

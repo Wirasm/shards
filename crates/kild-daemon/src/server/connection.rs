@@ -6,6 +6,8 @@ use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
+use kild_core::errors::KildError;
+
 use crate::protocol::codec::{read_message, write_message};
 use crate::protocol::messages::{ClientMessage, DaemonMessage};
 use crate::session::manager::SessionManager;
@@ -145,7 +147,15 @@ async fn dispatch_message(
                 let mut mgr = session_manager.lock().await;
 
                 // Resize to client dimensions
-                let _ = mgr.resize_pty(&session_id, rows, cols);
+                if let Err(e) = mgr.resize_pty(&session_id, rows, cols) {
+                    warn!(
+                        event = "daemon.connection.resize_failed",
+                        session_id = session_id,
+                        rows = rows,
+                        cols = cols,
+                        error = %e,
+                    );
+                }
 
                 let rx = match mgr.attach_client(&session_id, client_id) {
                     Ok(rx) => rx,
@@ -166,7 +176,15 @@ async fn dispatch_message(
             // Send ack first
             {
                 let mut w = writer.lock().await;
-                let _ = write_message(&mut *w, &DaemonMessage::Ack { id }).await;
+                if let Err(e) = write_message(&mut *w, &DaemonMessage::Ack { id }).await {
+                    warn!(
+                        event = "daemon.connection.ack_write_failed",
+                        session_id = session_id,
+                        client_id = client_id,
+                        error = %e,
+                    );
+                    return None;
+                }
             }
 
             // Send scrollback replay so attaching client has context
@@ -177,7 +195,14 @@ async fn dispatch_message(
                     data: encoded,
                 };
                 let mut w = writer.lock().await;
-                let _ = write_message(&mut *w, &scrollback_msg).await;
+                if let Err(e) = write_message(&mut *w, &scrollback_msg).await {
+                    warn!(
+                        event = "daemon.connection.scrollback_write_failed",
+                        session_id = session_id,
+                        client_id = client_id,
+                        error = %e,
+                    );
+                }
             }
 
             // Spawn streaming task for PTY output

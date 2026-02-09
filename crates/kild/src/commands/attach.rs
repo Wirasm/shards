@@ -3,7 +3,7 @@ use std::os::unix::net::UnixStream;
 
 use clap::ArgMatches;
 use nix::sys::termios;
-use tracing::info;
+use tracing::{error, info};
 
 pub(crate) fn handle_attach_command(
     matches: &ArgMatches,
@@ -139,6 +139,8 @@ impl Drop for RawModeGuard {
     }
 }
 
+/// Forwards stdin bytes to the daemon over IPC, base64-encoded.
+/// Supports a Ctrl+B, d detach sequence (similar to tmux's Ctrl+B prefix).
 fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
     use base64::Engine;
 
@@ -175,10 +177,14 @@ fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
             "session_id": session_id,
             "data": encoded,
         });
-        if writeln!(stream, "{}", serde_json::to_string(&input_msg).unwrap()).is_err() {
+        if let Err(e) = writeln!(stream, "{}", serde_json::to_string(&input_msg).unwrap()) {
+            error!(event = "cli.attach.stdin_write_failed", error = %e);
+            eprintln!("\r\nConnection to daemon lost.");
             break;
         }
-        if stream.flush().is_err() {
+        if let Err(e) = stream.flush() {
+            error!(event = "cli.attach.stdin_flush_failed", error = %e);
+            eprintln!("\r\nConnection to daemon lost.");
             break;
         }
     }
@@ -205,7 +211,11 @@ fn forward_daemon_to_stdout(mut stream: UnixStream) -> Result<(), Box<dyn std::e
 
         let msg: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                error!(event = "cli.attach.parse_failed", error = %e);
+                eprintln!("\r\nWarning: received malformed message from daemon.");
+                continue;
+            }
         };
 
         match msg.get("type").and_then(|t| t.as_str()) {
@@ -217,9 +227,8 @@ fn forward_daemon_to_stdout(mut stream: UnixStream) -> Result<(), Box<dyn std::e
                     stdout.flush()?;
                 }
             }
-            Some("pty_output_dropped") => {
-                // Silently handle dropped output
-            }
+            Some("pty_output_dropped") => {}
+
             Some("session_event") => {
                 if let Some(event) = msg.get("event").and_then(|e| e.as_str())
                     && event == "stopped"
