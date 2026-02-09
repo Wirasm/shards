@@ -122,10 +122,14 @@ impl DaemonSession {
     }
 
     /// Transition to Stopped state, clearing PTY resources.
+    /// Idempotent: calling on an already-stopped session is a no-op.
     pub fn set_stopped(&mut self) {
+        if self.state == SessionState::Stopped {
+            return;
+        }
         debug_assert!(
             matches!(self.state, SessionState::Running | SessionState::Creating),
-            "set_stopped called on already-stopped session (state: {:?})",
+            "set_stopped called from unexpected state: {:?}",
             self.state
         );
         self.state = SessionState::Stopped;

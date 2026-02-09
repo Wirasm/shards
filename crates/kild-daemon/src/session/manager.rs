@@ -209,13 +209,36 @@ impl SessionManager {
     }
 
     /// Stop a session's agent process.
+    /// Idempotent: stopping an already-stopped session is a no-op.
     pub fn stop_session(&mut self, session_id: &str) -> Result<(), DaemonError> {
         info!(
             event = "daemon.session.stop_started",
             session_id = session_id,
         );
 
-        self.pty_manager.destroy(session_id)?;
+        // Check if session is already stopped (PTY may have exited on its own)
+        if let Some(session) = self.sessions.get(session_id) {
+            if session.state() == SessionState::Stopped {
+                info!(
+                    event = "daemon.session.stop_already_stopped",
+                    session_id = session_id,
+                );
+                return Ok(());
+            }
+        } else {
+            return Err(DaemonError::SessionNotFound(session_id.to_string()));
+        }
+
+        // PTY may already be gone (e.g., process exited naturally)
+        if self.pty_manager.get(session_id).is_some()
+            && let Err(e) = self.pty_manager.destroy(session_id)
+        {
+            warn!(
+                event = "daemon.session.stop_pty_destroy_failed",
+                session_id = session_id,
+                error = %e,
+            );
+        }
 
         if let Some(session) = self.sessions.get_mut(session_id) {
             session.set_stopped();
