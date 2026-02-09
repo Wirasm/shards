@@ -60,22 +60,41 @@ pub fn create_session(
     kild_config: &KildConfig,
 ) -> Result<Session, SessionError> {
     let agent = request.agent_or_default(&kild_config.agent.default);
-    let agent_command =
-        kild_config
-            .get_agent_command(&agent)
-            .map_err(|e| SessionError::ConfigError {
-                message: e.to_string(),
-            })?;
 
-    // Warn if agent CLI is not available in PATH
-    if let Some(false) = agents::is_agent_available(&agent) {
-        warn!(
-            event = "core.session.agent_not_available",
-            agent = %agent,
-            "Agent CLI '{}' not found in PATH - session may fail to start",
-            agent
-        );
-    }
+    // Determine command: bare shell ($SHELL) or agent command
+    let agent_command = if request.no_agent {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+            let fallback = "/bin/sh".to_string();
+            warn!(
+                event = "core.session.shell_env_missing",
+                fallback = %fallback,
+                "$SHELL not set, falling back to /bin/sh"
+            );
+            eprintln!("Warning: $SHELL not set. Using /bin/sh as fallback.");
+            fallback
+        });
+        info!(event = "core.session.create_shell_selected", shell = %shell);
+        shell
+    } else {
+        let command =
+            kild_config
+                .get_agent_command(&agent)
+                .map_err(|e| SessionError::ConfigError {
+                    message: e.to_string(),
+                })?;
+
+        // Warn if agent CLI is not available in PATH
+        if let Some(false) = agents::is_agent_available(&agent) {
+            warn!(
+                event = "core.session.agent_not_available",
+                agent = %agent,
+                "Agent CLI '{}' not found in PATH - session may fail to start",
+                agent
+            );
+        }
+
+        command
+    };
 
     info!(
         event = "core.session.create_started",

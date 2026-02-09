@@ -74,6 +74,7 @@ pub fn create_kild(
             agent: Some(agent),
             note,
             project_path,
+            no_agent: false,
         },
         "ui.create_kild",
     )

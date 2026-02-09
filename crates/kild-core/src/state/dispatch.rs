@@ -36,13 +36,15 @@ impl Store for CoreStore {
                 agent,
                 note,
                 project_path,
+                no_agent,
             } => {
                 let request = match project_path {
                     Some(path) => {
                         CreateSessionRequest::with_project_path(branch, agent, note, path)
                     }
                     None => CreateSessionRequest::new(branch, agent, note),
-                };
+                }
+                .with_no_agent(no_agent);
                 let session = session_ops::create_session(request, &self.config)?;
                 Ok(vec![Event::KildCreated {
                     branch: session.branch,

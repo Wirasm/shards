@@ -114,6 +114,7 @@ mod tests {
                 agent: None,
                 note: None,
                 project_path: None,
+                no_agent: false,
             })
             .unwrap();
         assert!(matches!(&events[0], Event::KildCreated { branch, .. } if branch == "feat"));
@@ -224,6 +225,7 @@ mod tests {
                 agent: None,
                 note: None,
                 project_path: None,
+                no_agent: false,
             },
             Command::DestroyKild {
                 branch: "b".to_string(),

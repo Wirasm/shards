@@ -32,6 +32,8 @@ pub enum Command {
         note: Option<String>,
         /// Project path for session tracking. Uses current directory if `None`.
         project_path: Option<PathBuf>,
+        /// Create with a bare terminal shell instead of launching an agent.
+        no_agent: bool,
     },
     /// Destroy a kild session, removing worktree and session file.
     DestroyKild {
@@ -75,6 +77,7 @@ mod tests {
             agent: Some("claude".to_string()),
             note: Some("Working on auth".to_string()),
             project_path: Some(PathBuf::from("/home/user/project")),
+            no_agent: false,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let deserialized: Command = serde_json::from_str(&json).unwrap();
@@ -89,6 +92,7 @@ mod tests {
                 agent: Some("claude".to_string()),
                 note: None,
                 project_path: None,
+                no_agent: false,
             },
             Command::DestroyKild {
                 branch: "feature".to_string(),
@@ -141,6 +145,7 @@ mod tests {
                 agent: Some("kiro".to_string()),
                 note: Some("test note".to_string()),
                 project_path: Some(PathBuf::from("/tmp/project")),
+                no_agent: false,
             },
             Command::DestroyKild {
                 branch: "test".to_string(),

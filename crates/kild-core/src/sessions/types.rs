@@ -506,6 +506,8 @@ pub struct CreateSessionRequest {
     pub base_branch: Option<String>,
     /// Skip fetching before create (CLI --no-fetch flag).
     pub no_fetch: bool,
+    /// Create with a bare terminal shell instead of launching an agent.
+    pub no_agent: bool,
 }
 
 impl CreateSessionRequest {
@@ -517,6 +519,7 @@ impl CreateSessionRequest {
             project_path: None,
             base_branch: None,
             no_fetch: false,
+            no_agent: false,
         }
     }
 
@@ -534,6 +537,7 @@ impl CreateSessionRequest {
             project_path: Some(project_path),
             base_branch: None,
             no_fetch: false,
+            no_agent: false,
         }
     }
 
@@ -544,6 +548,11 @@ impl CreateSessionRequest {
 
     pub fn with_no_fetch(mut self, no_fetch: bool) -> Self {
         self.no_fetch = no_fetch;
+        self
+    }
+
+    pub fn with_no_agent(mut self, no_agent: bool) -> Self {
+        self.no_agent = no_agent;
         self
     }
 

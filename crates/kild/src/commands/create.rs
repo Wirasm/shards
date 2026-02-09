@@ -16,26 +16,34 @@ pub(crate) fn handle_create_command(
     let note = matches.get_one::<String>("note").cloned();
 
     let mut config = load_config_with_warning();
+    let no_agent = matches.get_flag("no-agent");
 
-    // Apply CLI overrides only if provided
-    let agent_override = matches.get_one::<String>("agent").cloned();
+    // Apply CLI overrides only if provided (skip agent-specific overrides when --no-agent)
+    let agent_override = if no_agent {
+        None
+    } else {
+        matches.get_one::<String>("agent").cloned()
+    };
     if let Some(agent) = &agent_override {
         config.agent.default = agent.clone();
     }
     if let Some(terminal) = matches.get_one::<String>("terminal") {
         config.terminal.preferred = Some(terminal.clone());
     }
-    if let Some(startup_command) = matches.get_one::<String>("startup-command") {
-        config.agent.startup_command = Some(startup_command.clone());
-    }
-    if let Some(flags) = matches.get_one::<String>("flags") {
-        config.agent.flags = Some(flags.clone());
+    if !no_agent {
+        if let Some(startup_command) = matches.get_one::<String>("startup-command") {
+            config.agent.startup_command = Some(startup_command.clone());
+        }
+        if let Some(flags) = matches.get_one::<String>("flags") {
+            config.agent.flags = Some(flags.clone());
+        }
     }
 
     info!(
         event = "cli.create_started",
         branch = branch,
         agent = config.agent.default,
+        no_agent = no_agent,
         note = ?note
     );
 
@@ -44,13 +52,18 @@ pub(crate) fn handle_create_command(
 
     let request = CreateSessionRequest::new(branch.clone(), agent_override, note)
         .with_base_branch(base_branch)
-        .with_no_fetch(no_fetch);
+        .with_no_fetch(no_fetch)
+        .with_no_agent(no_agent);
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {
             println!("✅ KILD created successfully!");
             println!("   Branch: {}", session.branch);
-            println!("   Agent: {}", session.agent);
+            if no_agent {
+                println!("   Agent: {} (default, not running)", session.agent);
+            } else {
+                println!("   Agent: {}", session.agent);
+            }
             println!("   Worktree: {}", session.worktree_path.display());
             println!(
                 "   Port Range: {}-{}",
