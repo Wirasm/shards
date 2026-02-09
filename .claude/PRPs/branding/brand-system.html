@@ -31,35 +31,35 @@
 
             /* === ACCENT COLORS === */
 
-            /* Primary: Ice Blue - the cut, primary actions */
-            --ice: #38BDF8;            /* Primary blue */
-            --ice-dim: #0EA5E9;        /* Pressed state */
-            --ice-bright: #7DD3FC;     /* Hover state */
-            --ice-glow: rgba(56, 189, 248, 0.15); /* Focus ring, glows */
+            /* Primary: Ice - frosted glass, steel-blue. Actual ice, not sky. */
+            --ice: #7CB4C8;            /* Frosted steel-blue */
+            --ice-dim: #5E9AB2;        /* Pressed state, deeper frost */
+            --ice-bright: #98CCE0;     /* Hover state, light frost */
+            --ice-glow: rgba(124, 180, 200, 0.12); /* Focus ring, glassy */
 
             /* Secondary: Blade Steel - subtle accents */
             --blade: #64748B;          /* Steel gray-blue */
             --blade-bright: #94A3B8;   /* Lighter steel */
 
-            /* Status: Aurora - active/running/success */
-            --aurora: #34D399;         /* Success green */
-            --aurora-dim: #10B981;     /* Darker green */
-            --aurora-glow: rgba(52, 211, 153, 0.15);
+            /* Status: Aurora - active/running/success. Dark olive moss. */
+            --aurora: #6B8F5E;         /* Olive green */
+            --aurora-dim: #556F4A;     /* Deep olive */
+            --aurora-glow: rgba(107, 143, 94, 0.10);
 
-            /* Status: Copper - stopped/paused/warning */
-            --copper: #FBBF24;         /* Amber */
-            --copper-dim: #D97706;     /* Darker amber */
-            --copper-glow: rgba(251, 191, 36, 0.15);
+            /* Status: Copper - stopped/paused/warning. Aged copper, warm ochre. */
+            --copper: #C49A5C;         /* Warm ochre */
+            --copper-dim: #A07D45;     /* Deep ochre */
+            --copper-glow: rgba(196, 154, 92, 0.10);
 
-            /* Status: Ember - error/crashed */
-            --ember: #F87171;          /* Soft red */
-            --ember-dim: #EF4444;      /* Stronger red */
-            --ember-glow: rgba(248, 113, 113, 0.15);
+            /* Status: Ember - error/crashed. Warm terracotta, glowing coals. */
+            --ember: #B87060;          /* Terracotta */
+            --ember-dim: #9A584A;      /* Deep terracotta */
+            --ember-glow: rgba(184, 112, 96, 0.10);
 
-            /* Agent: Kiri Purple - AI activity indicator */
-            --kiri: #A78BFA;           /* Agent purple */
-            --kiri-dim: #8B5CF6;       /* Darker purple */
-            --kiri-glow: rgba(167, 139, 250, 0.15);
+            /* Agent: Kiri - twilight mauve, warm plum. */
+            --kiri: #A088B0;           /* Warm mauve */
+            --kiri-dim: #866B92;       /* Deep plum */
+            --kiri-glow: rgba(160, 136, 176, 0.10);
 
             /* === LIGHT THEME: BALTIC ICE === */
             --light-glacial: #FAFBFC;
@@ -68,10 +68,10 @@
             --light-border: #CBD5E1;
             --light-text: #1E293B;
             --light-text-subtle: #475569;
-            --light-ice: #0284C7;
-            --light-aurora: #059669;
-            --light-copper: #B45309;
-            --light-ember: #DC2626;
+            --light-ice: #4A8FA5;
+            --light-aurora: #4A6B3E;
+            --light-copper: #8A6A38;
+            --light-ember: #8A4A3A;
 
             /* === TYPOGRAPHY === */
             --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -346,45 +346,46 @@
             outline: none;
         }
 
-        /* Primary button - Ice blue */
+        /* Primary button - Frosted glass. Subtle ice tint, not solid fill. */
         .btn-primary {
-            background: var(--ice);
-            color: var(--void);
-            border-color: var(--ice);
+            background: rgba(124, 180, 200, 0.06);
+            color: var(--ice);
+            border-color: rgba(124, 180, 200, 0.20);
         }
 
         .btn-primary:hover {
-            background: var(--ice-bright);
-            border-color: var(--ice-bright);
+            background: rgba(124, 180, 200, 0.12);
+            border-color: rgba(124, 180, 200, 0.35);
+            color: var(--ice-bright);
         }
 
         .btn-primary:active {
-            background: var(--ice-dim);
-            border-color: var(--ice-dim);
+            background: rgba(124, 180, 200, 0.08);
+            border-color: rgba(124, 180, 200, 0.25);
         }
 
         .btn-primary:focus {
-            box-shadow: 0 0 0 3px var(--ice-glow);
+            box-shadow: 0 0 0 2px var(--ice-glow);
         }
 
-        /* Secondary button - Surface */
+        /* Secondary button - Border only, transparent. The workhorse. */
         .btn-secondary {
-            background: var(--surface);
-            color: var(--text);
+            background: transparent;
+            color: var(--text-subtle);
             border-color: var(--border);
         }
 
         .btn-secondary:hover {
-            background: var(--elevated);
+            background: var(--surface);
             border-color: var(--border-strong);
-            color: var(--text-bright);
+            color: var(--text);
         }
 
         .btn-secondary:active {
             background: var(--obsidian);
         }
 
-        /* Ghost button - Transparent */
+        /* Ghost button - Invisible until hover. For toolbars, icon actions. */
         .btn-ghost {
             background: transparent;
             color: var(--text-subtle);
@@ -396,40 +397,21 @@
             color: var(--text);
         }
 
-        /* Success button - Aurora green */
-        .btn-success {
-            background: var(--aurora);
-            color: var(--void);
-            border-color: var(--aurora);
-        }
-
-        .btn-success:hover {
-            background: var(--aurora-dim);
-            border-color: var(--aurora-dim);
-        }
-
-        /* Warning button - Copper */
-        .btn-warning {
-            background: var(--copper);
-            color: var(--void);
-            border-color: var(--copper);
-        }
-
-        .btn-warning:hover {
-            background: var(--copper-dim);
-            border-color: var(--copper-dim);
-        }
-
-        /* Danger button - Ember */
+        /* Danger button - Looks like secondary by default. Reveals ember on hover. */
         .btn-danger {
             background: transparent;
-            color: var(--ember);
-            border-color: var(--ember);
+            color: var(--text-subtle);
+            border-color: var(--border);
         }
 
         .btn-danger:hover {
-            background: var(--ember);
-            color: var(--void);
+            background: rgba(184, 112, 96, 0.08);
+            border-color: rgba(184, 112, 96, 0.30);
+            color: var(--ember);
+        }
+
+        .btn-danger:active {
+            background: rgba(184, 112, 96, 0.12);
         }
 
         /* Button sizes */
@@ -885,11 +867,11 @@
                 <h3 class="color-group-title">Accent Colors</h3>
                 <div class="color-grid">
                     <div class="color-swatch">
-                        <div class="color-swatch-preview" style="background: #38BDF8; color: #08090A;">Aa</div>
+                        <div class="color-swatch-preview" style="background: #7CB4C8; color: #08090A;">Aa</div>
                         <div class="color-swatch-info">
                             <div class="color-swatch-name">Ice</div>
-                            <div class="color-swatch-value">#38BDF8</div>
-                            <div class="color-swatch-usage">Primary actions, the Cut</div>
+                            <div class="color-swatch-value">#7CB4C8</div>
+                            <div class="color-swatch-usage">Primary actions, frosted glass</div>
                         </div>
                     </div>
                     <div class="color-swatch">
@@ -907,35 +889,35 @@
                 <h3 class="color-group-title">Status Colors</h3>
                 <div class="color-grid">
                     <div class="color-swatch">
-                        <div class="color-swatch-preview" style="background: #34D399; color: #08090A;">Aa</div>
+                        <div class="color-swatch-preview" style="background: #6B8F5E; color: #08090A;">Aa</div>
                         <div class="color-swatch-info">
                             <div class="color-swatch-name">Aurora</div>
-                            <div class="color-swatch-value">#34D399</div>
-                            <div class="color-swatch-usage">Active, running, success</div>
+                            <div class="color-swatch-value">#6B8F5E</div>
+                            <div class="color-swatch-usage">Active, running, success (olive)</div>
                         </div>
                     </div>
                     <div class="color-swatch">
-                        <div class="color-swatch-preview" style="background: #FBBF24; color: #08090A;">Aa</div>
+                        <div class="color-swatch-preview" style="background: #C49A5C; color: #08090A;">Aa</div>
                         <div class="color-swatch-info">
                             <div class="color-swatch-name">Copper</div>
-                            <div class="color-swatch-value">#FBBF24</div>
-                            <div class="color-swatch-usage">Stopped, paused, warning</div>
+                            <div class="color-swatch-value">#C49A5C</div>
+                            <div class="color-swatch-usage">Stopped, paused, warning (ochre)</div>
                         </div>
                     </div>
                     <div class="color-swatch">
-                        <div class="color-swatch-preview" style="background: #F87171; color: #08090A;">Aa</div>
+                        <div class="color-swatch-preview" style="background: #B87060; color: #08090A;">Aa</div>
                         <div class="color-swatch-info">
                             <div class="color-swatch-name">Ember</div>
-                            <div class="color-swatch-value">#F87171</div>
-                            <div class="color-swatch-usage">Error, crashed</div>
+                            <div class="color-swatch-value">#B87060</div>
+                            <div class="color-swatch-usage">Error, crashed (terracotta)</div>
                         </div>
                     </div>
                     <div class="color-swatch">
-                        <div class="color-swatch-preview" style="background: #A78BFA; color: #08090A;">Aa</div>
+                        <div class="color-swatch-preview" style="background: #A088B0; color: #08090A;">Aa</div>
                         <div class="color-swatch-info">
                             <div class="color-swatch-name">Kiri (Fog)</div>
-                            <div class="color-swatch-value">#A78BFA</div>
-                            <div class="color-swatch-usage">Agent activity, AI indicator</div>
+                            <div class="color-swatch-value">#A088B0</div>
+                            <div class="color-swatch-usage">Agent activity, twilight mauve</div>
                         </div>
                     </div>
                 </div>
@@ -990,10 +972,10 @@
         <!-- Buttons -->
         <section class="section">
             <h2 class="section-title">Buttons</h2>
-            <p class="section-description">Action buttons with clear hierarchy. Primary for main actions, secondary for alternatives.</p>
+            <p class="section-description">Keyboard-first. Buttons are fallback, not primary interaction. Color is for state indicators, not action buttons. No solid fills.</p>
 
             <div class="showcase">
-                <div class="showcase-title">Button Variants</div>
+                <div class="showcase-title">Button Hierarchy</div>
                 <div class="button-grid">
                     <div class="button-group">
                         <span class="button-group-label">Primary</span>
@@ -1001,19 +983,11 @@
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Secondary</span>
-                        <button class="btn btn-secondary">Cancel</button>
+                        <button class="btn btn-secondary">Open All</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Ghost</span>
                         <button class="btn btn-ghost">Settings</button>
-                    </div>
-                    <div class="button-group">
-                        <span class="button-group-label">Success</span>
-                        <button class="btn btn-success">Open All</button>
-                    </div>
-                    <div class="button-group">
-                        <span class="button-group-label">Warning</span>
-                        <button class="btn btn-warning">Stop All</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Danger</span>
@@ -1023,27 +997,49 @@
             </div>
 
             <div class="showcase" style="margin-top: var(--space-4);">
-                <div class="showcase-title">Button Sizes</div>
+                <div class="showcase-title">Sizes &amp; States</div>
                 <div class="button-grid">
                     <div class="button-group">
                         <span class="button-group-label">Small</span>
-                        <button class="btn btn-primary btn-sm">Small</button>
+                        <button class="btn btn-primary btn-sm">Create</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Default</span>
-                        <button class="btn btn-primary">Default</button>
+                        <button class="btn btn-primary">Create Kild</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Large</span>
-                        <button class="btn btn-primary btn-lg">Large</button>
+                        <button class="btn btn-primary btn-lg">Create Kild</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Icon</span>
-                        <button class="btn btn-secondary btn-icon">+</button>
+                        <button class="btn btn-ghost btn-icon">+</button>
                     </div>
                     <div class="button-group">
                         <span class="button-group-label">Disabled</span>
-                        <button class="btn btn-primary" disabled>Disabled</button>
+                        <button class="btn btn-primary" disabled>Create Kild</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="showcase" style="margin-top: var(--space-4);">
+                <div class="showcase-title">Button Principles</div>
+                <div style="display: flex; flex-direction: column; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-subtle);">
+                    <div style="display: flex; align-items: center; gap: var(--space-3);">
+                        <button class="btn btn-primary btn-sm">Create Kild</button>
+                        <span>Primary — frosted ice tint. Used once per view, max. The main action.</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: var(--space-3);">
+                        <button class="btn btn-secondary btn-sm">Stop All</button>
+                        <span>Secondary — border only. Everything else. "Open All", "Stop", "Cancel".</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: var(--space-3);">
+                        <button class="btn btn-ghost btn-sm">Preferences</button>
+                        <span>Ghost — invisible until hover. Toolbars, menus, icon actions.</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: var(--space-3);">
+                        <button class="btn btn-danger btn-sm">Destroy</button>
+                        <span>Danger — looks secondary. Reveals ember on hover. Quiet until you commit.</span>
                     </div>
                 </div>
             </div>
