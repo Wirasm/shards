@@ -226,9 +226,9 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 
 Logging is initialized via `kild_core::init_logging(quiet)` in the CLI main.rs. Output is JSON format via tracing-subscriber.
 
-By default, only error-level events are emitted (clean output). When `-v/--verbose` flag is used, info-level and above events are emitted.
+By default, all log output is suppressed (clean output). When `-v/--verbose` flag is used, info-level and above events are emitted.
 
-Control log level with `RUST_LOG` env var: `RUST_LOG=debug cargo run -- list`
+The `-v/--verbose` flag is required to see any logs. The `RUST_LOG` env var alone will not override the default quiet mode.
 
 Enable verbose logs with the verbose flag: `cargo run -- -v list`
 
