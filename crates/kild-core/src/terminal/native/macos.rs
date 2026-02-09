@@ -32,6 +32,10 @@ pub fn find_window(
         title_contains = title_contains
     );
 
+    if title_contains.is_empty() {
+        return Ok(None);
+    }
+
     let windows = xcap::Window::all().map_err(|e| TerminalError::NativeWindowError {
         message: format!("Failed to enumerate windows via Core Graphics: {}", e),
     })?;
@@ -60,7 +64,7 @@ pub fn find_window(
         };
 
         let is_minimized = w.is_minimized().unwrap_or(false);
-        let pid = w.pid().ok().map(|p| p as i32);
+        let pid = w.pid().ok().and_then(|p| i32::try_from(p).ok());
 
         debug!(
             event = "core.terminal.native.find_window_found",
@@ -147,7 +151,7 @@ pub fn find_window_by_pid(
             id,
             title,
             app_name: w_app,
-            pid: Some(w_pid as i32),
+            pid: i32::try_from(w_pid).ok(),
             is_minimized,
         }));
     }
