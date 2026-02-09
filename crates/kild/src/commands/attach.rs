@@ -90,12 +90,12 @@ fn attach_to_daemon_session(daemon_session_id: &str) -> Result<(), Box<dyn std::
     });
 
     // Main thread: read daemon output, write to stdout
-    let read_stream = reader.into_inner();
-    forward_daemon_to_stdout(read_stream)?;
+    // Re-use the BufReader directly so we don't lose buffered data
+    forward_daemon_to_stdout_buffered(reader)?;
 
     // Restore terminal
     drop(_raw_guard);
-    eprintln!("\r\nDetached from session.");
+    eprintln!("\r\nDetached from session. (Reconnect with: kild attach)");
 
     let _ = stdin_handle.join();
     Ok(())
@@ -125,6 +125,9 @@ fn enable_raw_mode() -> Result<RawModeGuard, Box<dyn std::error::Error>> {
 
     let mut raw = original.clone();
     termios::cfmakeraw(&mut raw);
+    // Re-enable ISIG so Ctrl+C generates SIGINT and kills the attach process.
+    // This lets the user detach with Ctrl+C — the daemon keeps the session alive.
+    raw.local_flags.insert(termios::LocalFlags::ISIG);
     termios::tcsetattr(stdin_fd, termios::SetArg::TCSANOW, &raw)
         .map_err(|e| format!("tcsetattr failed: {}", e))?;
 
@@ -140,13 +143,13 @@ impl Drop for RawModeGuard {
 }
 
 /// Forwards stdin bytes to the daemon over IPC, base64-encoded.
-/// Supports a Ctrl+B, d detach sequence (similar to tmux's Ctrl+B prefix).
+/// Ctrl+C (0x03) detaches from the session without killing it.
+/// The shell stays alive in the daemon — reattach with `kild attach`.
 fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
     use base64::Engine;
 
     let stdin = std::io::stdin();
     let mut buf = [0u8; 4096];
-    let mut ctrl_b_pressed = false;
 
     loop {
         let n = match stdin.lock().read(&mut buf) {
@@ -155,57 +158,9 @@ fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
             Err(_) => break,
         };
 
-        // Filter out detach sequence bytes (Ctrl+B + 'd') and build clean buffer
-        let mut filtered = Vec::with_capacity(n);
-        let mut detach = false;
-
-        for &byte in &buf[..n] {
-            if ctrl_b_pressed {
-                if byte == b'd' {
-                    // Detach sequence complete — send detach, don't forward anything
-                    detach = true;
-                    break;
-                }
-                // Ctrl+B was not followed by 'd', emit the held Ctrl+B
-                filtered.push(0x02);
-                ctrl_b_pressed = false;
-            }
-
-            if byte == 0x02 {
-                // Hold Ctrl+B until we see what comes next
-                ctrl_b_pressed = true;
-            } else {
-                filtered.push(byte);
-            }
-        }
-
-        if detach {
-            let detach_msg = serde_json::json!({
-                "id": "detach-1",
-                "type": "detach",
-                "session_id": session_id,
-            });
-            match serde_json::to_string(&detach_msg) {
-                Ok(msg) => {
-                    let _ = writeln!(stream, "{}", msg);
-                    let _ = stream.flush();
-                }
-                Err(e) => {
-                    error!(event = "cli.attach.detach_serialize_failed", error = %e);
-                }
-            }
-            return;
-        }
-
-        // Nothing to forward if all bytes were filtered out
-        if filtered.is_empty() {
-            continue;
-        }
-
-        // Forward filtered input to daemon
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&filtered);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
         let input_msg = serde_json::json!({
-            "id": format!("write-{}", filtered.len()),
+            "id": format!("write-{}", n),
             "type": "write_stdin",
             "session_id": session_id,
             "data": encoded,
@@ -219,21 +174,20 @@ fn forward_stdin_to_daemon(stream: &mut UnixStream, session_id: &str) {
         };
         if let Err(e) = writeln!(stream, "{}", serialized) {
             error!(event = "cli.attach.stdin_write_failed", error = %e);
-            eprintln!("\r\nConnection to daemon lost.");
             break;
         }
         if let Err(e) = stream.flush() {
             error!(event = "cli.attach.stdin_flush_failed", error = %e);
-            eprintln!("\r\nConnection to daemon lost.");
             break;
         }
     }
 }
 
-fn forward_daemon_to_stdout(mut stream: UnixStream) -> Result<(), Box<dyn std::error::Error>> {
+fn forward_daemon_to_stdout_buffered(
+    mut reader: std::io::BufReader<UnixStream>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use base64::Engine;
 
-    let mut reader = std::io::BufReader::new(&mut stream);
     let mut line = String::new();
     let mut stdout = std::io::stdout();
 
