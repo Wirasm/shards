@@ -5,6 +5,8 @@ use clap::ArgMatches;
 use nix::sys::termios;
 use tracing::{error, info, warn};
 
+use kild_core::events;
+
 pub(crate) fn handle_attach_command(
     matches: &ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -15,18 +17,33 @@ pub(crate) fn handle_attach_command(
     info!(event = "cli.attach_started", branch = branch);
 
     // 1. Look up session to get daemon_session_id
-    let session = kild_core::session_ops::get_session(branch)?;
+    let session = match kild_core::session_ops::get_session(branch) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error: Session '{}' not found.", branch);
+            eprintln!("Tip: Use 'kild list' to see active sessions.");
+            error!(event = "cli.attach_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
+            return Err(e.into());
+        }
+    };
 
-    let daemon_session_id = session
-        .latest_agent()
-        .and_then(|a| a.daemon_session_id())
-        .ok_or_else(|| {
-            format!(
+    let daemon_session_id = match session.latest_agent().and_then(|a| a.daemon_session_id()) {
+        Some(id) => id.to_string(),
+        None => {
+            let msg = format!(
                 "Session '{}' is not daemon-managed. Use 'kild focus {}' for terminal sessions.",
                 branch, branch
-            )
-        })?
-        .to_string();
+            );
+            eprintln!("Error: {}", msg);
+            error!(
+                event = "cli.attach_failed",
+                branch = branch,
+                error = msg.as_str()
+            );
+            return Err(msg.into());
+        }
+    };
 
     info!(
         event = "cli.attach_connecting",
@@ -35,7 +52,11 @@ pub(crate) fn handle_attach_command(
     );
 
     // 2. Connect to daemon and attach
-    attach_to_daemon_session(&daemon_session_id)?;
+    if let Err(e) = attach_to_daemon_session(&daemon_session_id) {
+        eprintln!("Error: {}", e);
+        error!(event = "cli.attach_failed", branch = branch, error = %e);
+        return Err(e);
+    }
 
     info!(event = "cli.attach_completed", branch = branch);
     Ok(())
@@ -45,7 +66,7 @@ fn attach_to_daemon_session(daemon_session_id: &str) -> Result<(), Box<dyn std::
     let socket_path = kild_core::daemon::socket_path();
     let mut stream = UnixStream::connect(&socket_path).map_err(|e| {
         format!(
-            "Cannot connect to daemon at {}: {}",
+            "Cannot connect to daemon at {}: {}\nTip: Start the daemon with 'kild daemon start'.",
             socket_path.display(),
             e
         )
