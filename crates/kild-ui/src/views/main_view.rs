@@ -139,6 +139,10 @@ pub struct MainView {
     path_input: Option<gpui::Entity<InputState>>,
     /// Input state for add project dialog name field.
     name_input: Option<gpui::Entity<InputState>>,
+    /// Terminal view entity (lazily created on first Ctrl+T).
+    terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
+    /// Whether the terminal pane is currently shown (full-area, replacing 3-column layout).
+    show_terminal: bool,
 }
 
 impl MainView {
@@ -248,6 +252,8 @@ impl MainView {
             note_input: None,
             path_input: None,
             name_input: None,
+            terminal_view: None,
+            show_terminal: false,
         }
     }
 
@@ -907,10 +913,57 @@ impl MainView {
     ///
     /// Text input is handled by gpui-component's Input widget internally.
     /// This handler manages Escape (close), Enter (submit), and Tab (agent cycling).
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         use crate::state::DialogState;
 
         let key_str = event.keystroke.key.to_string();
+
+        // Ctrl+T: toggle terminal view
+        if key_str == "t" && event.keystroke.modifiers.control {
+            if self.show_terminal {
+                self.show_terminal = false;
+                tracing::info!(event = "ui.terminal.toggle_off");
+                // Return focus to main view
+                window.focus(&self.focus_handle);
+            } else {
+                // Drop dead terminal so a fresh one gets created
+                if let Some(view) = &self.terminal_view
+                    && view.read(cx).terminal().has_exited()
+                {
+                    tracing::info!(event = "ui.terminal.recycled");
+                    self.terminal_view = None;
+                }
+                // Lazy-create terminal on first toggle (or after shell exit)
+                if self.terminal_view.is_none() {
+                    tracing::info!(event = "ui.terminal.create_started");
+                    match crate::terminal::state::Terminal::new(cx) {
+                        Ok(terminal) => {
+                            let view = cx.new(|cx| {
+                                crate::terminal::TerminalView::from_terminal(terminal, window, cx)
+                            });
+                            self.terminal_view = Some(view);
+                        }
+                        Err(e) => {
+                            tracing::error!(event = "ui.terminal.create_failed", error = %e);
+                            self.show_terminal = false;
+                            self.state
+                                .push_error(format!("Terminal creation failed: {}", e));
+                            cx.notify();
+                            return;
+                        }
+                    }
+                }
+                self.show_terminal = true;
+                tracing::info!(event = "ui.terminal.toggle_on");
+                // Focus the terminal view
+                if let Some(view) = &self.terminal_view {
+                    let handle = view.read(cx).focus_handle(cx).clone();
+                    window.focus(&handle);
+                }
+            }
+            cx.notify();
+            return;
+        }
 
         match self.state.dialog() {
             DialogState::None => {}
@@ -1106,26 +1159,40 @@ impl Render for MainView {
                         })),
                 )
             })
-            // Main content: 3-column layout (sidebar | kild list | detail panel)
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .overflow_hidden()
-                    // Sidebar (200px fixed)
-                    .child(sidebar::render_sidebar(&self.state, cx))
-                    // Kild list (flex:1)
-                    .child(
+            // Main content: terminal (full-area) or 3-column layout
+            .when(self.show_terminal, |this| {
+                if let Some(terminal_view) = &self.terminal_view {
+                    this.child(
                         div()
                             .flex_1()
                             .overflow_hidden()
-                            .child(kild_list::render_kild_list(&self.state, cx)),
+                            .child(terminal_view.clone()),
                     )
-                    // Detail panel (320px, conditional)
-                    .when(self.state.has_selection(), |this| {
-                        this.child(detail_panel::render_detail_panel(&self.state, cx))
-                    }),
-            )
+                } else {
+                    this
+                }
+            })
+            .when(!self.show_terminal, |this| {
+                this.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .overflow_hidden()
+                        // Sidebar (200px fixed)
+                        .child(sidebar::render_sidebar(&self.state, cx))
+                        // Kild list (flex:1)
+                        .child(
+                            div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(kild_list::render_kild_list(&self.state, cx)),
+                        )
+                        // Detail panel (320px, conditional)
+                        .when(self.state.has_selection(), |this| {
+                            this.child(detail_panel::render_detail_panel(&self.state, cx))
+                        }),
+                )
+            })
             // Dialog rendering (based on current dialog state)
             .when(self.state.dialog().is_create(), |this| {
                 this.child(create_dialog::render_create_dialog(
