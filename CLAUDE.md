@@ -107,6 +107,7 @@ cargo run -p kild -- sync my-branch --base dev   # Fetch + rebase onto custom ba
 cargo run -p kild -- sync --all                  # Fetch once + rebase all kilds
 cargo run -p kild -- agent-status my-branch working  # Report agent activity (for hooks)
 cargo run -p kild -- agent-status --self idle        # Auto-detect session from $PWD
+cargo run -p kild -- agent-status my-branch waiting --notify  # Send desktop notification for attention states
 cargo run -p kild -- daemon start                # Start daemon in background
 cargo run -p kild -- daemon start --foreground   # Start daemon in foreground (debug)
 cargo run -p kild -- daemon stop                 # Stop running daemon
@@ -211,6 +212,7 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 - `process/` - PID tracking and process info
 - `logging/` - Tracing initialization with JSON output
 - `events/` - App lifecycle event helpers
+- `notify/` - Platform-native desktop notifications (macOS, Linux)
 - `state/` - Command pattern for business operations (Command enum, Event enum, Store trait returns events, RuntimeMode enum)
 
 **Key modules in kild-ui:**
@@ -292,7 +294,7 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
-**Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `ipc`
+**Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `notify`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `ipc`
 
 UI-specific domains: `terminal` (for kild-ui terminal rendering), `input` (for keystroke translation)
 
@@ -326,6 +328,11 @@ info!(event = "core.git.branch.create_completed", branch = branch);
 info!(event = "core.forge.pr_merge_check_started", branch = branch);
 info!(event = "core.forge.pr_merge_check_completed", merged = true);
 info!(event = "core.forge.pr_info_fetch_completed", pr_number = pr.number, state = ?pr.state);
+
+// Notify domain for desktop notifications
+info!(event = "core.notify.send_started", title = title, message = message);
+info!(event = "core.notify.send_completed", title = title);
+warn!(event = "core.notify.send_failed", title = title, error = %e);
 
 // Debug level for internal operations
 debug!(event = "core.pid_file.read_attempt", attempt = attempt, path = %pid_file.display());
@@ -383,6 +390,7 @@ grep 'core\.daemon\.'   # Daemon client events
 grep 'core\.git\.'      # Git events
 grep 'core\.forge\.'    # Forge/PR events
 grep 'core\.projects\.' # Project management events
+grep 'core\.notify\.'   # Desktop notification events
 grep 'ui\.watcher\.'    # File watcher events
 grep 'peek\.core\.window\.'     # Window enumeration events
 grep 'peek\.core\.screenshot\.' # Screenshot capture events
