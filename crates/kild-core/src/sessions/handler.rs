@@ -903,14 +903,15 @@ fn build_daemon_create_request(
     }
 
     // tmux shim environment for daemon sessions
-    let shim_bin_dir = dirs::home_dir()
-        .ok_or_else(|| SessionError::DaemonError {
-            message: "HOME not set — cannot configure tmux shim PATH".to_string(),
-        })?
-        .join(".kild")
-        .join("bin");
+    let home_dir = dirs::home_dir().ok_or_else(|| SessionError::DaemonError {
+        message: "HOME not set — cannot configure tmux shim PATH".to_string(),
+    })?;
+    let shim_bin_dir = home_dir.join(".kild").join("bin");
 
-    // Prepend shim dir to PATH so our tmux shim is found first
+    // Prepend shim dir to PATH so our tmux shim is found first.
+    // NOTE: For login shells on macOS, /etc/zprofile runs path_helper which
+    // reconstructs PATH and may push this to the end. The ZDOTDIR wrapper
+    // below re-prepends it after all profile scripts have run.
     if let Some(path_entry) = env_vars.iter_mut().find(|(k, _)| k == "PATH") {
         path_entry.1 = format!("{}:{}", shim_bin_dir.display(), path_entry.1);
     } else if let Ok(system_path) = std::env::var("PATH") {
@@ -918,6 +919,24 @@ fn build_daemon_create_request(
             "PATH".to_string(),
             format!("{}:{}", shim_bin_dir.display(), system_path),
         ));
+    }
+
+    // Create a ZDOTDIR wrapper so that ~/.kild/bin is prepended to PATH
+    // AFTER login shell profile scripts run (macOS path_helper in /etc/zprofile
+    // reconstructs PATH and drops our prepended entry).
+    let zdotdir = home_dir
+        .join(".kild")
+        .join("shim")
+        .join(session_id)
+        .join("zdotdir");
+    if let Err(e) = create_zdotdir_wrapper(&zdotdir, &shim_bin_dir) {
+        warn!(
+            event = "core.session.zdotdir_setup_failed",
+            session_id = session_id,
+            error = %e,
+        );
+    } else {
+        env_vars.push(("ZDOTDIR".to_string(), zdotdir.display().to_string()));
     }
 
     // $TMUX triggers Claude Code's tmux pane backend (auto mode)
@@ -934,6 +953,60 @@ fn build_daemon_create_request(
     env_vars.push(("KILD_SHIM_SESSION".to_string(), session_id.to_string()));
 
     Ok((cmd, cmd_args, env_vars, use_login_shell))
+}
+
+/// Create a ZDOTDIR wrapper that re-prepends `~/.kild/bin` to PATH.
+///
+/// On macOS, login shells source `/etc/zprofile` which runs `path_helper`,
+/// reconstructing PATH from `/etc/paths` and dropping any prepended entries.
+/// This wrapper sources the user's real `~/.zshrc` then prepends our shim dir,
+/// ensuring `~/.kild/bin/tmux` is always found first.
+fn create_zdotdir_wrapper(
+    zdotdir: &std::path::Path,
+    shim_bin_dir: &std::path::Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(zdotdir).map_err(|e| format!("failed to create zdotdir: {}", e))?;
+
+    // .zshenv runs before .zprofile — we need .zshrc which runs after.
+    // But we also need .zshenv to reset ZDOTDIR so the user's own .zshenv
+    // and .zshrc are sourced from their real home directory.
+    // zsh dotfile load order: .zshenv → .zprofile (login) → .zshrc (interactive)
+    // ZDOTDIR must stay set throughout so zsh reads ALL our wrappers.
+    // Each wrapper sources the user's real file from $HOME.
+    // .zshrc (last) unsets ZDOTDIR so nested/child shells behave normally.
+
+    let zshenv_content = r#"# KILD shim — auto-generated, do not edit.
+# Source user's real .zshenv if it exists.
+[[ -f "$HOME/.zshenv" ]] && source "$HOME/.zshenv"
+"#;
+
+    let zprofile_content = r#"# KILD shim — auto-generated, do not edit.
+# Source user's real .zprofile if it exists.
+[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"
+"#;
+
+    let zshrc_content = format!(
+        r#"# KILD shim — auto-generated, do not edit.
+# Source user's real .zshrc if it exists.
+[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"
+
+# Re-prepend shim bin dir to PATH (macOS path_helper may have reordered it).
+export PATH="{shim_bin}:$PATH"
+
+# Reset ZDOTDIR so child shells use the user's real dotfiles.
+unset ZDOTDIR
+"#,
+        shim_bin = shim_bin_dir.display(),
+    );
+
+    std::fs::write(zdotdir.join(".zshenv"), zshenv_content)
+        .map_err(|e| format!("failed to write .zshenv: {}", e))?;
+    std::fs::write(zdotdir.join(".zprofile"), zprofile_content)
+        .map_err(|e| format!("failed to write .zprofile: {}", e))?;
+    std::fs::write(zdotdir.join(".zshrc"), zshrc_content)
+        .map_err(|e| format!("failed to write .zshrc: {}", e))?;
+
+    Ok(())
 }
 
 /// Sync a session's status with the daemon if it has a daemon-managed agent.
