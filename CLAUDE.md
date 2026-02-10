@@ -210,6 +210,7 @@ cargo run -p kild-peek -- -v list windows        # Verbose mode (enable logs)
 - `state/` - Type-safe state modules with encapsulated AppState facade (app_state.rs, dialog.rs, errors.rs, loading.rs, selection.rs, sessions.rs)
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
 - `views/` - GPUI components (main view with 3-column layout: sidebar, kild list, detail panel)
+- `terminal/` - Live terminal rendering with PTY integration (state.rs for PTY lifecycle, terminal_element.rs for GPUI Element, terminal_view.rs for View, colors.rs for ANSI mapping, input.rs for keystroke translation)
 - `watcher.rs` - File system watcher for instant UI updates on session changes
 - `refresh.rs` - Background refresh logic with hybrid file watching + slow poll fallback
 
@@ -273,6 +274,8 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
 **Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`
+
+UI-specific domains: `terminal` (for kild-ui terminal rendering), `input` (for keystroke translation)
 
 Note: `projects` domain events are `core.projects.*` (in kild-core), while UI-specific events use `ui.*` prefix.
 
