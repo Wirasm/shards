@@ -535,6 +535,60 @@ async fn test_create_session_with_login_shell() {
 }
 
 #[tokio::test]
+async fn test_destroy_then_recreate_same_session_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = test_config(dir.path());
+    let socket_path = config.socket_path.clone();
+
+    let server_handle = tokio::spawn(async move { kild_daemon::run_server(config).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = DaemonClient::connect(&socket_path).await.unwrap();
+
+    // Create session
+    client
+        .create_session(
+            "reopen-test",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+            false,
+        )
+        .await
+        .unwrap();
+
+    // Destroy session (simulates what kild stop should do for daemon sessions)
+    client.destroy_session("reopen-test", false).await.unwrap();
+
+    // Re-create with same ID should succeed (was failing before #309 fix)
+    let session = client
+        .create_session(
+            "reopen-test",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(session.id, "reopen-test");
+    assert_eq!(session.status, "running");
+
+    // Clean up
+    client.destroy_session("reopen-test", false).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = tokio::time::timeout(Duration::from_secs(3), server_handle).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
 async fn test_invalid_json_does_not_crash_server() {
     let dir = tempfile::tempdir().unwrap();
     let config = test_config(dir.path());
