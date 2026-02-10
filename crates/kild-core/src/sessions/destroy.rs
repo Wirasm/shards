@@ -233,6 +233,59 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
         }
     }
 
+    // 3b. Clean up tmux shim state and destroy child shim panes
+    {
+        let shim_dir = dirs::home_dir()
+            .expect("HOME not set")
+            .join(".kild")
+            .join("shim")
+            .join(&session.id);
+        if shim_dir.exists() {
+            // Destroy any child shim panes that may still be running
+            if let Ok(content) = std::fs::read_to_string(shim_dir.join("panes.json"))
+                && let Ok(registry) = serde_json::from_str::<serde_json::Value>(&content)
+                && let Some(panes) = registry.get("panes").and_then(|p| p.as_object())
+            {
+                for (pane_id, entry) in panes {
+                    if pane_id == "%0" {
+                        continue; // Skip the parent pane (already destroyed above)
+                    }
+                    if let Some(child_sid) = entry.get("daemon_session_id").and_then(|s| s.as_str())
+                    {
+                        info!(
+                            event = "core.session.destroy_shim_child",
+                            pane_id = pane_id,
+                            daemon_session_id = child_sid
+                        );
+                        if let Err(e) =
+                            crate::daemon::client::destroy_daemon_session(child_sid, true)
+                        {
+                            warn!(
+                                event = "core.session.destroy_shim_child_failed",
+                                pane_id = pane_id,
+                                daemon_session_id = child_sid,
+                                error = %e
+                            );
+                        }
+                    }
+                }
+            }
+
+            if let Err(e) = std::fs::remove_dir_all(&shim_dir) {
+                warn!(
+                    event = "core.session.shim_cleanup_failed",
+                    session_id = session.id,
+                    error = %e
+                );
+            } else {
+                info!(
+                    event = "core.session.shim_cleanup_completed",
+                    session_id = session.id
+                );
+            }
+        }
+    }
+
     // 4. Remove git worktree
     if force {
         info!(

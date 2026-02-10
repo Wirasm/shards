@@ -245,8 +245,11 @@ pub fn create_session(
             // working directory. Worktree creation and session persistence
             // are handled here in kild-core.
 
+            // Ensure the tmux shim binary is installed at ~/.kild/bin/tmux
+            ensure_shim_binary();
+
             let (cmd, cmd_args, env_vars, use_login_shell) =
-                build_daemon_create_request(&validated.command, &validated.agent)?;
+                build_daemon_create_request(&validated.command, &validated.agent, &session_id)?;
 
             let daemon_request = crate::daemon::client::DaemonCreateRequest {
                 request_id: &spawn_id,
@@ -263,6 +266,62 @@ pub fn create_session(
                 .map_err(|e| SessionError::DaemonError {
                     message: e.to_string(),
                 })?;
+
+            // Initialize tmux shim state directory
+            let shim_dir = dirs::home_dir()
+                .expect("HOME not set")
+                .join(".kild")
+                .join("shim")
+                .join(&session_id);
+            if let Err(e) = std::fs::create_dir_all(&shim_dir) {
+                warn!(
+                    event = "core.session.shim_dir_create_failed",
+                    session_id = session_id,
+                    error = %e
+                );
+            } else {
+                // Write initial panes.json with %0 mapped to this session's daemon ID
+                let initial_state = serde_json::json!({
+                    "next_pane_id": 1,
+                    "session_name": "kild_0",
+                    "panes": {
+                        "%0": {
+                            "daemon_session_id": daemon_result.daemon_session_id,
+                            "title": "",
+                            "border_style": "",
+                            "window_id": "0",
+                            "hidden": false
+                        }
+                    },
+                    "windows": {
+                        "0": { "name": "main", "pane_ids": ["%0"] }
+                    },
+                    "sessions": {
+                        "kild_0": { "name": "kild_0", "windows": ["0"] }
+                    }
+                });
+                // Create lock file for flock-based concurrency control
+                let lock_path = shim_dir.join("panes.lock");
+                if let Err(e) = std::fs::File::create(&lock_path) {
+                    warn!(
+                        event = "core.session.shim_lock_create_failed",
+                        session_id = session_id,
+                        error = %e
+                    );
+                }
+
+                let panes_path = shim_dir.join("panes.json");
+                if let Err(e) = std::fs::write(
+                    &panes_path,
+                    serde_json::to_string_pretty(&initial_state).unwrap_or_default(),
+                ) {
+                    warn!(
+                        event = "core.session.shim_state_init_failed",
+                        session_id = session_id,
+                        error = %e
+                    );
+                }
+            }
 
             AgentProcess::new(
                 validated.agent.clone(),
@@ -655,7 +714,7 @@ pub fn open_session(
     let new_agent = if use_daemon {
         // Daemon path: create new daemon PTY (uses shared helper with create_session)
         let (cmd, cmd_args, env_vars, use_login_shell) =
-            build_daemon_create_request(&agent_command, &agent)?;
+            build_daemon_create_request(&agent_command, &agent, &session.id)?;
 
         let daemon_request = crate::daemon::client::DaemonCreateRequest {
             request_id: &spawn_id,
@@ -740,6 +799,66 @@ pub fn open_session(
     Ok(session)
 }
 
+/// Ensure the tmux shim binary is installed at `~/.kild/bin/tmux`.
+///
+/// Looks for `kild-tmux-shim` next to the running `kild` binary and symlinks
+/// it as `tmux` in `~/.kild/bin/`. This is a best-effort operation — failures
+/// are logged as warnings but do not block session creation.
+fn ensure_shim_binary() {
+    let shim_bin_dir = dirs::home_dir()
+        .expect("HOME not set")
+        .join(".kild")
+        .join("bin");
+    let shim_link = shim_bin_dir.join("tmux");
+
+    if shim_link.exists() {
+        return;
+    }
+
+    // Find kild-tmux-shim binary next to our own binary
+    let our_binary = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let bin_dir = match our_binary.parent() {
+        Some(p) => p,
+        None => return,
+    };
+    let shim_binary = bin_dir.join("kild-tmux-shim");
+
+    if !shim_binary.exists() {
+        warn!(
+            event = "core.session.shim_binary_not_found",
+            expected_path = %shim_binary.display(),
+            "kild-tmux-shim binary not found next to kild binary"
+        );
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&shim_bin_dir) {
+        warn!(event = "core.session.shim_dir_create_failed", error = %e);
+        return;
+    }
+
+    // Symlink the shim binary as "tmux"
+    #[cfg(unix)]
+    {
+        if let Err(e) = std::os::unix::fs::symlink(&shim_binary, &shim_link) {
+            warn!(
+                event = "core.session.shim_symlink_failed",
+                source = %shim_binary.display(),
+                target = %shim_link.display(),
+                error = %e
+            );
+        } else {
+            info!(
+                event = "core.session.shim_binary_installed",
+                path = %shim_link.display()
+            );
+        }
+    }
+}
+
 /// Build the command, args, env vars, and login shell flag for a daemon PTY create request.
 ///
 /// Both `create_session` and `open_session` need to parse the agent command string
@@ -751,10 +870,14 @@ pub fn open_session(
 /// - **Agents**: Wraps in `$SHELL -lc 'exec <command>'` so profile files are sourced
 ///   before the agent starts, providing full PATH and environment. The `exec` replaces
 ///   the wrapper shell with the agent for clean process tracking.
+///
+/// The `session_id` is used to set up tmux shim environment variables so that agents
+/// running inside daemon PTYs see a `$TMUX` environment and can use pane-based workflows.
 #[allow(clippy::type_complexity)]
 fn build_daemon_create_request(
     agent_command: &str,
     agent_name: &str,
+    session_id: &str,
 ) -> Result<(String, Vec<String>, Vec<(String, String)>, bool), SessionError> {
     let use_login_shell = agent_name == "shell";
 
@@ -784,6 +907,35 @@ fn build_daemon_create_request(
             env_vars.push((key.to_string(), val));
         }
     }
+
+    // tmux shim environment for daemon sessions
+    let shim_bin_dir = dirs::home_dir()
+        .expect("HOME not set")
+        .join(".kild")
+        .join("bin");
+
+    // Prepend shim dir to PATH so our tmux shim is found first
+    if let Some(path_entry) = env_vars.iter_mut().find(|(k, _)| k == "PATH") {
+        path_entry.1 = format!("{}:{}", shim_bin_dir.display(), path_entry.1);
+    } else if let Ok(system_path) = std::env::var("PATH") {
+        env_vars.push((
+            "PATH".to_string(),
+            format!("{}:{}", shim_bin_dir.display(), system_path),
+        ));
+    }
+
+    // $TMUX triggers Claude Code's tmux pane backend (auto mode)
+    let daemon_sock = crate::daemon::socket_path();
+    env_vars.push((
+        "TMUX".to_string(),
+        format!("{},{},0", daemon_sock.display(), std::process::id()),
+    ));
+
+    // $TMUX_PANE identifies the leader's own pane
+    env_vars.push(("TMUX_PANE".to_string(), "%0".to_string()));
+
+    // $KILD_SHIM_SESSION tells the shim where to find its state
+    env_vars.push(("KILD_SHIM_SESSION".to_string(), session_id.to_string()));
 
     Ok((cmd, cmd_args, env_vars, use_login_shell))
 }
@@ -1730,7 +1882,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_agent_wraps_in_login_shell() {
         let (cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("claude --agent --verbose", "claude").unwrap();
+            build_daemon_create_request("claude --agent --verbose", "claude", "test-session")
+                .unwrap();
         assert!(!use_login_shell, "Agent should not use login shell mode");
         // Agent commands are wrapped in $SHELL -lc 'exec <command>'
         assert!(
@@ -1750,7 +1903,7 @@ mod tests {
     #[test]
     fn test_build_daemon_request_single_word_agent_wraps_in_login_shell() {
         let (cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("claude", "claude").unwrap();
+            build_daemon_create_request("claude", "claude", "test-session").unwrap();
         assert!(!use_login_shell);
         assert_eq!(args.len(), 2);
         assert_eq!(args[0], "-lc");
@@ -1765,14 +1918,14 @@ mod tests {
     #[test]
     fn test_build_daemon_request_bare_shell_uses_login_shell() {
         let (_cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("/bin/zsh", "shell").unwrap();
+            build_daemon_create_request("/bin/zsh", "shell", "test-session").unwrap();
         assert!(use_login_shell, "Bare shell should use login shell mode");
         assert!(args.is_empty(), "Login shell mode should have no args");
     }
 
     #[test]
     fn test_build_daemon_request_empty_command_returns_error() {
-        let result = build_daemon_create_request("", "claude");
+        let result = build_daemon_create_request("", "claude", "test-session");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -1794,7 +1947,7 @@ mod tests {
 
     #[test]
     fn test_build_daemon_request_whitespace_only_command_returns_error() {
-        let result = build_daemon_create_request("   ", "kiro");
+        let result = build_daemon_create_request("   ", "kiro", "test-session");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -1809,7 +1962,7 @@ mod tests {
     fn test_build_daemon_request_bare_shell_empty_command_still_works() {
         // Bare shell with empty-ish command: since use_login_shell=true,
         // the command is passed through for logging only (daemon ignores it)
-        let result = build_daemon_create_request("", "shell");
+        let result = build_daemon_create_request("", "shell", "test-session");
         assert!(result.is_ok(), "Bare shell should accept empty command");
         let (_cmd, _args, _env, use_login_shell) = result.unwrap();
         assert!(use_login_shell);
@@ -1818,7 +1971,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_agent_escapes_single_quotes() {
         let (_, args, _, _) =
-            build_daemon_create_request("claude --note 'hello world'", "claude").unwrap();
+            build_daemon_create_request("claude --note 'hello world'", "claude", "test-session")
+                .unwrap();
         assert!(
             args[1].contains("exec claude --note"),
             "Should contain the command, got: {}",
@@ -1828,7 +1982,8 @@ mod tests {
 
     #[test]
     fn test_build_daemon_request_collects_env_vars() {
-        let (_cmd, _args, env_vars, _) = build_daemon_create_request("claude", "claude").unwrap();
+        let (_cmd, _args, env_vars, _) =
+            build_daemon_create_request("claude", "claude", "test-session").unwrap();
 
         // PATH and HOME should always be present in the environment
         let keys: Vec<&str> = env_vars.iter().map(|(k, _)| k.as_str()).collect();
@@ -1841,6 +1996,57 @@ mod tests {
             keys.contains(&"HOME"),
             "Should collect HOME env var, got keys: {:?}",
             keys
+        );
+    }
+
+    #[test]
+    fn test_build_daemon_request_includes_shim_env_vars() {
+        let (_cmd, _args, env_vars, _) =
+            build_daemon_create_request("claude", "claude", "proj_my-branch").unwrap();
+
+        let keys: Vec<&str> = env_vars.iter().map(|(k, _)| k.as_str()).collect();
+
+        // Should include tmux shim environment variables
+        assert!(
+            keys.contains(&"TMUX"),
+            "Should set TMUX env var, got keys: {:?}",
+            keys
+        );
+        assert!(
+            keys.contains(&"TMUX_PANE"),
+            "Should set TMUX_PANE env var, got keys: {:?}",
+            keys
+        );
+        assert!(
+            keys.contains(&"KILD_SHIM_SESSION"),
+            "Should set KILD_SHIM_SESSION env var, got keys: {:?}",
+            keys
+        );
+
+        // KILD_SHIM_SESSION should contain the session_id
+        let shim_session = env_vars
+            .iter()
+            .find(|(k, _)| k == "KILD_SHIM_SESSION")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(shim_session, Some("proj_my-branch"));
+
+        // TMUX_PANE should be %0
+        let tmux_pane = env_vars
+            .iter()
+            .find(|(k, _)| k == "TMUX_PANE")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(tmux_pane, Some("%0"));
+
+        // PATH should be prepended with shim bin dir
+        let path_val = env_vars
+            .iter()
+            .find(|(k, _)| k == "PATH")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(
+            path_val.contains(".kild/bin"),
+            "PATH should contain .kild/bin shim dir, got: {}",
+            path_val
         );
     }
 

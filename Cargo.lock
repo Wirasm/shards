@@ -3452,6 +3452,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kild-tmux-shim"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "dirs 5.0.1",
+ "nix 0.29.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "kild-ui"
 version = "0.1.0"
 dependencies = [

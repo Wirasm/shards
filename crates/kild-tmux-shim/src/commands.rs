@@ -1,0 +1,622 @@
+use std::collections::HashMap;
+use std::env;
+
+use tracing::{debug, error};
+
+use crate::errors::ShimError;
+use crate::ipc;
+use crate::parser::*;
+use crate::state::{self, PaneEntry, PaneRegistry, SessionEntry, WindowEntry};
+
+pub fn execute(cmd: TmuxCommand) -> Result<i32, ShimError> {
+    match cmd {
+        TmuxCommand::Version => handle_version(),
+        TmuxCommand::SplitWindow(args) => handle_split_window(args),
+        TmuxCommand::SendKeys(args) => handle_send_keys(args),
+        TmuxCommand::ListPanes(args) => handle_list_panes(args),
+        TmuxCommand::KillPane(args) => handle_kill_pane(args),
+        TmuxCommand::DisplayMessage(args) => handle_display_message(args),
+        TmuxCommand::SelectPane(args) => handle_select_pane(args),
+        TmuxCommand::SetOption(args) => handle_set_option(args),
+        TmuxCommand::SelectLayout(args) => handle_select_layout(args),
+        TmuxCommand::ResizePane(args) => handle_resize_pane(args),
+        TmuxCommand::HasSession(args) => handle_has_session(args),
+        TmuxCommand::NewSession(args) => handle_new_session(args),
+        TmuxCommand::NewWindow(args) => handle_new_window(args),
+        TmuxCommand::ListWindows(args) => handle_list_windows(args),
+        TmuxCommand::BreakPane(args) => handle_break_pane(args),
+        TmuxCommand::JoinPane(args) => handle_join_pane(args),
+    }
+}
+
+fn session_id() -> Result<String, ShimError> {
+    env::var("KILD_SHIM_SESSION").map_err(|_| {
+        ShimError::state("KILD_SHIM_SESSION not set - not running inside a KILD shim session")
+    })
+}
+
+fn current_pane_id() -> String {
+    env::var("TMUX_PANE").unwrap_or_else(|_| "%0".to_string())
+}
+
+/// Resolve a target pane specifier to a pane ID.
+/// Supports: `%N` (direct), bare (use current), or `session:window.pane` (extract %pane).
+fn resolve_pane_id(target: Option<&str>) -> String {
+    match target {
+        Some(t) if t.starts_with('%') => t.to_string(),
+        Some(t) => {
+            // Try to extract pane from session:window.pane format
+            if let Some(dot_pos) = t.rfind('.') {
+                let pane_part = &t[dot_pos + 1..];
+                if pane_part.starts_with('%') {
+                    return pane_part.to_string();
+                }
+            }
+            current_pane_id()
+        }
+        None => current_pane_id(),
+    }
+}
+
+fn build_child_env() -> HashMap<String, String> {
+    let copy_vars = ["PATH", "HOME", "SHELL", "USER", "LANG", "TERM"];
+    let mut env_vars: HashMap<String, String> = copy_vars
+        .iter()
+        .filter_map(|&key| env::var(key).ok().map(|val| (key.to_string(), val)))
+        .collect();
+
+    // Ensure ~/.kild/bin is at the front of PATH so the shim stays on PATH
+    if let Some(home) = dirs::home_dir() {
+        let kild_bin = home.join(".kild").join("bin");
+        let current_path = env_vars.get("PATH").cloned().unwrap_or_default();
+        let kild_bin_str = kild_bin.to_string_lossy();
+        if !current_path.contains(kild_bin_str.as_ref()) {
+            env_vars.insert(
+                "PATH".to_string(),
+                format!("{}:{}", kild_bin_str, current_path),
+            );
+        }
+    }
+
+    // Propagate TMUX env so child processes see themselves inside "tmux"
+    if let Ok(tmux) = env::var("TMUX") {
+        env_vars.insert("TMUX".to_string(), tmux);
+    }
+
+    // Propagate session ID so child shim calls use the same registry
+    if let Ok(sid) = env::var("KILD_SHIM_SESSION") {
+        env_vars.insert("KILD_SHIM_SESSION".to_string(), sid);
+    }
+
+    env_vars
+}
+
+fn shell_command() -> String {
+    env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+}
+
+fn expand_format(
+    format: &str,
+    pane_id: &str,
+    session_name: &str,
+    window_index: &str,
+    window_name: &str,
+    pane_title: &str,
+) -> String {
+    format
+        .replace("#{pane_id}", pane_id)
+        .replace("#{session_name}", session_name)
+        .replace("#{window_index}", window_index)
+        .replace("#{window_name}", window_name)
+        .replace("#{pane_title}", pane_title)
+}
+
+/// Create a new PTY via the daemon and register it in the pane registry.
+/// Returns the new pane ID.
+fn create_pty_pane(registry: &mut PaneRegistry, window_id: &str) -> Result<String, ShimError> {
+    let sid = session_id()?;
+    let pane_id = state::allocate_pane_id(registry);
+    let pane_num = registry.next_pane_id - 1; // just allocated
+    let daemon_session_id = format!("{}_shim_{}", sid, pane_num);
+
+    let cwd = env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+
+    let mut env_vars = build_child_env();
+    // Set the new pane's TMUX_PANE
+    env_vars.insert("TMUX_PANE".to_string(), pane_id.clone());
+
+    let shell = shell_command();
+
+    debug!(
+        event = "shim.split_window.create_pty_started",
+        daemon_session_id = daemon_session_id,
+        pane_id = pane_id,
+    );
+
+    ipc::create_session(
+        &daemon_session_id,
+        &cwd,
+        &shell,
+        &[],
+        &env_vars,
+        24,
+        80,
+        true,
+    )?;
+
+    registry.panes.insert(
+        pane_id.clone(),
+        PaneEntry {
+            daemon_session_id,
+            title: String::new(),
+            border_style: String::new(),
+            window_id: window_id.to_string(),
+            hidden: false,
+        },
+    );
+
+    // Add pane to the window's pane list
+    if let Some(window) = registry.windows.get_mut(window_id) {
+        window.pane_ids.push(pane_id.clone());
+    }
+
+    debug!(
+        event = "shim.split_window.create_pty_completed",
+        pane_id = pane_id,
+    );
+
+    Ok(pane_id)
+}
+
+// -- Command handlers --
+
+fn handle_version() -> Result<i32, ShimError> {
+    println!("tmux 3.4");
+    Ok(0)
+}
+
+fn handle_split_window(args: SplitWindowArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.split_window_started", target = ?args.target);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    // Determine which window the target pane belongs to
+    let parent_pane_id = resolve_pane_id(args.target.as_deref());
+    let window_id = registry
+        .panes
+        .get(&parent_pane_id)
+        .map(|p| p.window_id.clone())
+        .unwrap_or_else(|| "0".to_string());
+
+    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+    state::save(&sid, &registry)?;
+
+    if args.print_info {
+        let fmt = args.format.as_deref().unwrap_or("#{pane_id}");
+        let session_name = &registry.session_name;
+        let window_name = registry
+            .windows
+            .get(&window_id)
+            .map(|w| w.name.as_str())
+            .unwrap_or("main");
+        let output = expand_format(fmt, &pane_id, session_name, &window_id, window_name, "");
+        println!("{}", output);
+    }
+
+    debug!(event = "shim.split_window_completed", pane_id = pane_id);
+    Ok(0)
+}
+
+fn handle_send_keys(args: SendKeysArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.send_keys_started", target = ?args.target, num_keys = args.keys.len());
+
+    let sid = session_id()?;
+    let registry = state::load(&sid)?;
+
+    let pane_id = resolve_pane_id(args.target.as_deref());
+    let pane = registry
+        .panes
+        .get(&pane_id)
+        .ok_or_else(|| ShimError::state(format!("pane {} not found in registry", pane_id)))?;
+
+    let mut data: Vec<u8> = Vec::new();
+    for key in &args.keys {
+        match key.as_str() {
+            "Enter" | "C-m" => data.push(b'\n'),
+            "Space" => data.push(b' '),
+            "Tab" | "C-i" => data.push(b'\t'),
+            "Escape" => data.push(0x1b),
+            "BSpace" => data.push(0x7f),
+            k if k.starts_with("C-") && k.len() == 3 => {
+                // Control character: C-a = 0x01, C-z = 0x1a
+                let ch = k.as_bytes()[2];
+                let ctrl = ch.wrapping_sub(b'a').wrapping_add(1);
+                data.push(ctrl);
+            }
+            _ => data.extend_from_slice(key.as_bytes()),
+        }
+    }
+
+    ipc::write_stdin(&pane.daemon_session_id, &data)?;
+
+    debug!(
+        event = "shim.send_keys_completed",
+        pane_id = pane_id,
+        bytes = data.len()
+    );
+    Ok(0)
+}
+
+fn handle_list_panes(args: ListPanesArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.list_panes_started", target = ?args.target);
+
+    let sid = session_id()?;
+    let registry = state::load(&sid)?;
+
+    let fmt = args.format.as_deref().unwrap_or("#{pane_id}");
+    let session_name = &registry.session_name;
+
+    // Collect panes, optionally filtering by window target
+    let target_window_id = args.target.as_deref().and_then(|t| {
+        // Extract window index from "session:window" format
+        t.split(':').nth(1).map(|s| s.to_string())
+    });
+
+    for (pane_id, pane) in &registry.panes {
+        if pane.hidden {
+            continue;
+        }
+        if let Some(ref wid) = target_window_id
+            && &pane.window_id != wid
+        {
+            continue;
+        }
+        let window_name = registry
+            .windows
+            .get(&pane.window_id)
+            .map(|w| w.name.as_str())
+            .unwrap_or("");
+        let output = expand_format(
+            fmt,
+            pane_id,
+            session_name,
+            &pane.window_id,
+            window_name,
+            &pane.title,
+        );
+        println!("{}", output);
+    }
+
+    debug!(event = "shim.list_panes_completed");
+    Ok(0)
+}
+
+fn handle_kill_pane(args: KillPaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.kill_pane_started", target = ?args.target);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    let pane_id = resolve_pane_id(args.target.as_deref());
+    let pane = registry
+        .panes
+        .get(&pane_id)
+        .ok_or_else(|| ShimError::state(format!("pane {} not found in registry", pane_id)))?;
+
+    let daemon_session_id = pane.daemon_session_id.clone();
+    let window_id = pane.window_id.clone();
+
+    // Destroy the daemon session
+    if let Err(e) = ipc::destroy_session(&daemon_session_id, true) {
+        error!(
+            event = "shim.kill_pane.destroy_failed",
+            daemon_session_id = daemon_session_id,
+            error = %e,
+        );
+        // Continue cleanup even if daemon destroy fails
+    }
+
+    // Remove from registry
+    registry.panes.remove(&pane_id);
+    if let Some(window) = registry.windows.get_mut(&window_id) {
+        window.pane_ids.retain(|id| id != &pane_id);
+    }
+    state::save(&sid, &registry)?;
+
+    debug!(event = "shim.kill_pane_completed", pane_id = pane_id);
+    Ok(0)
+}
+
+fn handle_display_message(args: DisplayMsgArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.display_message_started", format = ?args.format);
+
+    let fmt = args.format.as_deref().unwrap_or("");
+    let pane_id = current_pane_id();
+
+    // For simple format strings, expand directly without loading state
+    match fmt {
+        "#{pane_id}" => {
+            println!("{}", pane_id);
+        }
+        f if f.contains("#{session_name}")
+            || f.contains("#{window_index}")
+            || f.contains("#{window_name}")
+            || f.contains("#{pane_title}") =>
+        {
+            let sid = session_id()?;
+            let registry = state::load(&sid)?;
+            let session_name = &registry.session_name;
+            let pane_entry = registry.panes.get(&pane_id);
+            let window_id = pane_entry.map(|p| p.window_id.as_str()).unwrap_or("0");
+            let window_name = registry
+                .windows
+                .get(window_id)
+                .map(|w| w.name.as_str())
+                .unwrap_or("main");
+            let pane_title = pane_entry.map(|p| p.title.as_str()).unwrap_or("");
+            let output = expand_format(
+                f,
+                &pane_id,
+                session_name,
+                window_id,
+                window_name,
+                pane_title,
+            );
+            println!("{}", output);
+        }
+        _ => {
+            // Print literal or unknown format as-is
+            println!("{}", fmt);
+        }
+    }
+
+    debug!(event = "shim.display_message_completed");
+    Ok(0)
+}
+
+fn handle_select_pane(args: SelectPaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.select_pane_started", target = ?args.target);
+
+    // Only need state if we have style or title to store
+    if args.style.is_some() || args.title.is_some() {
+        let sid = session_id()?;
+        let mut registry = state::load(&sid)?;
+        let pane_id = resolve_pane_id(args.target.as_deref());
+
+        if let Some(pane) = registry.panes.get_mut(&pane_id) {
+            if let Some(style) = args.style {
+                pane.border_style = style;
+            }
+            if let Some(title) = args.title {
+                pane.title = title;
+            }
+            state::save(&sid, &registry)?;
+        }
+    }
+
+    // Focus is a no-op in the shim
+    debug!(event = "shim.select_pane_completed");
+    Ok(0)
+}
+
+fn handle_set_option(args: SetOptionArgs) -> Result<i32, ShimError> {
+    debug!(
+        event = "shim.set_option_started",
+        key = args.key,
+        value = args.value,
+        scope = ?args.scope,
+    );
+
+    // Store pane-scoped options in the pane entry
+    if matches!(args.scope, OptionScope::Pane) {
+        let sid = session_id()?;
+        let mut registry = state::load(&sid)?;
+        let pane_id = resolve_pane_id(args.target.as_deref());
+
+        if let Some(pane) = registry.panes.get_mut(&pane_id) {
+            // Store known pane options
+            if args.key == "pane-border-style" || args.key.ends_with("-style") {
+                pane.border_style = args.value;
+            }
+            state::save(&sid, &registry)?;
+        }
+    }
+
+    // Window/session options are no-ops
+    debug!(event = "shim.set_option_completed");
+    Ok(0)
+}
+
+fn handle_select_layout(_args: SelectLayoutArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.select_layout_started");
+    // No-op: layout is meaningless without a real terminal multiplexer
+    debug!(event = "shim.select_layout_completed");
+    Ok(0)
+}
+
+fn handle_resize_pane(_args: ResizePaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.resize_pane_started");
+    // MVP: no-op. Could send resize_pty IPC in the future.
+    debug!(event = "shim.resize_pane_completed");
+    Ok(0)
+}
+
+fn handle_has_session(args: HasSessionArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.has_session_started", target = args.target);
+
+    let sid = session_id()?;
+    let registry = state::load(&sid)?;
+
+    let exists = registry.sessions.contains_key(&args.target);
+
+    debug!(
+        event = "shim.has_session_completed",
+        target = args.target,
+        exists = exists
+    );
+    if exists { Ok(0) } else { Ok(1) }
+}
+
+fn handle_new_session(args: NewSessionArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.new_session_started", name = ?args.session_name);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    let session_name = args
+        .session_name
+        .unwrap_or_else(|| format!("kild_{}", registry.sessions.len()));
+
+    let window_name = args.window_name.unwrap_or_else(|| "main".to_string());
+
+    // Allocate a new window
+    let window_id = format!("{}", registry.windows.len());
+    registry.windows.insert(
+        window_id.clone(),
+        WindowEntry {
+            name: window_name,
+            pane_ids: vec![],
+        },
+    );
+
+    // Create initial pane in the new window
+    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+
+    // Register session
+    registry.sessions.insert(
+        session_name.clone(),
+        SessionEntry {
+            name: session_name.clone(),
+            windows: vec![window_id],
+        },
+    );
+
+    state::save(&sid, &registry)?;
+
+    if args.print_info {
+        let fmt = args.format.as_deref().unwrap_or("#{pane_id}");
+        let output = expand_format(fmt, &pane_id, &session_name, "0", "main", "");
+        println!("{}", output);
+    }
+
+    debug!(
+        event = "shim.new_session_completed",
+        session_name = session_name
+    );
+    Ok(0)
+}
+
+fn handle_new_window(args: NewWindowArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.new_window_started", name = ?args.name);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    let window_name = args.name.unwrap_or_else(|| "window".to_string());
+    let window_id = format!("{}", registry.windows.len());
+
+    registry.windows.insert(
+        window_id.clone(),
+        WindowEntry {
+            name: window_name.clone(),
+            pane_ids: vec![],
+        },
+    );
+
+    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+
+    // Add window to the target session (or default session)
+    let session_key = args
+        .target
+        .as_deref()
+        .and_then(|t| t.split(':').next())
+        .unwrap_or(&registry.session_name)
+        .to_string();
+
+    if let Some(session) = registry.sessions.get_mut(&session_key) {
+        session.windows.push(window_id.clone());
+    }
+
+    state::save(&sid, &registry)?;
+
+    if args.print_info {
+        let fmt = args.format.as_deref().unwrap_or("#{pane_id}");
+        let output = expand_format(fmt, &pane_id, &session_key, &window_id, &window_name, "");
+        println!("{}", output);
+    }
+
+    debug!(
+        event = "shim.new_window_completed",
+        window_id = window_id,
+        pane_id = pane_id
+    );
+    Ok(0)
+}
+
+fn handle_list_windows(args: ListWindowsArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.list_windows_started", target = ?args.target);
+
+    let sid = session_id()?;
+    let registry = state::load(&sid)?;
+
+    let fmt = args.format.as_deref().unwrap_or("#{window_name}");
+    let session_name = &registry.session_name;
+
+    // Filter by session if target given
+    let session_windows: Option<&Vec<String>> = args
+        .target
+        .as_deref()
+        .and_then(|t| {
+            let sname = t.split(':').next().unwrap_or(t);
+            registry.sessions.get(sname)
+        })
+        .map(|s| &s.windows);
+
+    for (window_id, window) in &registry.windows {
+        if let Some(sw) = session_windows
+            && !sw.contains(window_id)
+        {
+            continue;
+        }
+        let output = expand_format(fmt, "", session_name, window_id, &window.name, "");
+        println!("{}", output);
+    }
+
+    debug!(event = "shim.list_windows_completed");
+    Ok(0)
+}
+
+fn handle_break_pane(args: BreakPaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.break_pane_started", source = ?args.source);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    let pane_id = resolve_pane_id(args.source.as_deref());
+    if let Some(pane) = registry.panes.get_mut(&pane_id) {
+        pane.hidden = true;
+    }
+    state::save(&sid, &registry)?;
+
+    debug!(event = "shim.break_pane_completed", pane_id = pane_id);
+    Ok(0)
+}
+
+fn handle_join_pane(args: JoinPaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.join_pane_started", source = ?args.source);
+
+    let sid = session_id()?;
+    let mut registry = state::load(&sid)?;
+
+    let pane_id = resolve_pane_id(args.source.as_deref());
+    if let Some(pane) = registry.panes.get_mut(&pane_id) {
+        pane.hidden = false;
+    }
+    state::save(&sid, &registry)?;
+
+    debug!(event = "shim.join_pane_completed", pane_id = pane_id);
+    Ok(0)
+}
