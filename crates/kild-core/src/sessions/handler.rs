@@ -290,12 +290,8 @@ pub fn create_session(
             // working directory. Worktree creation and session persistence
             // are handled here in kild-core.
 
-            // Auto-start daemon if not running (respects config.daemon.auto_start)
-            crate::daemon::ensure_daemon_running(kild_config).map_err(|e| {
-                SessionError::DaemonError {
-                    message: e.to_string(),
-                }
-            })?;
+            // Auto-start daemon if not running (config.daemon.auto_start, default: true)
+            crate::daemon::ensure_daemon_running(kild_config)?;
 
             // Ensure the tmux shim binary is installed at ~/.kild/bin/tmux
             if let Err(msg) = ensure_shim_binary() {
@@ -838,12 +834,8 @@ pub fn open_session(
     let now = chrono::Utc::now().to_rfc3339();
 
     let new_agent = if use_daemon {
-        // Auto-start daemon if not running (respects config.daemon.auto_start)
-        crate::daemon::ensure_daemon_running(&kild_config).map_err(|e| {
-            SessionError::DaemonError {
-                message: e.to_string(),
-            }
-        })?;
+        // Auto-start daemon if not running (config.daemon.auto_start, default: true)
+        crate::daemon::ensure_daemon_running(&kild_config)?;
 
         // Daemon path: create new daemon PTY (uses shared helper with create_session)
         let (cmd, cmd_args, env_vars, use_login_shell) = build_daemon_create_request(
