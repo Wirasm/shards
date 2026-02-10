@@ -294,7 +294,7 @@ All events follow: `{layer}.{domain}.{action}_{state}`
 | `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
 | `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
 
-**Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `notify`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `ipc`
+**Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `notify`, `watcher`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `capture_pane`, `ipc`
 
 UI-specific domains: `terminal` (for kild-ui terminal rendering), `input` (for keystroke translation)
 
@@ -409,6 +409,7 @@ grep 'event":"shim\.'        # All shim events
 grep 'shim\.split_window'    # Pane creation events
 grep 'shim\.send_keys'       # Stdin write events
 grep 'shim\.kill_pane'       # Pane destruction events
+grep 'shim\.capture_pane'    # Scrollback capture events
 grep 'shim\.ipc\.'           # IPC communication with daemon
 
 # By outcome
@@ -451,7 +452,7 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 5. Shim creates new daemon PTYs for teammates via IPC, manages pane state locally in `~/.kild/shim/<session>/`
 6. `kild destroy` automatically cleans up all child shim PTYs
 
-**Supported tmux commands:** `split-window` (creates daemon PTYs), `send-keys` (writes to PTY stdin with key name translation), `kill-pane` (destroys PTYs), `display-message` (expands format strings), `list-panes`, `select-pane`, `set-option`, `select-layout` (no-op), `resize-pane` (no-op), `has-session`, `new-session`, `new-window`, `list-windows`, `break-pane`, `join-pane`.
+**Supported tmux commands:** `split-window` (creates daemon PTYs), `send-keys` (writes to PTY stdin with key name translation), `kill-pane` (destroys PTYs), `display-message` (expands format strings), `list-panes`, `select-pane`, `set-option`, `select-layout` (no-op), `resize-pane` (no-op), `has-session`, `new-session`, `new-window`, `list-windows`, `break-pane`, `join-pane`, `capture-pane` (reads PTY scrollback with `-p` for print, `-S` for start line).
 
 **State management:** File-based pane registry at `~/.kild/shim/<session_id>/panes.json` with flock-based concurrency control. Each pane maps to a daemon session ID.
 
