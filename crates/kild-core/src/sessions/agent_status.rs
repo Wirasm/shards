@@ -17,7 +17,7 @@ pub fn update_agent_status(
         status = %status,
     );
     let config = Config::new();
-    let mut session =
+    let session =
         persistence::find_session_by_name(&config.sessions_dir(), name)?.ok_or_else(|| {
             SessionError::NotFound {
                 name: name.to_string(),
@@ -32,9 +32,15 @@ pub fn update_agent_status(
     };
     persistence::write_agent_status(&config.sessions_dir(), &session.id, &status_info)?;
 
-    // Update last_activity on the session (heartbeat)
-    session.last_activity = Some(now);
-    persistence::save_session_to_file(&session, &config.sessions_dir())?;
+    // Update last_activity on the session (heartbeat) via field patch to preserve unknown fields.
+    // Using patch instead of full save prevents older binaries from dropping new fields
+    // (e.g., installed kild binary dropping task_list_id added by a newer version).
+    persistence::patch_session_json_field(
+        &config.sessions_dir(),
+        &session.id,
+        "last_activity",
+        serde_json::Value::String(now),
+    )?;
 
     info!(
         event = "core.session.agent_status_update_completed",

@@ -30,6 +30,27 @@ pub fn resume_session_args(agent: &str, session_id: &str) -> Vec<String> {
     }
 }
 
+/// Generate a deterministic task list ID from a session ID.
+///
+/// Format: `kild-{sanitized_session_id}` — unique per kild, deterministic for the same session.
+/// The session ID's `/` separator is replaced with `-` to produce a flat directory name
+/// (Claude Code uses the ID directly as a directory under `~/.claude/tasks/`).
+pub fn generate_task_list_id(session_id: &str) -> String {
+    format!("kild-{}", session_id.replace('/', "-"))
+}
+
+/// Build env vars for task list transfer.
+///
+/// Returns env vars to inject for agents that support task list persistence.
+/// Currently only Claude Code uses `CLAUDE_CODE_TASK_LIST_ID`.
+/// Returns an empty vec for agents that don't support task lists.
+pub fn task_list_env_vars(agent: &str, task_list_id: &str) -> Vec<(String, String)> {
+    match agent {
+        "claude" => vec![("CLAUDE_CODE_TASK_LIST_ID".into(), task_list_id.into())],
+        _ => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,5 +116,41 @@ mod tests {
     fn test_resume_session_args_other_agent() {
         let args = resume_session_args("kiro", "550e8400-e29b-41d4-a716-446655440000");
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_generate_task_list_id() {
+        let id = generate_task_list_id("myproject_my-feature");
+        assert_eq!(id, "kild-myproject_my-feature");
+    }
+
+    #[test]
+    fn test_generate_task_list_id_sanitizes_slash() {
+        let id = generate_task_list_id("48fc8bd4db48d47e/my-branch");
+        assert_eq!(id, "kild-48fc8bd4db48d47e-my-branch");
+    }
+
+    #[test]
+    fn test_task_list_env_vars_claude() {
+        let vars = task_list_env_vars("claude", "kild-myproject_my-feature");
+        assert_eq!(
+            vars,
+            vec![(
+                "CLAUDE_CODE_TASK_LIST_ID".to_string(),
+                "kild-myproject_my-feature".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn test_task_list_env_vars_other_agents() {
+        for agent in &["kiro", "gemini", "codex", "amp", "opencode"] {
+            let vars = task_list_env_vars(agent, "kild-test");
+            assert!(
+                vars.is_empty(),
+                "agent '{}' should not have task list env vars",
+                agent
+            );
+        }
     }
 }
