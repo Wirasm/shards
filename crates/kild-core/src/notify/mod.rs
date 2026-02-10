@@ -1,9 +1,26 @@
 //! Platform-native desktop notification dispatch.
 //!
 //! Best-effort notifications — failures are logged but never propagate.
-//! Used by `kild agent-status --notify` to alert when an agent needs input.
+//! Used by `kild agent-status --notify` to alert when an agent enters
+//! `Waiting` or `Error` status.
 
+use crate::sessions::types::AgentStatus;
 use tracing::{info, warn};
+
+#[cfg(not(target_os = "macos"))]
+use tracing::debug;
+
+/// Returns `true` if a notification should be sent for the given status.
+///
+/// Only `Waiting` and `Error` require user attention.
+pub fn should_notify(notify: bool, status: AgentStatus) -> bool {
+    notify && matches!(status, AgentStatus::Waiting | AgentStatus::Error)
+}
+
+/// Format the notification message for an agent status change.
+pub fn format_notification_message(agent: &str, branch: &str, status: AgentStatus) -> String {
+    format!("Agent {} in {} needs input ({})", agent, branch, status)
+}
 
 /// Send a platform-native desktop notification (best-effort).
 ///
@@ -24,8 +41,10 @@ pub fn send_notification(title: &str, message: &str) {
 
 #[cfg(target_os = "macos")]
 fn send_platform_notification(title: &str, message: &str) {
-    let escaped_title = title.replace('"', r#"\""#);
-    let escaped_message = message.replace('"', r#"\""#);
+    use crate::terminal::common::escape::applescript_escape;
+
+    let escaped_title = applescript_escape(title);
+    let escaped_message = applescript_escape(message);
     let script = format!(
         r#"display notification "{}" with title "{}""#,
         escaped_message, escaped_title
@@ -59,8 +78,6 @@ fn send_platform_notification(title: &str, message: &str) {
 
 #[cfg(target_os = "linux")]
 fn send_platform_notification(title: &str, message: &str) {
-    use tracing::debug;
-
     match which::which("notify-send") {
         Ok(_) => {}
         Err(which::Error::CannotFindBinaryPath) => {
@@ -73,6 +90,7 @@ fn send_platform_notification(title: &str, message: &str) {
         Err(e) => {
             warn!(
                 event = "core.notify.send_failed",
+                title = title,
                 error = %e,
             );
             return;
@@ -107,7 +125,7 @@ fn send_platform_notification(title: &str, message: &str) {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn send_platform_notification(_title: &str, _message: &str) {
-    tracing::debug!(
+    debug!(
         event = "core.notify.send_skipped",
         reason = "unsupported platform",
     );
@@ -118,6 +136,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_should_notify_fires_for_waiting() {
+        assert!(should_notify(true, AgentStatus::Waiting));
+    }
+
+    #[test]
+    fn test_should_notify_fires_for_error() {
+        assert!(should_notify(true, AgentStatus::Error));
+    }
+
+    #[test]
+    fn test_should_notify_skips_working() {
+        assert!(!should_notify(true, AgentStatus::Working));
+    }
+
+    #[test]
+    fn test_should_notify_skips_idle() {
+        assert!(!should_notify(true, AgentStatus::Idle));
+    }
+
+    #[test]
+    fn test_should_notify_skips_done() {
+        assert!(!should_notify(true, AgentStatus::Done));
+    }
+
+    #[test]
+    fn test_should_notify_suppressed_when_flag_false() {
+        assert!(!should_notify(false, AgentStatus::Waiting));
+        assert!(!should_notify(false, AgentStatus::Error));
+    }
+
+    #[test]
+    fn test_format_notification_message_content() {
+        let msg = format_notification_message("claude", "my-branch", AgentStatus::Waiting);
+        assert_eq!(msg, "Agent claude in my-branch needs input (waiting)");
+    }
+
+    #[test]
+    fn test_format_notification_message_error_status() {
+        let msg = format_notification_message("claude", "feat-x", AgentStatus::Error);
+        assert_eq!(msg, "Agent claude in feat-x needs input (error)");
+    }
+
+    #[test]
     fn test_send_notification_does_not_panic() {
         // Should never panic regardless of platform or tool availability
         send_notification("Test Title", "Test message body");
@@ -125,7 +186,8 @@ mod tests {
 
     #[test]
     fn test_notification_message_escaping() {
-        // Titles/messages with double quotes should not panic
+        // Verify special characters don't cause panics (best-effort delivery)
         send_notification(r#"Title with "quotes""#, r#"Message with "quotes""#);
+        send_notification("Title with \\ backslash", "Message with \n newline");
     }
 }

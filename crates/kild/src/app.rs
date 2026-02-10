@@ -373,7 +373,7 @@ pub fn build_cli() -> Command {
                 .arg(
                     Arg::new("notify")
                         .long("notify")
-                        .help("Send desktop notification if status needs attention (waiting, error)")
+                        .help("Send desktop notification when status is 'waiting' or 'error'")
                         .action(ArgAction::SetTrue)
                 )
         )

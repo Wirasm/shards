@@ -42,16 +42,14 @@ pub fn update_agent_status(
         status = %status,
     );
 
-    if notify && matches!(status, AgentStatus::Waiting | AgentStatus::Error) {
+    if crate::notify::should_notify(notify, status) {
         info!(
             event = "core.session.agent_status_notify_triggered",
             branch = session.branch,
             status = %status,
         );
-        let message = format!(
-            "Agent {} in {} needs input ({})",
-            session.agent, session.branch, status
-        );
+        let message =
+            crate::notify::format_notification_message(&session.agent, &session.branch, status);
         crate::notify::send_notification("KILD", &message);
     }
 
