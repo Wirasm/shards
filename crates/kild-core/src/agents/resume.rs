@@ -32,10 +32,11 @@ pub fn resume_session_args(agent: &str, session_id: &str) -> Vec<String> {
 
 /// Generate a deterministic task list ID from a session ID.
 ///
-/// Format: `kild-{session_id}` — unique per kild, deterministic for the same session.
-/// Used with `CLAUDE_CODE_TASK_LIST_ID` env var to point Claude Code at a shared task directory.
+/// Format: `kild-{sanitized_session_id}` — unique per kild, deterministic for the same session.
+/// The session ID's `/` separator is replaced with `-` to produce a flat directory name
+/// (Claude Code uses the ID directly as a directory under `~/.claude/tasks/`).
 pub fn generate_task_list_id(session_id: &str) -> String {
-    format!("kild-{}", session_id)
+    format!("kild-{}", session_id.replace('/', "-"))
 }
 
 /// Build env vars for task list transfer.
@@ -121,6 +122,12 @@ mod tests {
     fn test_generate_task_list_id() {
         let id = generate_task_list_id("myproject_my-feature");
         assert_eq!(id, "kild-myproject_my-feature");
+    }
+
+    #[test]
+    fn test_generate_task_list_id_sanitizes_slash() {
+        let id = generate_task_list_id("48fc8bd4db48d47e/my-branch");
+        assert_eq!(id, "kild-48fc8bd4db48d47e-my-branch");
     }
 
     #[test]

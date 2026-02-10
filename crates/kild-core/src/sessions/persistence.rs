@@ -158,6 +158,45 @@ pub fn find_session_by_name(
     Ok(None)
 }
 
+/// Patch a single field in a session JSON file without deserializing into Session.
+///
+/// This preserves unknown fields that may exist from newer binary versions,
+/// preventing data loss when older binaries update session files (e.g., agent-status hook).
+pub fn patch_session_json_field(
+    sessions_dir: &Path,
+    session_id: &str,
+    field: &str,
+    value: serde_json::Value,
+) -> Result<(), SessionError> {
+    let session_file = sessions_dir.join(format!("{}.json", session_id.replace('/', "_")));
+    let content =
+        fs::read_to_string(&session_file).map_err(|e| SessionError::IoError { source: e })?;
+    let mut json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| SessionError::IoError {
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+        })?;
+
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert(field.to_string(), value);
+    }
+
+    let updated = serde_json::to_string_pretty(&json).map_err(|e| SessionError::IoError {
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+    })?;
+
+    let temp_file = session_file.with_extension("json.tmp");
+    if let Err(e) = fs::write(&temp_file, &updated) {
+        cleanup_temp_file(&temp_file, &e);
+        return Err(SessionError::IoError { source: e });
+    }
+    if let Err(e) = fs::rename(&temp_file, &session_file) {
+        cleanup_temp_file(&temp_file, &e);
+        return Err(SessionError::IoError { source: e });
+    }
+
+    Ok(())
+}
+
 /// Write agent status sidecar file atomically.
 pub fn write_agent_status(
     sessions_dir: &Path,
@@ -908,6 +947,61 @@ mod tests {
         );
 
         // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_patch_session_json_field_preserves_unknown_fields() {
+        use std::env;
+
+        let temp_dir = env::temp_dir().join("kild_test_patch_preserves_fields");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Write a session JSON with an extra field not in the Session struct
+        let json = serde_json::json!({
+            "id": "proj/my-branch",
+            "project_id": "proj",
+            "branch": "my-branch",
+            "worktree_path": "/tmp/test",
+            "agent": "claude",
+            "status": "Active",
+            "created_at": "2024-01-01T00:00:00Z",
+            "port_range_start": 3000,
+            "port_range_end": 3009,
+            "port_count": 10,
+            "last_activity": "2024-01-01T00:00:00Z",
+            "agents": [],
+            "future_field": "must_survive"
+        });
+        let session_file = temp_dir.join("proj_my-branch.json");
+        std::fs::write(&session_file, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+
+        // Patch last_activity
+        patch_session_json_field(
+            &temp_dir,
+            "proj/my-branch",
+            "last_activity",
+            serde_json::Value::String("2024-06-15T12:00:00Z".to_string()),
+        )
+        .unwrap();
+
+        // Read back and verify unknown field is preserved
+        let content = std::fs::read_to_string(&session_file).unwrap();
+        let patched: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            patched["last_activity"], "2024-06-15T12:00:00Z",
+            "Patched field should be updated"
+        );
+        assert_eq!(
+            patched["future_field"], "must_survive",
+            "Unknown fields must be preserved"
+        );
+        assert_eq!(
+            patched["branch"], "my-branch",
+            "Existing fields must be preserved"
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 

@@ -249,7 +249,7 @@ pub fn create_session(
                 } else {
                     let exports: Vec<String> = env_prefix
                         .iter()
-                        .map(|(k, v)| format!("export {}={}", k, v))
+                        .map(|(k, v)| format!("export {}='{}'", k, v.replace('\'', "'\\''")))
                         .collect();
                     format!("{}; {}", exports.join("; "), validated.command)
                 }
@@ -878,7 +878,7 @@ pub fn open_session(
             } else {
                 let exports: Vec<String> = env_prefix
                     .iter()
-                    .map(|(k, v)| format!("export {}={}", k, v))
+                    .map(|(k, v)| format!("export {}='{}'", k, v.replace('\'', "'\\''")))
                     .collect();
                 format!("{}; {}", exports.join("; "), agent_command)
             }
@@ -2297,6 +2297,68 @@ mod tests {
             path_val.contains(".kild/bin"),
             "PATH should contain .kild/bin shim dir, got: {}",
             path_val
+        );
+    }
+
+    #[test]
+    fn test_build_daemon_request_includes_task_list_env_var_for_claude() {
+        let (_cmd, _args, env_vars, _) = build_daemon_create_request(
+            "claude",
+            "claude",
+            "myproject_my-branch",
+            Some("kild-myproject_my-branch"),
+        )
+        .unwrap();
+
+        let task_list_val = env_vars
+            .iter()
+            .find(|(k, _)| k == "CLAUDE_CODE_TASK_LIST_ID")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            task_list_val,
+            Some("kild-myproject_my-branch"),
+            "CLAUDE_CODE_TASK_LIST_ID should be set for claude agent"
+        );
+    }
+
+    #[test]
+    fn test_build_daemon_request_no_task_list_env_var_for_non_claude() {
+        for (agent_cmd, agent_name) in &[
+            ("kiro", "kiro"),
+            ("gemini", "gemini"),
+            ("amp", "amp"),
+            ("opencode", "opencode"),
+        ] {
+            let (_cmd, _args, env_vars, _) = build_daemon_create_request(
+                agent_cmd,
+                agent_name,
+                "test-session",
+                Some("kild-test"),
+            )
+            .unwrap();
+
+            let has_task_list = env_vars
+                .iter()
+                .any(|(k, _)| k == "CLAUDE_CODE_TASK_LIST_ID");
+            assert!(
+                !has_task_list,
+                "CLAUDE_CODE_TASK_LIST_ID should not be set for agent '{}'",
+                agent_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_daemon_request_no_task_list_env_var_when_none() {
+        let (_cmd, _args, env_vars, _) =
+            build_daemon_create_request("claude", "claude", "test-session", None).unwrap();
+
+        let has_task_list = env_vars
+            .iter()
+            .any(|(k, _)| k == "CLAUDE_CODE_TASK_LIST_ID");
+        assert!(
+            !has_task_list,
+            "CLAUDE_CODE_TASK_LIST_ID should not be set when task_list_id is None"
         );
     }
 

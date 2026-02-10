@@ -78,6 +78,36 @@ pub(crate) fn cleanup_session_pid_files(
     }
 }
 
+/// Clean up Claude Code task list directory for a session.
+///
+/// Removes `~/.claude/tasks/<task_list_id>/` if it exists. Failures are logged
+/// and printed as warnings but do not block session destruction.
+pub fn cleanup_task_list(session_id: &str, task_list_id: &str, home_dir: &std::path::Path) {
+    let task_dir = home_dir.join(".claude").join("tasks").join(task_list_id);
+    if task_dir.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&task_dir) {
+            error!(
+                event = "core.session.task_list_cleanup_failed",
+                session_id = session_id,
+                task_list_id = task_list_id,
+                path = %task_dir.display(),
+                error = %e,
+            );
+            eprintln!(
+                "Warning: Failed to remove task list at {}: {}",
+                task_dir.display(),
+                e
+            );
+        } else {
+            info!(
+                event = "core.session.task_list_cleanup_completed",
+                session_id = session_id,
+                task_list_id = task_list_id,
+            );
+        }
+    }
+}
+
 /// Destroys a kild by removing its worktree, killing the process, and deleting the session file.
 ///
 /// # Arguments
@@ -331,30 +361,10 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     }
 
     // 3c. Clean up Claude Code task list directory
-    if let (Some(task_list_id), Some(home)) = (&session.task_list_id, dirs::home_dir()) {
-        let task_dir = home.join(".claude").join("tasks").join(task_list_id);
-        if task_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&task_dir) {
-                error!(
-                    event = "core.session.task_list_cleanup_failed",
-                    session_id = session.id,
-                    task_list_id = task_list_id,
-                    path = %task_dir.display(),
-                    error = %e,
-                );
-                eprintln!(
-                    "Warning: Failed to remove task list at {}: {}",
-                    task_dir.display(),
-                    e
-                );
-            } else {
-                info!(
-                    event = "core.session.task_list_cleanup_completed",
-                    session_id = session.id,
-                    task_list_id = task_list_id,
-                );
-            }
-        }
+    if let Some(task_list_id) = &session.task_list_id
+        && let Some(home) = dirs::home_dir()
+    {
+        cleanup_task_list(&session.id, task_list_id, &home);
     }
 
     // 4. Remove git worktree
@@ -593,5 +603,44 @@ mod tests {
             ..Default::default()
         };
         assert!(!clean.should_block());
+    }
+
+    #[test]
+    fn test_cleanup_task_list_removes_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let task_list_id = "tl_abc123";
+        let task_dir = tmp.path().join(".claude").join("tasks").join(task_list_id);
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("task.json"), r#"{"id":"1"}"#).unwrap();
+
+        assert!(task_dir.exists());
+        cleanup_task_list("session-1", task_list_id, tmp.path());
+        assert!(!task_dir.exists());
+    }
+
+    #[test]
+    fn test_cleanup_task_list_handles_nonexistent_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No task directory created — should not panic or error
+        cleanup_task_list("session-1", "tl_nonexistent", tmp.path());
+    }
+
+    #[test]
+    fn test_cleanup_task_list_skipped_when_no_task_list_id() {
+        // When session.task_list_id is None, cleanup_task_list is never called.
+        // Verify the guard logic by simulating what destroy_session does.
+        let task_list_id: Option<String> = None;
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a directory that should NOT be removed
+        let decoy_dir = tmp.path().join(".claude").join("tasks").join("decoy");
+        std::fs::create_dir_all(&decoy_dir).unwrap();
+
+        if let Some(id) = &task_list_id {
+            cleanup_task_list("session-1", id, tmp.path());
+        }
+
+        // Decoy directory must still exist — cleanup was never called
+        assert!(decoy_dir.exists());
     }
 }
