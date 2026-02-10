@@ -23,9 +23,9 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 | kild-ui | 9k | Working. GPUI 0.2.2 (crates.io), 3-column metadata dashboard, embedded terminal rendering via alacritty_terminal + portable-pty. |
 | kild-peek/core | 13k | Production. macOS window inspection, UI automation. |
 
-**What works:** Git worktree isolation, session lifecycle, multi-agent tracking, PR integration, fleet health, cross-kild overlap detection, config hierarchy, daemon PTY ownership, daemon IPC, daemon-mode session create/open/stop/destroy, terminal attach with scrollback replay, PTY exit notification with state transitions, background daemonization, tmux shim with 16 commands, agent teams in daemon sessions, session resume (`--resume`), desktop notifications (`--notify`), lazy daemon status sync.
+**What works:** Git worktree isolation, session lifecycle, multi-agent tracking, PR integration, fleet health, cross-kild overlap detection, config hierarchy, daemon PTY ownership, daemon IPC, daemon-mode session create/open/stop/destroy, terminal attach with scrollback replay, PTY exit notification with state transitions, background daemonization, tmux shim with 16 commands, agent teams in daemon sessions, session resume (`--resume`), desktop notifications (`--notify`), lazy daemon status sync, daemon auto-start on create, task list persistence across sessions (`CLAUDE_CODE_TASK_LIST_ID`).
 
-**What's missing for Phase 2:** Terminal resize in kild-ui, scrollback UI, multiplexer layout. One daemon gap: auto-start on `kild create --daemon`.
+**What's missing for Phase 2:** Terminal resize in kild-ui, scrollback UI, multiplexer layout.
 
 ---
 
@@ -154,7 +154,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 - **Attach modes:** Terminal (`kild attach`) with Ctrl+B d detach. GUI attach deferred to Phase 2.
 
 **Remaining gaps:**
-- [ ] **Auto-start daemon** on `kild create --daemon` when daemon not running — config `auto_start` exists but isn't wired into the create path. Client fails with `DaemonClientError::NotRunning`.
+- [x] ~~**Auto-start daemon** on `kild create --daemon` when daemon not running~~ — shipped in PR #323, moved from CLI to kild-core `daemon::autostart` module
 - [ ] `kild ui <branch>` — open kild-ui focused on a daemon session (deferred to Phase 2)
 
 **Research artifacts:** `.claude/PRPs/plans/phase-1b-integration-plan.md`
@@ -211,9 +211,9 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 
 ---
 
-### Phase 1 Bonus: Session Resume & Notifications (PRs #305, #308)
+### Phase 1 Bonus: Session Resume, Notifications, Task Lists, Bug Fixes (PRs #305, #308, #319, #317, #318, #322, #323)
 
-Two features shipped that weren't in the original Phase 1 plan but strengthen the daemon story:
+Features and fixes shipped that weren't in the original Phase 1 plan but strengthen the daemon story:
 
 **Session Resume (PR #308, closes #295):**
 - [x] `kild open --resume` restores Claude Code conversation context after `kild stop`
@@ -228,6 +228,26 @@ Two features shipped that weren't in the original Phase 1 plan but strengthen th
 - [x] Platform-native dispatch: macOS `osascript` (Notification Center), Linux `notify-send`
 - [x] Conditional: only fires on `Waiting` or `Error` status
 - [x] New `notify` module in kild-core
+
+**Task List Persistence (PR #319, closes #296):**
+- [x] `CLAUDE_CODE_TASK_LIST_ID` env var injected for Claude agents on create and open
+- [x] Deterministic task list ID: `kild-{project_id}-{branch}`
+- [x] On resume: reuses existing ID so tasks survive across restarts
+- [x] On fresh open: generates new ID for clean task list
+- [x] `kild destroy` cleans up `~/.claude/tasks/{task_list_id}/` directory
+- [x] Terminal mode uses `env` command for exec-compatible env var injection
+- [x] Daemon mode passes env vars via IPC
+- [x] Agent-specific via `AgentBackend` trait — only Claude agents get the env var
+
+**Daemon Auto-Start (PR #323, closes #312):**
+- [x] `kild create --daemon` auto-starts daemon if not running (when `auto_start = true` in config)
+- [x] Logic moved from CLI into kild-core `daemon::autostart` module
+- [x] Works for both `kild create` and `kild open` in daemon mode
+
+**Bug Fixes:**
+- [x] Daemon re-open after stop (PR #317, closes #309) — `kild stop` now uses `destroy_daemon_session` so re-open works
+- [x] Flaky daemon ping test (PR #318, closes #307) — isolated tests from running daemon
+- [x] `kild open --no-agent` status (PR #322, closes #257) — bare shell open now sets status to Active
 
 ---
 
@@ -331,19 +351,19 @@ Phase 1b (DONE) ──→ Phase 1c (DONE)  ─────┘
 - **Phase 1a** (DONE) — terminal rendering in GPUI via alacritty_terminal + portable-pty
 - **Phase 1b** (DONE) — daemon crate with PTY ownership, IPC, session state machine, scrollback replay, exit notification, background mode
 - **Phase 1c** (DONE) — tmux shim with 16 commands, agent teams work in daemon sessions
-- **Phase 1 bonus** — session resume (`--resume`) and desktop notifications (`--notify`)
+- **Phase 1 bonus** — session resume (`--resume`), desktop notifications (`--notify`), task list persistence, daemon auto-start, bug fixes (#309, #307, #257)
 - **Phase 2** (multiplexer UX) is the next critical path — blocked only by terminal resize + scrollback UI from Phase 1a gaps
 - **Phase 3** (intelligence) needs Phase 1b (DONE) daemon for hooks and state tracking
 - **Phase 4** and **Phase 5** are sequential and build on everything before them
 
 ## Open Bugs (Fix Before Phase 2)
 
-| Issue | Title | Priority | Impact |
+| Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
-| #309 | `kild open --daemon` fails with `session_already_exists` after `kild stop` | P0 | Breaks daemon re-open workflow |
-| #307 | Flaky test: `test_ping_daemon_returns_false_when_not_running` | P1 | CI reliability |
-| #257 | `kild open --no-agent` doesn't set session status to active | P1 | Status tracking |
-| #289 | Ghostty focus/hide issues after Core Graphics migration | P1 | Terminal UX |
+| ~~#309~~ | ~~`kild open --daemon` fails after `kild stop`~~ | ~~P0~~ | Fixed (PR #317) |
+| ~~#307~~ | ~~Flaky test: `test_ping_daemon_returns_false_when_not_running`~~ | ~~P1~~ | Fixed (PR #318) |
+| ~~#257~~ | ~~`kild open --no-agent` doesn't set status to active~~ | ~~P1~~ | Fixed (PR #322) |
+| #289 | Ghostty focus/hide issues after Core Graphics migration | P1 | Open |
 
 ## What Stays the Same
 
