@@ -1197,15 +1197,19 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
         let mut kill_errors: Vec<(u32, String)> = Vec::new();
         for agent_proc in session.agents() {
             if let Some(daemon_sid) = agent_proc.daemon_session_id() {
-                // Daemon-managed: stop via IPC
+                // Daemon-managed: destroy daemon session state via IPC.
+                // We use destroy (not stop) because daemon session state is ephemeral —
+                // it only exists while a PTY is alive. `kild open` will create a fresh
+                // daemon session when reopening. Using stop would leave a stale entry
+                // that blocks re-creation with the same spawn_id (#309).
                 info!(
-                    event = "core.session.stop_daemon_session",
+                    event = "core.session.destroy_daemon_session",
                     daemon_session_id = daemon_sid,
                     agent = agent_proc.agent()
                 );
-                if let Err(e) = crate::daemon::client::stop_daemon_session(daemon_sid) {
+                if let Err(e) = crate::daemon::client::destroy_daemon_session(daemon_sid, false) {
                     error!(
-                        event = "core.session.stop_daemon_failed",
+                        event = "core.session.destroy_daemon_failed",
                         daemon_session_id = daemon_sid,
                         error = %e
                     );
