@@ -53,13 +53,12 @@ impl Store for CoreStore {
                 session_ops::destroy_session(&branch, force)?;
                 Ok(vec![Event::KildDestroyed { branch }])
             }
-            Command::OpenKild { branch, mode } => {
-                // UI dispatch uses Terminal mode — daemon mode not yet exposed in GUI
-                let session = session_ops::open_session(
-                    &branch,
-                    mode,
-                    crate::state::types::RuntimeMode::Terminal,
-                )?;
+            Command::OpenKild {
+                branch,
+                mode,
+                runtime_mode,
+            } => {
+                let session = session_ops::open_session(&branch, mode, runtime_mode)?;
                 Ok(vec![Event::KildOpened {
                     branch,
                     agent: session.agent,
