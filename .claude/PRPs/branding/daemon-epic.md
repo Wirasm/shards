@@ -16,15 +16,16 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 
 | Crate | Lines | State |
 |-------|-------|-------|
-| kild-core | 28k | Production. Sessions, git worktrees, terminal backends, config, forge, health, daemon client. |
+| kild-core | 28.6k | Production. Sessions, git worktrees, terminal backends, config, forge, health, daemon client, notifications, session resume. |
 | kild (CLI) | 6k | Production. 20+ commands, thin delegation to kild-core. Daemon subcommands + attach. |
-| kild-daemon | 4k | Experimental. PTY ownership via portable-pty, JSONL IPC, session state machine, async tokio server. |
+| kild-daemon | 4k | Production. PTY ownership via portable-pty, JSONL IPC, session state machine, async tokio server, scrollback replay, PTY exit handling. 15 integration tests. |
+| kild-tmux-shim | 3k | Production. 16 tmux commands, hand-rolled parser, file-based pane registry, daemon IPC client. 90 unit tests. |
 | kild-ui | 9k | Working. GPUI 0.2.2 (crates.io), 3-column metadata dashboard, embedded terminal rendering via alacritty_terminal + portable-pty. |
-| kild-peek/core | 5k | Production. macOS window inspection, UI automation. |
+| kild-peek/core | 13k | Production. macOS window inspection, UI automation. |
 
-**What works:** Git worktree isolation, session lifecycle, multi-agent tracking, PR integration, fleet health, cross-kild overlap detection, config hierarchy, daemon PTY ownership, daemon IPC, daemon-mode session create/stop/destroy, terminal attach with detach.
+**What works:** Git worktree isolation, session lifecycle, multi-agent tracking, PR integration, fleet health, cross-kild overlap detection, config hierarchy, daemon PTY ownership, daemon IPC, daemon-mode session create/open/stop/destroy, terminal attach with scrollback replay, PTY exit notification with state transitions, background daemonization, tmux shim with 16 commands, agent teams in daemon sessions, session resume (`--resume`), desktop notifications (`--notify`), lazy daemon status sync.
 
-**What's missing:** Terminal resize handling, tmux shim, agent-aware rendering, multiplexer layout. Daemon gaps: auto-start, scrollback replay on attach, background mode, PTY exit notification.
+**What's missing for Phase 2:** Terminal resize in kild-ui, scrollback UI, multiplexer layout. One daemon gap: auto-start on `kild create --daemon`.
 
 ---
 
@@ -71,6 +72,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 - [x] Encapsulated `BatchedTextRun` type with private fields and validated constructor
 - [x] 27 new unit tests for color mapping and input translation
 - [x] 1,410 lines of new terminal module code, +1,639 / -17 across 16 files
+- [x] **Repaint signaling fixed** — batching task moved to `cx.spawn()` with `this.update(cx, |_, cx| cx.notify())` after each batch. No more input lag.
 
 **New files in `crates/kild-ui/src/terminal/`:**
 - `state.rs` — Terminal struct wrapping `Term<T>` + FairMutex + PTY lifecycle
@@ -89,14 +91,12 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 - **Batching:** 4ms window (250Hz) with 100-event cap — balances responsiveness vs. render overhead
 - **GPUI version:** Stayed on crates.io 0.2.2 — terminal rendering works with published API, no need for git-sourced GPUI
 
-**Known gaps (deferred):**
-- [ ] **Repaint signaling (input lag root cause):** The event batching task runs on `background_executor` and has no entity handle to call `cx.notify()` after processing PTY output. GPUI only repaints when something else triggers a frame (next keystroke). Fix: move batching task to `cx.spawn()` in `TerminalView` so it gets a `this` handle, call `this.update(cx, |_, cx| cx.notify())` after each batch. This is the single biggest UX issue.
-- [ ] Terminal resize handling (SIGWINCH on PTY when element bounds change) — not implemented, terminal uses fixed 80×24
-- [ ] Cursor blink animation — cursor renders as static block (focused) or thin bar (unfocused), no blink timer
+**Remaining gaps (Phase 2 prerequisites):**
+- [ ] **Terminal resize** (SIGWINCH on PTY when element bounds change) — layout computes correct cols/rows but never sends them to the PTY. Fixed 80×24. **Required for Phase 2 multiplexer panes.**
+- [ ] **Scrollback UI** — alacritty_terminal supports scrollback but it's not configured and there's no scroll interaction. **Required for usable embedded terminals.**
 - [ ] Selection and copy/paste — no mouse selection or clipboard integration
-- [ ] Scrollback — alacritty_terminal supports it but `TermDimensions::total_lines == screen_lines` (no scrollback configured)
-- [ ] Test coverage for PTY creation, event batching, and rendering edge cases — existing 27 tests cover color/input; stateful/async code deferred (requires complex mocking)
-- [ ] Wide character rendering — spacer cells are skipped but no explicit width-2 glyph handling
+- [ ] Cursor blink animation — cursor renders as static block, no blink timer
+- [ ] Wide character rendering — spacer cells skipped correctly but no explicit width-2 glyph handling (partial)
 - [ ] URL detection / clickable links
 
 **Key reference:** Zed's terminal implementation uses the same pattern — `TerminalElement` with text run batching and background region merging for performance. Studied but not copied; written for KILD's needs.
@@ -107,7 +107,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 
 ---
 
-### Phase 1b: KILD Daemon --- DONE (PR #294)
+### Phase 1b: KILD Daemon --- DONE (PR #294 + follow-ups)
 
 **Goal:** KILD daemon owns PTYs and persists sessions. Agents survive terminal disconnects.
 
@@ -115,7 +115,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 
 **What shipped:**
 - [x] New crate: `kild-daemon` (~4k lines) — tokio-based async daemon
-  - `kild daemon start` — starts daemon (foreground), writes PID file, listens on `~/.kild/daemon.sock`
+  - `kild daemon start` — starts daemon (foreground or background), writes PID file, listens on `~/.kild/daemon.sock`
   - `kild daemon stop` — graceful shutdown via IPC
   - `kild daemon status` — show daemon running state
   - JSONL IPC server over unix socket with per-connection handlers
@@ -124,7 +124,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
   - Signal handling (SIGTERM/SIGINT) and graceful shutdown
   - PTY output broadcasting with scrollback ring buffer
   - PID file management
-  - Integration tests covering protocol codec and session lifecycle
+  - 15 integration tests covering full client-server protocol and lifecycle
 - [x] `kild create` gains `--daemon` / `--no-daemon` flags with `resolve_runtime_mode()` helper
 - [x] `[daemon] enabled` and `[daemon] auto_start` config fields (`DaemonRuntimeConfig`)
 - [x] `RuntimeMode` enum in kild-core state types, `daemon_session_id` on `AgentProcess`
@@ -135,6 +135,16 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 - [x] CLI without daemon continues to work exactly as today (Ghostty, iTerm, etc.)
 - [x] +6,029 / -115 across 47 files
 
+**Follow-up work shipped (PRs #299, #303):**
+- [x] Ping message handled by server — returns `Ack` (PR #299)
+- [x] Scrollback replay on attach — ring buffer contents sent as `PtyOutput` before live stream begins (PR #299)
+- [x] PTY exit notification — `PtyExitEvent` propagated to session manager, transitions session to Stopped (PR #299)
+- [x] Background daemonization — `kild daemon start` spawns detached process, `--foreground` for debug (PR #299)
+- [x] 15 integration tests covering ping, create, attach, output, multi-client, exit transitions, error cases (PR #299)
+- [x] Lazy daemon status sync — `kild list`/`kild status` auto-updates stale daemon sessions (PR #299)
+- [x] `kild open` gains `--daemon`/`--no-daemon` flags for daemon runtime mode (PR #299)
+- [x] Login shell fix — `use_login_shell` flag in IPC, agent commands wrapped in `$SHELL -lc 'exec <command>'` (PR #303)
+
 **Decisions made:**
 - **PTY library:** `portable-pty` (cross-platform, used by Wezterm, flexible for daemon ownership)
 - **Daemon lifecycle:** `kild daemon start` / `kild daemon stop` / `kild daemon status` subcommands
@@ -143,44 +153,81 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 - **IPC protocol:** Unix socket + JSONL with message ID correlation
 - **Attach modes:** Terminal (`kild attach`) with Ctrl+B d detach. GUI attach deferred to Phase 2.
 
-**Known gaps (follow-up work):**
-- [ ] Ping message not yet handled by server
-- [ ] No full client-server integration test (unit + protocol tests exist)
-- [ ] Auto-start daemon on `kild create --daemon` when daemon not running
-- [ ] Scrollback replay on attach (ring buffer exists, replay not wired)
-- [ ] PTY exit notification to session manager (process exits not propagated)
-- [ ] Daemon background mode (`kild daemon start` runs foreground only; no daemonization)
+**Remaining gaps:**
+- [ ] **Auto-start daemon** on `kild create --daemon` when daemon not running — config `auto_start` exists but isn't wired into the create path. Client fails with `DaemonClientError::NotRunning`.
 - [ ] `kild ui <branch>` — open kild-ui focused on a daemon session (deferred to Phase 2)
 
 **Research artifacts:** `.claude/PRPs/plans/phase-1b-integration-plan.md`
 
 ---
 
-### Phase 1c: tmux Shim (Experimental)
+### Phase 1c: tmux Shim --- DONE (PRs #301, #306)
 
 **Goal:** Make Claude Code agent teams work transparently inside KILD sessions via a tmux-compatible shim.
 
 **Why:** Claude Code agent teams (experimental, Feb 2026) use tmux for split-pane mode — they check `$TMUX` and issue tmux CLI commands to create panes for teammates. A shim that intercepts these commands and routes them to the KILD daemon would make agent teams work inside KILD without any Anthropic cooperation.
 
-**This is experimental.** Agent teams are themselves experimental. The tmux commands Claude Code uses may change. This phase is about trial-and-error discovery, not building to a spec.
+**What shipped:**
+- [x] New crate: `kild-tmux-shim` (3,055 lines) — standalone binary, no kild-core dependency
+- [x] Hand-rolled tmux argument parser (not clap) — 16 commands + aliases, 62 parser tests
+- [x] **Commands implemented:**
+  - `split-window` — creates daemon PTYs for teammate panes via IPC
+  - `send-keys` — writes to PTY stdin with key name translation (Enter, Tab, C-x, etc.)
+  - `capture-pane` — reads PTY scrollback for agent team monitoring (PR #306)
+  - `list-panes` — lists panes with format expansion (`#{pane_id}`, etc.)
+  - `kill-pane` — destroys panes via daemon IPC with graceful error handling
+  - `display-message` — expands tmux format strings
+  - `select-pane` — sets pane style/title
+  - `set-option` — stores pane/window/session options
+  - `has-session` — checks session existence
+  - `new-session` — creates sessions with initial pane
+  - `new-window` — adds windows to sessions
+  - `list-windows` — lists windows with filtering
+  - `break-pane` / `join-pane` — hide/unhide panes
+  - `select-layout` / `resize-pane` — no-ops (layout is meaningless without real tmux)
+  - `version` — reports `tmux 3.4`
+- [x] File-based pane registry at `~/.kild/shim/<session_id>/panes.json` with flock concurrency control
+- [x] Sync JSONL IPC client over Unix socket (independent of kild-core)
+- [x] 90 unit tests across parser, state, commands, and IPC
+- [x] kild-core integration:
+  - `ensure_shim_binary()` symlinks `~/.kild/bin/tmux` → `kild-tmux-shim` (one-time setup)
+  - `build_daemon_create_request()` injects `$TMUX`, `$TMUX_PANE`, `$KILD_SHIM_SESSION`, PATH into daemon PTY env
+  - ZDOTDIR wrapper preserves PATH after macOS `path_helper` reordering
+  - `destroy_session()` cleans up child shim PTYs and `~/.kild/shim/<session>/` directory
+- [x] File-based logging via `KILD_SHIM_LOG` env var
+- [x] **Real-world tested** with Claude Code agent teams in daemon sessions
 
-**Approach:**
-- [ ] Audit Claude Code's actual tmux usage (inspect npm source, observe real commands during team sessions)
-- [ ] Build minimal `kild-tmux-shim` binary that handles observed commands
-- [ ] Test with real agent team sessions, discover what's missing, iterate
-- [ ] Expand shim coverage as needed based on what breaks
+**Decisions made:**
+- **Parser:** Hand-rolled, not clap. tmux arg syntax is non-standard (flags mixed with positional args) — clap would fight it.
+- **State:** File-based, not in-memory. Shim is invoked per-command (no long-running process), so state must persist across invocations. flock for concurrency.
+- **IPC:** Direct sync Unix socket client. No kild-core dependency — keeps shim binary small and fast.
+- **Scope:** 16 commands, not the "~500 lines" originally estimated. Real-world testing revealed the full surface area needed.
 
-**What the shim does:**
-- Binary on PATH that intercepts tmux CLI commands
-- Routes them to KILD daemon IPC (depends on Phase 1b daemon being functional)
-- Sets `$TMUX` env var so Claude Code detects "tmux" and activates split-pane mode
-- KILD sees each teammate as a pane within the kild's session
+**Known limitations:**
+- Format expansion is basic (`#{pane_id}`, `#{session_name}`, etc.) — not full tmux format spec
+- `select-layout` and `resize-pane` are no-ops (could add `resize_pty` IPC later)
 
-**Signals of completion:** You can `kild create foo --daemon`, run Claude Code inside it, tell it to create an agent team, and the teammates spawn as daemon-managed PTYs visible in `kild list`.
+**Signals of completion:** ✓ You can `kild create foo --daemon`, run Claude Code inside it, tell it to create an agent team, and the teammates spawn as daemon-managed PTYs. The lead can read teammate output via `capture-pane`.
 
-**Scope:** Medium. Estimated ~500 lines for the shim binary, but scope depends on what tmux commands actually need supporting. Discovery-driven.
+---
 
-**Dependency:** Requires Phase 1b daemon with working IPC.
+### Phase 1 Bonus: Session Resume & Notifications (PRs #305, #308)
+
+Two features shipped that weren't in the original Phase 1 plan but strengthen the daemon story:
+
+**Session Resume (PR #308, closes #295):**
+- [x] `kild open --resume` restores Claude Code conversation context after `kild stop`
+- [x] Deterministic UUID generated on `kild create`, injected as `--session-id <uuid>` into agent command
+- [x] `agent_session_id` stored at Session level (survives `clear_agents()` on stop)
+- [x] On resume, `--resume <uuid>` injected to restore full conversation history
+- [x] Non-Claude agents get clear error on `--resume` (fail fast, no silent fallback)
+- [x] 18 resume-specific tests
+
+**Desktop Notifications (PR #305, closes #246):**
+- [x] `kild agent-status --notify` flag for desktop notifications
+- [x] Platform-native dispatch: macOS `osascript` (Notification Center), Linux `notify-send`
+- [x] Conditional: only fires on `Waiting` or `Error` status
+- [x] New `notify` module in kild-core
 
 ---
 
@@ -189,6 +236,10 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 **Goal:** kild-ui becomes the full multiplexer from the mockup — project rail, kild sidebar, terminal pane grid, teammate tabs, minimized sessions.
 
 **Why:** This is what users see. The daemon (Phase 1b) gives us persistence and PTY ownership. This phase gives us the UX that makes it feel like a product, not a tech demo.
+
+**Prerequisites from Phase 1a (must be done first):**
+- [ ] **Terminal resize** — multiplexer panes need dynamic sizing, currently fixed 80×24
+- [ ] **Scrollback UI** — embedded terminals need scrollback to be usable
 
 **Deliverables:**
 - [ ] Project rail (48px icon column) — project switching, add project, settings
@@ -216,7 +267,7 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 
 **Deliverables:**
 - [ ] Agent state tracking — hook integration + file watching for real-time agent state (thinking/editing/stuck/idle/done)
-- [ ] Notification system — contextual alerts when agents need attention, finish tasks, hit errors
+- [ ] Notification system — contextual alerts when agents need attention, finish tasks, hit errors (foundation: `--notify` flag shipped in Phase 1)
 - [ ] Checkpoint engine — periodic snapshots of session state (git SHA + scrollback + agent context)
 - [ ] Restore from checkpoint — recover after daemon crash or manual rollback
 - [ ] Cross-session conflict detection — continuous `collect_file_overlaps()` (foundation exists in `kild overlaps`)
@@ -271,18 +322,28 @@ KILD today is a production CLI + GPUI dashboard managing parallel AI agents in e
 ```
 Phase 0 (DONE) ──→ Phase 1a (DONE) ──→ Phase 2
                                            ↑
-Phase 1b (DONE) ──→ Phase 1c (experimental)
+Phase 1b (DONE) ──→ Phase 1c (DONE)  ─────┘
        ↓
   Phase 3 ──→ Phase 4 ──→ Phase 5
 ```
 
 - **Phase 0** (DONE) — gpui-component adopted
 - **Phase 1a** (DONE) — terminal rendering in GPUI via alacritty_terminal + portable-pty
-- **Phase 1b** (DONE) — daemon crate with PTY ownership, IPC, session state machine
-- **Phase 1c** (tmux shim) is unblocked — Phase 1b daemon IPC is functional, can be picked up anytime
-- **Phase 2** (multiplexer UX) is unblocked — both Phase 1a (terminal panes) and Phase 1b (daemon) are done. This is the next critical path.
+- **Phase 1b** (DONE) — daemon crate with PTY ownership, IPC, session state machine, scrollback replay, exit notification, background mode
+- **Phase 1c** (DONE) — tmux shim with 16 commands, agent teams work in daemon sessions
+- **Phase 1 bonus** — session resume (`--resume`) and desktop notifications (`--notify`)
+- **Phase 2** (multiplexer UX) is the next critical path — blocked only by terminal resize + scrollback UI from Phase 1a gaps
 - **Phase 3** (intelligence) needs Phase 1b (DONE) daemon for hooks and state tracking
 - **Phase 4** and **Phase 5** are sequential and build on everything before them
+
+## Open Bugs (Fix Before Phase 2)
+
+| Issue | Title | Priority | Impact |
+|-------|-------|----------|--------|
+| #309 | `kild open --daemon` fails with `session_already_exists` after `kild stop` | P0 | Breaks daemon re-open workflow |
+| #307 | Flaky test: `test_ping_daemon_returns_false_when_not_running` | P1 | CI reliability |
+| #257 | `kild open --no-agent` doesn't set session status to active | P1 | Status tracking |
+| #289 | Ghostty focus/hide issues after Core Graphics migration | P1 | Terminal UX |
 
 ## What Stays the Same
 
@@ -304,11 +365,10 @@ Stable through all phases:
 
 The daemon is **additive**. External terminal backends (Ghostty, iTerm, Terminal.app, Alacritty) stay fully functional for CLI users. The daemon is an optional runtime — you can still `kild create foo` and get an agent in a Ghostty window.
 
-- New `kild-daemon` crate — PTY ownership, IPC server, session persistence (Phase 1b)
-- New `kild-tmux-shim` crate — tmux command translation for agent teams (Phase 1c, experimental)
-- New terminal rendering module in kild-ui — GPUI Element for embedded terminals (Phase 1a)
+- New `kild-daemon` crate — PTY ownership, IPC server, session persistence (Phase 1b, DONE)
+- New `kild-tmux-shim` crate — tmux command translation for agent teams (Phase 1c, DONE)
+- New terminal rendering module in kild-ui — GPUI Element for embedded terminals (Phase 1a, DONE)
 - kild-ui views — rewrite for multiplexer layout (Phase 2)
-- Hand-built UI components — replaced by gpui-component (Phase 0, DONE)
 
 ## Key Technical Decisions
 
@@ -324,13 +384,9 @@ The daemon is **additive**. External terminal backends (Ghostty, iTerm, Terminal
 
 ### Resolved
 - **PTY library:** `portable-pty` — decided and shipped in Phase 1b (PR #294). Cross-platform, used by Wezterm, flexible for daemon ownership.
-
-### Resolved (Phase 1a)
 - **GPUI version:** Staying on crates.io 0.2.2. Terminal rendering works with published API — no need for git-sourced GPUI. Revisit only if Phase 2 multiplexer layout needs APIs not in 0.2.2.
-
-### Still Open
-1. **tmux shim scope:** Discovery-driven in Phase 1c. Audit Claude Code's actual usage rather than assuming commands upfront.
-2. **Terminal resize:** Phase 1a deferred SIGWINCH handling. Phase 2 multiplexer will need dynamic resize as panes change size.
+- **tmux shim scope:** 16 commands discovered through real-world testing with Claude Code agent teams. Hand-rolled parser (not clap). File-based pane state with flock. 3,055 lines — 6x original estimate.
+- **Terminal resize:** Deferred from Phase 1a. Must be solved as Phase 2 prerequisite — multiplexer panes need dynamic resize.
 
 ---
 
