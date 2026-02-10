@@ -26,6 +26,7 @@ pub fn execute(cmd: TmuxCommand) -> Result<i32, ShimError> {
         TmuxCommand::ListWindows(args) => handle_list_windows(args),
         TmuxCommand::BreakPane(args) => handle_break_pane(args),
         TmuxCommand::JoinPane(args) => handle_join_pane(args),
+        TmuxCommand::CapturePane(args) => handle_capture_pane(args),
     }
 }
 
@@ -679,6 +680,44 @@ fn handle_join_pane(args: JoinPaneArgs) -> Result<i32, ShimError> {
     state::save(&sid, &registry)?;
 
     debug!(event = "shim.join_pane_completed", pane_id = pane_id);
+    Ok(0)
+}
+
+fn handle_capture_pane(args: CapturePaneArgs) -> Result<i32, ShimError> {
+    debug!(event = "shim.capture_pane_started", target = ?args.target);
+
+    let sid = session_id()?;
+    let registry = state::load(&sid)?;
+
+    let pane_id = resolve_pane_id(args.target.as_deref());
+    let pane = registry
+        .panes
+        .get(&pane_id)
+        .ok_or_else(|| ShimError::state(format!("pane {} not found in registry", pane_id)))?;
+
+    let raw = ipc::read_scrollback(&pane.daemon_session_id)?;
+
+    if args.print {
+        let text = String::from_utf8_lossy(&raw);
+
+        let output = match args.start_line {
+            Some(n) if n < 0 => {
+                let lines: Vec<&str> = text.lines().collect();
+                let count = (-n) as usize;
+                let skip = lines.len().saturating_sub(count);
+                lines[skip..].join("\n")
+            }
+            _ => text.into_owned(),
+        };
+
+        print!("{}", output);
+    }
+
+    debug!(
+        event = "shim.capture_pane_completed",
+        pane_id = pane_id,
+        bytes = raw.len()
+    );
     Ok(0)
 }
 

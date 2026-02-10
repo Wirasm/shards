@@ -90,6 +90,9 @@ pub enum ClientMessage {
     #[serde(rename = "get_session")]
     GetSession { id: String, session_id: String },
 
+    #[serde(rename = "read_scrollback")]
+    ReadScrollback { id: String, session_id: String },
+
     #[serde(rename = "daemon_stop")]
     DaemonStop { id: String },
 
@@ -140,6 +143,13 @@ pub enum DaemonMessage {
     #[serde(rename = "session_info")]
     SessionInfo { id: String, session: SessionInfo },
 
+    #[serde(rename = "scrollback_contents")]
+    ScrollbackContents {
+        id: String,
+        /// Base64-encoded raw scrollback bytes.
+        data: String,
+    },
+
     #[serde(rename = "error")]
     Error {
         id: String,
@@ -172,6 +182,7 @@ impl ClientMessage {
             | ClientMessage::DestroySession { id, .. }
             | ClientMessage::ListSessions { id, .. }
             | ClientMessage::GetSession { id, .. }
+            | ClientMessage::ReadScrollback { id, .. }
             | ClientMessage::DaemonStop { id, .. }
             | ClientMessage::Ping { id, .. } => id,
         }
@@ -290,6 +301,10 @@ mod tests {
             },
             ClientMessage::GetSession {
                 id: "9".to_string(),
+                session_id: "s".to_string(),
+            },
+            ClientMessage::ReadScrollback {
+                id: "9b".to_string(),
                 session_id: "s".to_string(),
             },
             ClientMessage::DaemonStop {

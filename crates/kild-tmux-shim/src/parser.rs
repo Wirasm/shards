@@ -18,6 +18,7 @@ pub enum TmuxCommand {
     ListWindows(ListWindowsArgs),
     BreakPane(BreakPaneArgs),
     JoinPane(JoinPaneArgs),
+    CapturePane(CapturePaneArgs),
 }
 
 #[derive(Debug)]
@@ -137,6 +138,13 @@ pub struct JoinPaneArgs {
     pub target: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct CapturePaneArgs {
+    pub target: Option<String>,
+    pub print: bool,
+    pub start_line: Option<i64>,
+}
+
 pub fn parse(args: &[String]) -> Result<TmuxCommand, ShimError> {
     let mut iter = args.iter().peekable();
 
@@ -180,6 +188,7 @@ pub fn parse(args: &[String]) -> Result<TmuxCommand, ShimError> {
         "list-windows" | "lsw" => parse_list_windows(&remaining),
         "break-pane" | "breakp" => parse_break_pane(&remaining),
         "join-pane" | "joinp" => parse_join_pane(&remaining),
+        "capture-pane" | "capturep" => parse_capture_pane(&remaining),
         other => Err(ShimError::parse(format!("unknown command: {}", other))),
     }
 }
@@ -534,6 +543,34 @@ fn parse_join_pane(args: &[&str]) -> Result<TmuxCommand, ShimError> {
         horizontal,
         source,
         target,
+    }))
+}
+
+fn parse_capture_pane(args: &[&str]) -> Result<TmuxCommand, ShimError> {
+    let mut target = None;
+    let mut print = false;
+    let mut start_line = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i] {
+            "-t" => target = Some(take_value(args, &mut i)?.to_string()),
+            "-p" => print = true,
+            "-S" => {
+                let val = take_value(args, &mut i)?;
+                start_line = Some(val.parse::<i64>().map_err(|e| {
+                    ShimError::parse(format!("invalid start line '{}': {}", val, e))
+                })?);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Ok(TmuxCommand::CapturePane(CapturePaneArgs {
+        target,
+        print,
+        start_line,
     }))
 }
 
@@ -1133,6 +1170,59 @@ mod tests {
             assert!(jp.target.is_none());
         } else {
             panic!("expected JoinPane");
+        }
+    }
+
+    // --- capture-pane ---
+
+    #[test]
+    fn test_capture_pane_basic() {
+        let cmd = parse(&args("capture-pane -t %1 -p")).unwrap();
+        if let TmuxCommand::CapturePane(cp) = cmd {
+            assert_eq!(cp.target.as_deref(), Some("%1"));
+            assert!(cp.print);
+            assert_eq!(cp.start_line, None);
+        } else {
+            panic!("expected CapturePane");
+        }
+    }
+
+    #[test]
+    fn test_capture_pane_with_start_line() {
+        let a: Vec<String> = vec!["capture-pane", "-t", "%1", "-p", "-S", "-100"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let cmd = parse(&a).unwrap();
+        if let TmuxCommand::CapturePane(cp) = cmd {
+            assert_eq!(cp.target.as_deref(), Some("%1"));
+            assert!(cp.print);
+            assert_eq!(cp.start_line, Some(-100));
+        } else {
+            panic!("expected CapturePane");
+        }
+    }
+
+    #[test]
+    fn test_capture_pane_alias() {
+        let cmd = parse(&args("capturep -p")).unwrap();
+        if let TmuxCommand::CapturePane(cp) = cmd {
+            assert!(cp.print);
+            assert_eq!(cp.target, None);
+        } else {
+            panic!("expected CapturePane");
+        }
+    }
+
+    #[test]
+    fn test_capture_pane_no_flags() {
+        let cmd = parse(&args("capture-pane")).unwrap();
+        if let TmuxCommand::CapturePane(cp) = cmd {
+            assert!(!cp.print);
+            assert_eq!(cp.target, None);
+            assert_eq!(cp.start_line, None);
+        } else {
+            panic!("expected CapturePane");
         }
     }
 

@@ -181,6 +181,39 @@ pub fn destroy_session(session_id: &str, force: bool) -> Result<(), ShimError> {
     Ok(())
 }
 
+pub fn read_scrollback(session_id: &str) -> Result<Vec<u8>, ShimError> {
+    debug!(
+        event = "shim.ipc.read_scrollback_started",
+        session_id = session_id,
+    );
+
+    let request = serde_json::json!({
+        "id": uuid::Uuid::new_v4().to_string(),
+        "type": "read_scrollback",
+        "session_id": session_id,
+    });
+
+    let stream = connect()?;
+    let response = send_request(stream, request, "read_scrollback")?;
+
+    let encoded = response
+        .get("data")
+        .and_then(|d| d.as_str())
+        .ok_or_else(|| ShimError::ipc("read_scrollback: response missing data field"))?;
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| ShimError::ipc(format!("read_scrollback: base64 decode failed: {}", e)))?;
+
+    debug!(
+        event = "shim.ipc.read_scrollback_completed",
+        session_id = session_id,
+        bytes = decoded.len(),
+    );
+
+    Ok(decoded)
+}
+
 #[allow(dead_code)]
 pub fn resize_pty(session_id: &str, rows: u16, cols: u16) -> Result<(), ShimError> {
     debug!(
@@ -413,6 +446,54 @@ mod tests {
         let val = result.unwrap();
         assert_eq!(val["type"], "ok");
         assert_eq!(val["session"]["id"], "test-123");
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_read_scrollback_success() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+
+            use std::io::Write;
+            let data = base64::engine::general_purpose::STANDARD.encode(b"hello world");
+            let response = format!(
+                r#"{{"type":"scrollback_contents","id":"test","data":"{}"}}"#,
+                data
+            );
+            writeln!(stream, "{}", response).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let stream = UnixStream::connect(&sock_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let request = serde_json::json!({
+            "id": "test",
+            "type": "read_scrollback",
+            "session_id": "test-session",
+        });
+        let response = send_request(stream, request, "read_scrollback").unwrap();
+
+        let encoded = response.get("data").and_then(|d| d.as_str()).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        assert_eq!(&decoded, b"hello world");
 
         handle.join().unwrap();
     }

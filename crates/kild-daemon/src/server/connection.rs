@@ -358,6 +358,25 @@ async fn dispatch_message(
             }
         }
 
+        ClientMessage::ReadScrollback { id, session_id } => {
+            info!(
+                event = "daemon.connection.read_scrollback",
+                session_id = session_id
+            );
+            let mgr = session_manager.lock().await;
+            match mgr.scrollback_contents(&session_id) {
+                Some(data) => {
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                    Some(DaemonMessage::ScrollbackContents { id, data: encoded })
+                }
+                None => Some(DaemonMessage::Error {
+                    id,
+                    code: "session_not_found".to_string(),
+                    message: format!("No session found with id '{}'", session_id),
+                }),
+            }
+        }
+
         ClientMessage::DaemonStop { id } => {
             info!(
                 event = "daemon.server.stop_requested",
