@@ -241,17 +241,18 @@ pub fn create_session(
     let initial_agent = match request.runtime_mode {
         crate::state::types::RuntimeMode::Terminal => {
             // Terminal path: spawn in external terminal
-            // Prepend task list env var export for agents that support it
+            // Prepend task list env vars via `env` command for agents that support it.
+            // Uses `env KEY=val command` so it works with `exec` (env is an executable).
             let terminal_command = if let Some(ref tlid) = task_list_id {
                 let env_prefix = agents::resume::task_list_env_vars(&agent, tlid);
                 if env_prefix.is_empty() {
                     validated.command.clone()
                 } else {
-                    let exports: Vec<String> = env_prefix
+                    let env_args: Vec<String> = env_prefix
                         .iter()
-                        .map(|(k, v)| format!("export {}='{}'", k, v.replace('\'', "'\\''")))
+                        .map(|(k, v)| format!("{}={}", k, v))
                         .collect();
-                    format!("{}; {}", exports.join("; "), validated.command)
+                    format!("env {} {}", env_args.join(" "), validated.command)
                 }
             } else {
                 validated.command.clone()
@@ -870,17 +871,18 @@ pub fn open_session(
         )?
     } else {
         // Terminal path: spawn in external terminal
-        // Prepend task list env var export for agents that support it
+        // Prepend task list env vars via `env` command for agents that support it.
+        // Uses `env KEY=val command` so it works with `exec` (env is an executable).
         let terminal_command = if let Some(ref tlid) = new_task_list_id {
             let env_prefix = agents::resume::task_list_env_vars(&agent, tlid);
             if env_prefix.is_empty() {
                 agent_command.clone()
             } else {
-                let exports: Vec<String> = env_prefix
+                let env_args: Vec<String> = env_prefix
                     .iter()
-                    .map(|(k, v)| format!("export {}='{}'", k, v.replace('\'', "'\\''")))
+                    .map(|(k, v)| format!("{}={}", k, v))
                     .collect();
-                format!("{}; {}", exports.join("; "), agent_command)
+                format!("env {} {}", env_args.join(" "), agent_command)
             }
         } else {
             agent_command.clone()
