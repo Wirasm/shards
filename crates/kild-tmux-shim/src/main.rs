@@ -14,10 +14,8 @@ fn main() {
     let exit_code = match run(&args) {
         Ok(code) => code,
         Err(e) => {
-            // Only write to stderr if logging is enabled (Claude Code checks stderr)
-            if env::var("KILD_SHIM_LOG").is_ok() {
-                tracing::error!(event = "shim.run_failed", error = %e);
-            }
+            eprintln!("tmux: {}", e);
+            tracing::error!(event = "shim.run_failed", error = %e);
             1
         }
     };
@@ -46,28 +44,43 @@ fn setup_logging() {
                 .join(".kild")
                 .join("shim")
                 .join(&session_id);
-            std::fs::create_dir_all(&dir).ok();
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!(
+                    "tmux: failed to create log directory {}: {}",
+                    dir.display(),
+                    e
+                );
+                return;
+            }
             dir.join("shim.log")
         }
         Some(path) => PathBuf::from(path),
         None => return,
     };
 
-    let file = std::fs::OpenOptions::new()
+    let file = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path)
-        .ok();
+        .open(&log_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "tmux: failed to open log file {}: {}",
+                log_path.display(),
+                e
+            );
+            return;
+        }
+    };
 
-    if let Some(file) = file {
-        use tracing_subscriber::fmt;
-        use tracing_subscriber::prelude::*;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
 
-        let layer = fmt::layer()
-            .json()
-            .with_writer(std::sync::Mutex::new(file))
-            .with_target(false);
+    let layer = fmt::layer()
+        .json()
+        .with_writer(std::sync::Mutex::new(file))
+        .with_target(false);
 
-        tracing_subscriber::registry().with(layer).init();
-    }
+    tracing_subscriber::registry().with(layer).init();
 }

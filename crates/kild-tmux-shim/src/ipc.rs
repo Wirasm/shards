@@ -200,3 +200,221 @@ pub fn resize_pty(session_id: &str, rows: u16, cols: u16) -> Result<(), ShimErro
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connect_daemon_not_running() {
+        // With no daemon socket file, connect should return DaemonNotRunning.
+        // Skip if daemon happens to be running.
+        let path = dirs::home_dir()
+            .expect("home dir")
+            .join(".kild")
+            .join("daemon.sock");
+        if path.exists() {
+            // Daemon might be running — can't reliably test DaemonNotRunning
+            return;
+        }
+
+        let result = create_session(
+            "test-session",
+            "/tmp",
+            "/bin/sh",
+            &[],
+            &HashMap::new(),
+            24,
+            80,
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShimError::DaemonNotRunning => {} // expected
+            other => panic!("expected DaemonNotRunning, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_write_stdin_daemon_not_running() {
+        let path = dirs::home_dir()
+            .expect("home dir")
+            .join(".kild")
+            .join("daemon.sock");
+        if path.exists() {
+            return;
+        }
+
+        let result = write_stdin("test-session", b"hello");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShimError::DaemonNotRunning => {}
+            other => panic!("expected DaemonNotRunning, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_destroy_session_daemon_not_running() {
+        let path = dirs::home_dir()
+            .expect("home dir")
+            .join(".kild")
+            .join("daemon.sock");
+        if path.exists() {
+            return;
+        }
+
+        let result = destroy_session("test-session", false);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShimError::DaemonNotRunning => {}
+            other => panic!("expected DaemonNotRunning, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_send_request_error_response() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        // Spawn a mock server that returns an error response
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap(); // read the request
+
+            use std::io::Write;
+            let response =
+                r#"{"type":"error","code":"session_not_found","message":"no such session"}"#;
+            writeln!(stream, "{}", response).unwrap();
+            stream.flush().unwrap();
+        });
+
+        // Connect to mock server
+        let mut stream = UnixStream::connect(&sock_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let request = serde_json::json!({"type": "test"});
+        let result = send_request(&mut stream, request);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("session_not_found"), "got: {}", err);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_send_request_empty_response() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap(); // read request
+            // Close without sending response
+            drop(stream);
+        });
+
+        let mut stream = UnixStream::connect(&sock_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let request = serde_json::json!({"type": "test"});
+        let result = send_request(&mut stream, request);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("empty response"), "got: {}", err);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_send_request_invalid_json() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+
+            use std::io::Write;
+            writeln!(stream, "not-json{{").unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut stream = UnixStream::connect(&sock_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let request = serde_json::json!({"type": "test"});
+        let result = send_request(&mut stream, request);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid JSON"), "got: {}", err);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_send_request_success() {
+        use std::os::unix::net::UnixListener;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+
+            use std::io::Write;
+            let response = r#"{"type":"ok","session":{"id":"test-123"}}"#;
+            writeln!(stream, "{}", response).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut stream = UnixStream::connect(&sock_path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let request = serde_json::json!({"type": "test"});
+        let result = send_request(&mut stream, request);
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        assert_eq!(val["type"], "ok");
+        assert_eq!(val["session"]["id"], "test-123");
+
+        handle.join().unwrap();
+    }
+}

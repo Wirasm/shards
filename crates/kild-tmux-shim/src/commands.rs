@@ -210,6 +210,43 @@ fn handle_split_window(args: SplitWindowArgs) -> Result<i32, ShimError> {
     Ok(0)
 }
 
+fn translate_ctrl_key(key: &str) -> Option<u8> {
+    if !key.starts_with("C-") || key.len() != 3 {
+        return None;
+    }
+    let ch = key.as_bytes()[2];
+    match ch {
+        b'a'..=b'z' => Some(ch - b'a' + 1),
+        b'A'..=b'Z' => Some(ch - b'A' + 1),
+        b'[' => Some(0x1B), // ESC
+        b'\\' => Some(0x1C),
+        b']' => Some(0x1D),
+        b'^' => Some(0x1E),
+        b'_' => Some(0x1F),
+        b'?' => Some(0x7F), // DEL
+        _ => None,
+    }
+}
+
+fn translate_keys(keys: &[String]) -> Vec<u8> {
+    let mut data: Vec<u8> = Vec::new();
+    for key in keys {
+        match key.as_str() {
+            "Enter" | "C-m" => data.push(b'\n'),
+            "Space" => data.push(b' '),
+            "Tab" | "C-i" => data.push(b'\t'),
+            "Escape" => data.push(0x1b),
+            "BSpace" => data.push(0x7f),
+            k if k.starts_with("C-") => match translate_ctrl_key(k) {
+                Some(byte) => data.push(byte),
+                None => data.extend_from_slice(key.as_bytes()),
+            },
+            _ => data.extend_from_slice(key.as_bytes()),
+        }
+    }
+    data
+}
+
 fn handle_send_keys(args: SendKeysArgs) -> Result<i32, ShimError> {
     debug!(event = "shim.send_keys_started", target = ?args.target, num_keys = args.keys.len());
 
@@ -222,23 +259,7 @@ fn handle_send_keys(args: SendKeysArgs) -> Result<i32, ShimError> {
         .get(&pane_id)
         .ok_or_else(|| ShimError::state(format!("pane {} not found in registry", pane_id)))?;
 
-    let mut data: Vec<u8> = Vec::new();
-    for key in &args.keys {
-        match key.as_str() {
-            "Enter" | "C-m" => data.push(b'\n'),
-            "Space" => data.push(b' '),
-            "Tab" | "C-i" => data.push(b'\t'),
-            "Escape" => data.push(0x1b),
-            "BSpace" => data.push(0x7f),
-            k if k.starts_with("C-") && k.len() == 3 => {
-                // Control character: C-a = 0x01, C-z = 0x1a
-                let ch = k.as_bytes()[2];
-                let ctrl = ch.wrapping_sub(b'a').wrapping_add(1);
-                data.push(ctrl);
-            }
-            _ => data.extend_from_slice(key.as_bytes()),
-        }
-    }
+    let data = translate_keys(&args.keys);
 
     ipc::write_stdin(&pane.daemon_session_id, &data)?;
 
@@ -310,13 +331,37 @@ fn handle_kill_pane(args: KillPaneArgs) -> Result<i32, ShimError> {
     let window_id = pane.window_id.clone();
 
     // Destroy the daemon session
-    if let Err(e) = ipc::destroy_session(&daemon_session_id, true) {
-        error!(
-            event = "shim.kill_pane.destroy_failed",
-            daemon_session_id = daemon_session_id,
-            error = %e,
-        );
-        // Continue cleanup even if daemon destroy fails
+    match ipc::destroy_session(&daemon_session_id, true) {
+        Ok(()) => {}
+        Err(ShimError::DaemonNotRunning) => {
+            // Daemon gone → PTY definitely gone → safe to remove from registry
+            debug!(
+                event = "shim.kill_pane.daemon_not_running",
+                daemon_session_id = daemon_session_id,
+                pane_id = pane_id,
+            );
+        }
+        Err(ShimError::IpcError { ref message }) if message.contains("session_not_found") => {
+            // Session already gone in daemon → safe to remove from registry
+            debug!(
+                event = "shim.kill_pane.session_already_gone",
+                daemon_session_id = daemon_session_id,
+                pane_id = pane_id,
+            );
+        }
+        Err(e) => {
+            // Daemon might still have this PTY → don't orphan it
+            error!(
+                event = "shim.kill_pane.destroy_failed",
+                daemon_session_id = daemon_session_id,
+                pane_id = pane_id,
+                error = %e,
+            );
+            return Err(ShimError::ipc(format!(
+                "failed to destroy pane {}: {}",
+                pane_id, e
+            )));
+        }
     }
 
     // Remove from registry
@@ -619,4 +664,119 @@ fn handle_join_pane(args: JoinPaneArgs) -> Result<i32, ShimError> {
 
     debug!(event = "shim.join_pane_completed", pane_id = pane_id);
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- translate_ctrl_key tests --
+
+    #[test]
+    fn test_translate_ctrl_key_lowercase() {
+        assert_eq!(translate_ctrl_key("C-a"), Some(0x01));
+        assert_eq!(translate_ctrl_key("C-c"), Some(0x03));
+        assert_eq!(translate_ctrl_key("C-z"), Some(0x1A));
+    }
+
+    #[test]
+    fn test_translate_ctrl_key_uppercase() {
+        assert_eq!(translate_ctrl_key("C-A"), Some(0x01));
+        assert_eq!(translate_ctrl_key("C-Z"), Some(0x1A));
+    }
+
+    #[test]
+    fn test_translate_ctrl_key_special() {
+        assert_eq!(translate_ctrl_key("C-["), Some(0x1B)); // ESC
+        assert_eq!(translate_ctrl_key("C-]"), Some(0x1D));
+        assert_eq!(translate_ctrl_key("C-?"), Some(0x7F)); // DEL
+    }
+
+    #[test]
+    fn test_translate_ctrl_key_invalid() {
+        assert_eq!(translate_ctrl_key("C-"), None); // too short
+        assert_eq!(translate_ctrl_key("C-ab"), None); // too long
+        assert_eq!(translate_ctrl_key("C-1"), None); // digit
+        assert_eq!(translate_ctrl_key("X-a"), None); // wrong prefix
+    }
+
+    // -- translate_keys tests --
+
+    #[test]
+    fn test_translate_enter() {
+        let keys = vec!["Enter".to_string()];
+        assert_eq!(translate_keys(&keys), b"\n");
+    }
+
+    #[test]
+    fn test_translate_space() {
+        let keys = vec!["Space".to_string()];
+        assert_eq!(translate_keys(&keys), b" ");
+    }
+
+    #[test]
+    fn test_translate_tab() {
+        let keys = vec!["Tab".to_string()];
+        assert_eq!(translate_keys(&keys), b"\t");
+    }
+
+    #[test]
+    fn test_translate_escape() {
+        let keys = vec!["Escape".to_string()];
+        assert_eq!(translate_keys(&keys), vec![0x1b]);
+    }
+
+    #[test]
+    fn test_translate_bspace() {
+        let keys = vec!["BSpace".to_string()];
+        assert_eq!(translate_keys(&keys), vec![0x7f]);
+    }
+
+    #[test]
+    fn test_translate_c_m_alias() {
+        let keys = vec!["C-m".to_string()];
+        assert_eq!(translate_keys(&keys), b"\n");
+    }
+
+    #[test]
+    fn test_translate_c_i_alias() {
+        let keys = vec!["C-i".to_string()];
+        assert_eq!(translate_keys(&keys), b"\t");
+    }
+
+    #[test]
+    fn test_translate_unknown_key_passthrough() {
+        let keys = vec!["hello".to_string()];
+        assert_eq!(translate_keys(&keys), b"hello");
+    }
+
+    #[test]
+    fn test_translate_empty_keys() {
+        let keys: Vec<String> = vec![];
+        assert_eq!(translate_keys(&keys), b"");
+    }
+
+    #[test]
+    fn test_translate_literal_text_with_enter() {
+        let keys = vec![
+            "echo".to_string(),
+            "Space".to_string(),
+            "hello".to_string(),
+            "Enter".to_string(),
+        ];
+        assert_eq!(translate_keys(&keys), b"echo hello\n");
+    }
+
+    #[test]
+    fn test_translate_long_command() {
+        let keys = vec![
+            "ls".to_string(),
+            "Space".to_string(),
+            "-la".to_string(),
+            "Space".to_string(),
+            "/tmp".to_string(),
+            "Enter".to_string(),
+        ];
+        assert_eq!(translate_keys(&keys), b"ls -la /tmp\n");
+    }
 }

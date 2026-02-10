@@ -248,6 +248,9 @@ pub fn create_session(
             // Ensure the tmux shim binary is installed at ~/.kild/bin/tmux
             ensure_shim_binary();
 
+            // Pre-emptive cleanup: remove stale daemon session if previous destroy failed
+            let _ = crate::daemon::client::destroy_daemon_session(&session_id, true);
+
             let (cmd, cmd_args, env_vars, use_login_shell) =
                 build_daemon_create_request(&validated.command, &validated.agent, &session_id)?;
 
@@ -274,10 +277,11 @@ pub fn create_session(
                 .join("shim")
                 .join(&session_id);
             if let Err(e) = std::fs::create_dir_all(&shim_dir) {
-                warn!(
+                error!(
                     event = "core.session.shim_dir_create_failed",
                     session_id = session_id,
-                    error = %e
+                    error = %e,
+                    "Failed to create shim state directory; agent team commands will not work"
                 );
             } else {
                 // Write initial panes.json with %0 mapped to this session's daemon ID
@@ -303,10 +307,11 @@ pub fn create_session(
                 // Create lock file for flock-based concurrency control
                 let lock_path = shim_dir.join("panes.lock");
                 if let Err(e) = std::fs::File::create(&lock_path) {
-                    warn!(
+                    error!(
                         event = "core.session.shim_lock_create_failed",
                         session_id = session_id,
-                        error = %e
+                        error = %e,
+                        "Failed to create shim lock file; agent team commands may not work"
                     );
                 }
 
@@ -315,10 +320,11 @@ pub fn create_session(
                     &panes_path,
                     serde_json::to_string_pretty(&initial_state).unwrap_or_default(),
                 ) {
-                    warn!(
+                    error!(
                         event = "core.session.shim_state_init_failed",
                         session_id = session_id,
-                        error = %e
+                        error = %e,
+                        "Failed to write initial pane registry; agent team commands will not work"
                     );
                 }
             }
@@ -707,7 +713,7 @@ pub fn open_session(
         spawn_id = %spawn_id
     );
 
-    let use_daemon = runtime_mode == crate::state::types::RuntimeMode::Daemon && !is_bare_shell;
+    let use_daemon = runtime_mode == crate::state::types::RuntimeMode::Daemon;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -779,9 +785,9 @@ pub fn open_session(
         )?
     };
 
-    // When bare shell, keep session Stopped (no agent is running).
-    // Otherwise, mark as Active.
-    if !is_bare_shell {
+    // When bare shell in terminal mode, keep session Stopped (no agent is running).
+    // Bare shell in daemon mode IS active (the daemon PTY is running).
+    if !is_bare_shell || use_daemon {
         session.status = SessionStatus::Active;
     }
     session.last_activity = Some(now);
@@ -818,11 +824,20 @@ fn ensure_shim_binary() {
     // Find kild-tmux-shim binary next to our own binary
     let our_binary = match std::env::current_exe() {
         Ok(p) => p,
-        Err(_) => return,
+        Err(e) => {
+            warn!(event = "core.session.shim_current_exe_failed", error = %e,
+                  "Could not determine binary path; tmux shim will not be installed");
+            return;
+        }
     };
     let bin_dir = match our_binary.parent() {
         Some(p) => p,
-        None => return,
+        None => {
+            warn!(event = "core.session.shim_parent_dir_failed",
+                  binary = %our_binary.display(),
+                  "Binary has no parent directory; tmux shim will not be installed");
+            return;
+        }
     };
     let shim_binary = bin_dir.join("kild-tmux-shim");
 
@@ -989,7 +1004,6 @@ pub fn sync_daemon_session_status(session: &mut Session) -> bool {
         "Syncing stale session status to Stopped"
     );
 
-    session.clear_agents();
     session.status = SessionStatus::Stopped;
     session.last_activity = Some(chrono::Utc::now().to_rfc3339());
 

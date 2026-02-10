@@ -56,9 +56,24 @@ fn panes_path(session_id: &str) -> PathBuf {
 
 fn acquire_lock(session_id: &str) -> Result<Flock<fs::File>, ShimError> {
     let lock = lock_path(session_id);
-    let lock_file = fs::File::open(&lock).map_err(|e| ShimError::StateError {
-        message: format!("failed to open lock file {}: {}", lock.display(), e),
-    })?;
+    if let Some(parent) = lock.parent() {
+        fs::create_dir_all(parent).map_err(|e| ShimError::StateError {
+            message: format!(
+                "failed to create state directory {}: {}",
+                parent.display(),
+                e
+            ),
+        })?;
+    }
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock)
+        .map_err(|e| ShimError::StateError {
+            message: format!("failed to open lock file {}: {}", lock.display(), e),
+        })?;
 
     Flock::lock(lock_file, FlockArg::LockExclusive).map_err(|(_, e)| ShimError::StateError {
         message: format!("failed to acquire lock: {}", e),
@@ -245,5 +260,102 @@ mod tests {
     fn test_state_dir_path() {
         let dir = state_dir("my-session");
         assert!(dir.ends_with(".kild/shim/my-session"));
+    }
+
+    #[test]
+    fn test_load_invalid_json() {
+        let test_id = format!("test-{}", uuid::Uuid::new_v4());
+        let dir = state_dir(&test_id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("panes.json"), "not valid json{{{").unwrap();
+
+        let result = load(&test_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to parse pane registry"),
+            "got: {}",
+            err
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_missing_panes_file() {
+        let test_id = format!("test-{}", uuid::Uuid::new_v4());
+        let dir = state_dir(&test_id);
+        fs::create_dir_all(&dir).unwrap();
+        // Lock file exists but no panes.json
+
+        let result = load(&test_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed to read"), "got: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_empty_json_file() {
+        let test_id = format!("test-{}", uuid::Uuid::new_v4());
+        let dir = state_dir(&test_id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("panes.json"), "").unwrap();
+
+        let result = load(&test_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to parse pane registry"),
+            "got: {}",
+            err
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_partial_json() {
+        let test_id = format!("test-{}", uuid::Uuid::new_v4());
+        let dir = state_dir(&test_id);
+        fs::create_dir_all(&dir).unwrap();
+        // Valid JSON but missing required fields
+        fs::write(dir.join("panes.json"), r#"{"next_pane_id": 1}"#).unwrap();
+
+        let result = load(&test_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to parse pane registry"),
+            "got: {}",
+            err
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_save_and_load_without_pre_created_lock() {
+        let test_id = format!("test-{}", uuid::Uuid::new_v4());
+        let dir = state_dir(&test_id);
+        // Don't create dir or lock file — acquire_lock should handle it
+
+        let registry = PaneRegistry {
+            next_pane_id: 1,
+            session_name: "kild_0".to_string(),
+            panes: HashMap::new(),
+            windows: HashMap::new(),
+            sessions: HashMap::new(),
+        };
+
+        // save should succeed because acquire_lock now creates the lock file on-demand
+        save(&test_id, &registry).unwrap();
+
+        let loaded = load(&test_id).unwrap();
+        assert_eq!(loaded.next_pane_id, 1);
+        assert_eq!(loaded.session_name, "kild_0");
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

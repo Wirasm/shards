@@ -140,16 +140,14 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
                     agent = agent_proc.agent()
                 );
                 if let Err(e) = crate::daemon::client::destroy_daemon_session(daemon_sid, force) {
-                    if force {
-                        warn!(
-                            event = "core.session.destroy_daemon_failed_force_continue",
-                            daemon_session_id = daemon_sid,
-                            error = %e
-                        );
-                    } else {
-                        let pid = agent_proc.process_id().unwrap_or(0);
-                        kill_errors.push((pid, e.to_string()));
-                    }
+                    warn!(
+                        event = "core.session.destroy_daemon_failed_continue",
+                        daemon_session_id = daemon_sid,
+                        error = %e,
+                        force = force,
+                    );
+                    // Don't add to kill_errors — daemon cleanup failure is non-fatal.
+                    // The kild session file is being removed regardless.
                 }
             } else {
                 // Terminal-managed: close window + kill process
@@ -260,11 +258,12 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
                         if let Err(e) =
                             crate::daemon::client::destroy_daemon_session(child_sid, true)
                         {
-                            warn!(
+                            error!(
                                 event = "core.session.destroy_shim_child_failed",
                                 pane_id = pane_id,
                                 daemon_session_id = child_sid,
-                                error = %e
+                                error = %e,
+                                "Failed to destroy child shim PTY; daemon session may be orphaned"
                             );
                         }
                     }
@@ -272,10 +271,12 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
             }
 
             if let Err(e) = std::fs::remove_dir_all(&shim_dir) {
-                warn!(
+                error!(
                     event = "core.session.shim_cleanup_failed",
                     session_id = session.id,
-                    error = %e
+                    path = %shim_dir.display(),
+                    error = %e,
+                    "Failed to remove shim state directory; manual cleanup may be needed"
                 );
             } else {
                 info!(
