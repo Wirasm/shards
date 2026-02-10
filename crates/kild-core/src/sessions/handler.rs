@@ -918,11 +918,7 @@ pub fn open_session(
         )?
     };
 
-    // When bare shell in terminal mode, keep session Stopped (no agent is running).
-    // Bare shell in daemon mode IS active (the daemon PTY is running).
-    if !is_bare_shell || use_daemon {
-        session.status = SessionStatus::Active;
-    }
+    session.status = SessionStatus::Active;
     session.last_activity = Some(now);
     session.add_agent(new_agent);
 
