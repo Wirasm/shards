@@ -115,6 +115,26 @@ pub fn create_session(
         }
     };
 
+    // Generate agent session ID for resume-capable agents
+    let agent_session_id = if agents::resume::supports_resume(&agent) {
+        Some(agents::resume::generate_session_id())
+    } else {
+        None
+    };
+
+    // Append --session-id to agent command for resume-capable agents
+    let agent_command = if let Some(ref sid) = agent_session_id {
+        let extra_args = agents::resume::create_session_args(&agent, sid);
+        if extra_args.is_empty() {
+            agent_command
+        } else {
+            info!(event = "core.session.agent_session_id_set", session_id = %sid);
+            format!("{} {}", agent_command, extra_args.join(" "))
+        }
+    } else {
+        agent_command
+    };
+
     info!(
         event = "core.session.create_started",
         branch = request.branch,
@@ -372,6 +392,7 @@ pub fn create_session(
         Some(now),
         request.note.clone(),
         vec![initial_agent],
+        agent_session_id,
     );
 
     // 7. Save session to file
@@ -610,6 +631,7 @@ pub fn open_session(
     name: &str,
     mode: crate::state::types::OpenMode,
     runtime_mode: crate::state::types::RuntimeMode,
+    resume: bool,
 ) -> Result<Session, SessionError> {
     info!(
         event = "core.session.open_started",
@@ -717,7 +739,56 @@ pub fn open_session(
             }
         };
 
-    // 4. Spawn NEW agent — branch on whether session was daemon-managed
+    // 4. Apply resume / session-id logic to agent command
+    let (agent_command, new_agent_session_id) = if resume && !is_bare_shell {
+        if let Some(ref sid) = session.agent_session_id {
+            if agents::resume::supports_resume(&agent) {
+                let extra = agents::resume::resume_session_args(&agent, sid);
+                let cmd = format!("{} {}", agent_command, extra.join(" "));
+                info!(event = "core.session.resume_started", session_id = %sid, agent = %agent);
+                (cmd, Some(sid.clone()))
+            } else {
+                warn!(event = "core.session.resume_unsupported", agent = %agent);
+                eprintln!(
+                    "Warning: Agent '{}' does not support session resume. Starting fresh.",
+                    agent
+                );
+                let new_sid = if agents::resume::supports_resume(&agent) {
+                    Some(agents::resume::generate_session_id())
+                } else {
+                    None
+                };
+                (agent_command, new_sid)
+            }
+        } else {
+            warn!(event = "core.session.resume_no_session_id", branch = name);
+            eprintln!(
+                "Warning: No previous session ID found for '{}'. Starting fresh.",
+                name
+            );
+            let new_sid = if agents::resume::supports_resume(&agent) {
+                Some(agents::resume::generate_session_id())
+            } else {
+                None
+            };
+            (agent_command, new_sid)
+        }
+    } else if !is_bare_shell && agents::resume::supports_resume(&agent) {
+        // Fresh open: generate new session ID for future resume capability
+        let sid = agents::resume::generate_session_id();
+        let extra = agents::resume::create_session_args(&agent, &sid);
+        let cmd = if extra.is_empty() {
+            agent_command
+        } else {
+            info!(event = "core.session.agent_session_id_set", session_id = %sid);
+            format!("{} {}", agent_command, extra.join(" "))
+        };
+        (cmd, Some(sid))
+    } else {
+        (agent_command, None)
+    };
+
+    // 5. Spawn NEW agent — branch on whether session was daemon-managed
     let spawn_index = session.agent_count();
     let spawn_id = compute_spawn_id(&session.id, spawn_index);
     info!(
@@ -805,6 +876,11 @@ pub fn open_session(
     }
     session.last_activity = Some(now);
     session.add_agent(new_agent);
+
+    // Update agent session ID for resume support
+    if let Some(sid) = new_agent_session_id {
+        session.agent_session_id = Some(sid);
+    }
 
     // 6. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1296,6 +1372,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![],
+            None,
         );
 
         // Create worktree directory so validation passes
@@ -1404,6 +1481,7 @@ mod tests {
                 Some(chrono::Utc::now().to_rfc3339()),
                 None,
                 vec![agent],
+                None,
             );
 
             persistence::save_session_to_file(&session, &sessions_dir)
@@ -1479,6 +1557,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![agent],
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1543,6 +1622,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![], // No agents (old session)
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1617,6 +1697,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![iterm_agent],
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1673,6 +1754,7 @@ mod tests {
             "non-existent",
             crate::state::types::OpenMode::DefaultAgent,
             crate::state::types::RuntimeMode::Terminal,
+            false,
         );
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
@@ -1735,6 +1817,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![agent],
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1892,6 +1975,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -1932,6 +2016,7 @@ mod tests {
             None,
             None,
             vec![agent],
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -1958,6 +2043,7 @@ mod tests {
             None,
             None,
             vec![], // No agents
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -2174,6 +2260,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![],
+            None,
         );
 
         // Save the session
