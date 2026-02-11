@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
+use crate::errors::KildError;
+
 /// Result of creating a PTY session in the daemon.
 #[derive(Debug, Clone)]
 pub struct DaemonCreateResult {
@@ -35,6 +37,22 @@ pub enum DaemonClientError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl KildError for DaemonClientError {
+    fn error_code(&self) -> &'static str {
+        match self {
+            DaemonClientError::NotRunning { .. } => "DAEMON_NOT_RUNNING",
+            DaemonClientError::ConnectionFailed { .. } => "DAEMON_CONNECTION_FAILED",
+            DaemonClientError::DaemonError { .. } => "DAEMON_ERROR",
+            DaemonClientError::ProtocolError { .. } => "DAEMON_PROTOCOL_ERROR",
+            DaemonClientError::Io(_) => "DAEMON_IO_ERROR",
+        }
+    }
+
+    fn is_user_error(&self) -> bool {
+        matches!(self, DaemonClientError::NotRunning { .. })
+    }
 }
 
 /// Connect to the daemon socket with a timeout.
@@ -483,6 +501,76 @@ mod tests {
         assert!(
             matches!(result.unwrap_err(), DaemonClientError::NotRunning { .. }),
             "Should return NotRunning when daemon socket doesn't exist"
+        );
+    }
+
+    #[test]
+    fn test_error_codes() {
+        assert_eq!(
+            DaemonClientError::NotRunning {
+                path: "/tmp/test.sock".to_string()
+            }
+            .error_code(),
+            "DAEMON_NOT_RUNNING"
+        );
+        assert_eq!(
+            DaemonClientError::ConnectionFailed {
+                message: "refused".to_string()
+            }
+            .error_code(),
+            "DAEMON_CONNECTION_FAILED"
+        );
+        assert_eq!(
+            DaemonClientError::DaemonError {
+                message: "internal".to_string()
+            }
+            .error_code(),
+            "DAEMON_ERROR"
+        );
+        assert_eq!(
+            DaemonClientError::ProtocolError {
+                message: "bad json".to_string()
+            }
+            .error_code(),
+            "DAEMON_PROTOCOL_ERROR"
+        );
+        assert_eq!(
+            DaemonClientError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"))
+                .error_code(),
+            "DAEMON_IO_ERROR"
+        );
+    }
+
+    #[test]
+    fn test_is_user_error() {
+        assert!(
+            DaemonClientError::NotRunning {
+                path: "/tmp/test.sock".to_string()
+            }
+            .is_user_error()
+        );
+
+        assert!(
+            !DaemonClientError::ConnectionFailed {
+                message: "refused".to_string()
+            }
+            .is_user_error()
+        );
+        assert!(
+            !DaemonClientError::DaemonError {
+                message: "internal".to_string()
+            }
+            .is_user_error()
+        );
+        assert!(
+            !DaemonClientError::ProtocolError {
+                message: "bad json".to_string()
+            }
+            .is_user_error()
+        );
+        assert!(
+            !DaemonClientError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"))
+                .is_user_error()
         );
     }
 }
