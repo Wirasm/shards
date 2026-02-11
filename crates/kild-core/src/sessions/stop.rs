@@ -138,15 +138,19 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
     // 4. Backfill runtime_mode for sessions created before this field existed.
     // Infer from agents: if any agent has daemon_session_id, session was daemon-managed.
     if session.runtime_mode.is_none() {
-        let is_daemon = session
+        let has_daemon_agent = session
             .agents()
             .iter()
             .any(|a| a.daemon_session_id().is_some());
-        session.runtime_mode = Some(if is_daemon {
+
+        let inferred_mode = if has_daemon_agent {
             crate::state::types::RuntimeMode::Daemon
         } else {
             crate::state::types::RuntimeMode::Terminal
-        });
+        };
+
+        session.runtime_mode = Some(inferred_mode);
+
         info!(
             event = "core.session.runtime_mode_inferred",
             session_id = session.id,
