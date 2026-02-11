@@ -67,7 +67,8 @@ pub enum Command {
         branch: String,
         /// What to launch: default agent, specific agent, or bare shell.
         mode: OpenMode,
-        /// How the agent process should be hosted. `None` = auto-detect from session.
+        /// Runtime mode explicitly requested via CLI flags.
+        /// `None` = no flag passed; auto-detect from session's stored mode, then config.
         runtime_mode: Option<RuntimeMode>,
         /// Resume the previous agent conversation instead of starting fresh.
         #[serde(default)]
@@ -155,6 +156,12 @@ mod tests {
                 runtime_mode: Some(RuntimeMode::Terminal),
                 resume: false,
             },
+            Command::OpenKild {
+                branch: "feature".to_string(),
+                mode: OpenMode::DefaultAgent,
+                runtime_mode: None,
+                resume: false,
+            },
             Command::StopKild {
                 branch: "feature".to_string(),
             },
@@ -207,6 +214,12 @@ mod tests {
                 branch: "test".to_string(),
                 mode: OpenMode::Agent("gemini".to_string()),
                 runtime_mode: Some(RuntimeMode::Terminal),
+                resume: false,
+            },
+            Command::OpenKild {
+                branch: "test".to_string(),
+                mode: OpenMode::DefaultAgent,
+                runtime_mode: None,
                 resume: false,
             },
             Command::StopKild {

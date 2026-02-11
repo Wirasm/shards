@@ -136,6 +136,17 @@ mod tests {
             .unwrap();
         assert!(matches!(&events[0], Event::KildOpened { branch, .. } if branch == "feat"));
 
+        // Auto-detect variant (no explicit runtime mode)
+        let events = store
+            .dispatch(Command::OpenKild {
+                branch: "feat".to_string(),
+                mode: crate::state::types::OpenMode::DefaultAgent,
+                runtime_mode: None,
+                resume: false,
+            })
+            .unwrap();
+        assert!(matches!(&events[0], Event::KildOpened { branch, .. } if branch == "feat"));
+
         let events = store
             .dispatch(Command::StopKild {
                 branch: "feat".to_string(),
