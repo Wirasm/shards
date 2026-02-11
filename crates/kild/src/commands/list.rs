@@ -21,12 +21,15 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
             let session_count = sessions.len();
 
             if json_output {
+                let config = super::helpers::load_config_with_warning();
+                let base_branch = config.git.base_branch();
                 let enriched: Vec<EnrichedSession> = sessions
                     .into_iter()
                     .map(|session| {
                         let git_stats = kild_core::git::collect_git_stats(
                             &session.worktree_path,
                             &session.branch,
+                            base_branch,
                         );
                         let status_info = session_ops::read_agent_status(&session.id);
                         let terminal_window_title = session

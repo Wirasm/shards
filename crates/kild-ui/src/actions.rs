@@ -359,7 +359,7 @@ mod tests {
             session: make_session(id, branch),
             process_status,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }
     }
 

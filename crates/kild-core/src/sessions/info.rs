@@ -21,13 +21,13 @@ use crate::terminal::is_terminal_window_open;
 /// processes start/stop and files change. Refresh via `from_session()` or
 /// targeted field updates as needed.
 ///
-/// Invariant: `diff_stats` is `Some` only when `git_status` is `Dirty`.
+/// Invariant: `uncommitted_diff` is `Some` only when `git_status` is `Dirty`.
 #[derive(Clone)]
 pub struct SessionInfo {
     pub session: Session,
     pub process_status: ProcessStatus,
     pub git_status: GitStatus,
-    pub diff_stats: Option<DiffStats>,
+    pub uncommitted_diff: Option<DiffStats>,
 }
 
 impl SessionInfo {
@@ -43,7 +43,7 @@ impl SessionInfo {
             GitStatus::Unknown
         };
 
-        let diff_stats = if git_status == GitStatus::Dirty {
+        let uncommitted_diff = if git_status == GitStatus::Dirty {
             get_diff_stats(&session.worktree_path)
                 .map_err(|e| {
                     tracing::warn!(
@@ -62,7 +62,7 @@ impl SessionInfo {
             session,
             process_status,
             git_status,
-            diff_stats,
+            uncommitted_diff,
         }
     }
 }
@@ -80,11 +80,51 @@ pub fn determine_process_status(session: &Session) -> ProcessStatus {
     let mut any_unknown = false;
 
     for agent_proc in session.agents() {
-        let status = check_agent_process_status(agent_proc, &session.branch);
-        match status {
-            AgentStatus::Running => any_running = true,
-            AgentStatus::Unknown => any_unknown = true,
-            AgentStatus::Stopped => {}
+        // Try PID-based detection first
+        if let Some(pid) = agent_proc.process_id() {
+            match is_process_running(pid) {
+                Ok(true) => {
+                    any_running = true;
+                    continue;
+                }
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        event = "core.session.process_check_failed",
+                        pid = pid,
+                        agent = agent_proc.agent(),
+                        branch = &session.branch,
+                        error = %e
+                    );
+                    any_unknown = true;
+                    continue;
+                }
+            }
+        }
+
+        // Fallback to window-based detection
+        if let (Some(terminal_type), Some(window_id)) =
+            (agent_proc.terminal_type(), agent_proc.terminal_window_id())
+        {
+            match is_terminal_window_open(terminal_type, window_id) {
+                Ok(Some(true)) => {
+                    any_running = true;
+                    continue;
+                }
+                Ok(Some(false) | None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        event = "core.session.window_check_failed",
+                        terminal_type = ?terminal_type,
+                        window_id = window_id,
+                        agent = agent_proc.agent(),
+                        branch = &session.branch,
+                        error = %e
+                    );
+                    any_unknown = true;
+                    continue;
+                }
+            }
         }
     }
 
@@ -95,75 +135,6 @@ pub fn determine_process_status(session: &Session) -> ProcessStatus {
         return ProcessStatus::Unknown;
     }
     ProcessStatus::Stopped
-}
-
-/// Status of a single agent process check.
-enum AgentStatus {
-    Running,
-    Stopped,
-    Unknown,
-}
-
-/// Check status of a single agent process.
-///
-/// Tries PID-based detection first, falls back to window-based detection.
-fn check_agent_process_status(
-    agent_proc: &crate::sessions::types::AgentProcess,
-    branch: &str,
-) -> AgentStatus {
-    if let Some(pid) = agent_proc.process_id() {
-        return check_pid_status(pid, agent_proc.agent(), branch);
-    }
-
-    if let (Some(terminal_type), Some(window_id)) =
-        (agent_proc.terminal_type(), agent_proc.terminal_window_id())
-    {
-        return check_window_status(terminal_type, window_id, agent_proc.agent(), branch);
-    }
-
-    AgentStatus::Stopped
-}
-
-/// Check process status via PID.
-fn check_pid_status(pid: u32, agent: &str, branch: &str) -> AgentStatus {
-    match is_process_running(pid) {
-        Ok(true) => AgentStatus::Running,
-        Ok(false) => AgentStatus::Stopped,
-        Err(e) => {
-            tracing::warn!(
-                event = "core.session.process_check_failed",
-                pid = pid,
-                agent = agent,
-                branch = branch,
-                error = %e
-            );
-            AgentStatus::Unknown
-        }
-    }
-}
-
-/// Check process status via terminal window ID.
-fn check_window_status(
-    terminal_type: &crate::terminal::types::TerminalType,
-    window_id: &str,
-    agent: &str,
-    branch: &str,
-) -> AgentStatus {
-    match is_terminal_window_open(terminal_type, window_id) {
-        Ok(Some(true)) => AgentStatus::Running,
-        Ok(Some(false) | None) => AgentStatus::Stopped,
-        Err(e) => {
-            tracing::warn!(
-                event = "core.session.window_check_failed",
-                terminal_type = ?terminal_type,
-                window_id = window_id,
-                agent = agent,
-                branch = branch,
-                error = %e
-            );
-            AgentStatus::Unknown
-        }
-    }
 }
 
 /// Check if a worktree has uncommitted changes using git2.
@@ -438,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_session_dirty_repo_has_diff_stats() {
+    fn test_from_session_dirty_repo_has_uncommitted_diff() {
         use std::process::Command;
         use tempfile::TempDir;
 
@@ -479,8 +450,8 @@ mod tests {
         let info = SessionInfo::from_session(session);
 
         assert_eq!(info.git_status, GitStatus::Dirty);
-        assert!(info.diff_stats.is_some());
-        let stats = info.diff_stats.unwrap();
+        assert!(info.uncommitted_diff.is_some());
+        let stats = info.uncommitted_diff.unwrap();
         assert_eq!(stats.insertions, 2);
         assert_eq!(stats.files_changed, 1);
     }

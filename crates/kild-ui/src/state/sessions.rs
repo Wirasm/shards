@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn test_kild_display_from_session_populates_diff_stats_when_dirty() {
+    fn test_kild_display_from_session_populates_uncommitted_diff_when_dirty() {
         use std::process::Command;
         use tempfile::TempDir;
 
@@ -315,10 +315,10 @@ mod tests {
 
         assert_eq!(display.git_status, GitStatus::Dirty);
         assert!(
-            display.diff_stats.is_some(),
-            "diff_stats should be populated for dirty repo"
+            display.uncommitted_diff.is_some(),
+            "uncommitted_diff should be populated for dirty repo"
         );
-        let stats = display.diff_stats.unwrap();
+        let stats = display.uncommitted_diff.unwrap();
         assert_eq!(stats.insertions, 2, "Should have 2 insertions");
         assert_eq!(stats.files_changed, 1);
         assert!(stats.has_changes());
@@ -429,19 +429,19 @@ mod tests {
                 session: session_with_dead_pid,
                 process_status: ProcessStatus::Running, // Start as Running (incorrect)
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: session_with_live_pid,
                 process_status: ProcessStatus::Stopped, // Start as Stopped (incorrect)
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: session_no_pid,
                 process_status: ProcessStatus::Stopped, // Start as Stopped (correct)
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
 
@@ -519,31 +519,31 @@ mod tests {
                 session: make_session("1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("2", "branch-2"),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("3", "branch-3"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("4", "branch-4"),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("5", "branch-5"),
                 process_status: ProcessStatus::Unknown,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
 

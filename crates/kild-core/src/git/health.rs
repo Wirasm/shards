@@ -26,7 +26,7 @@ pub(super) fn find_merge_base(repo: &Repository, oid_a: Oid, oid_b: Oid) -> Opti
 ///
 /// Returns 0 on revwalk failure (errors are logged as warnings).
 /// Callers cannot distinguish between "no commits" and "check failed".
-fn count_commits_since(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> usize {
+pub(super) fn count_commits_since(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> usize {
     let mut walk = match repo.revwalk() {
         Ok(rw) => rw,
         Err(e) => {
@@ -82,7 +82,11 @@ fn get_last_commit_time(repo: &Repository) -> Option<String> {
 ///
 /// Shows the total changes introduced by the branch (how big the PR will be).
 /// Returns `None` if commits cannot be resolved or diff computation fails (logged as warnings).
-fn diff_against_base(repo: &Repository, branch_oid: Oid, merge_base_oid: Oid) -> Option<DiffStats> {
+pub(super) fn diff_against_base(
+    repo: &Repository,
+    branch_oid: Oid,
+    merge_base_oid: Oid,
+) -> Option<DiffStats> {
     let base_commit = match repo.find_commit(merge_base_oid) {
         Ok(c) => c,
         Err(e) => {
@@ -168,7 +172,7 @@ fn check_conflicts(repo: &Repository, branch_oid: Oid, base_oid: Oid) -> Conflic
 }
 
 /// Count commits ahead and behind between branch tip and base branch tip.
-fn count_base_drift(
+pub(super) fn count_base_drift(
     repo: &Repository,
     branch_oid: Oid,
     base_oid: Oid,
@@ -290,11 +294,17 @@ pub fn collect_branch_health(
     let merge_base = find_merge_base(&repo, branch_oid, base_oid);
 
     // Commit activity
-    let commits_since_base = merge_base.map_or(0, |mb| count_commits_since(&repo, branch_oid, mb));
+    let commits_since_base = match merge_base {
+        Some(mb) => count_commits_since(&repo, branch_oid, mb),
+        None => 0,
+    };
     let last_commit_time = get_last_commit_time(&repo);
 
     // Diff vs base
-    let diff_vs_base = merge_base.and_then(|mb| diff_against_base(&repo, branch_oid, mb));
+    let diff_vs_base = match merge_base {
+        Some(mb) => diff_against_base(&repo, branch_oid, mb),
+        None => None,
+    };
 
     // Conflict detection (against base tip, not merge base)
     let conflict_status = check_conflicts(&repo, branch_oid, base_oid);

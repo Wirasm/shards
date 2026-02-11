@@ -7,6 +7,7 @@ use kild_core::session_ops;
 
 use unicode_width::UnicodeWidthStr;
 
+use super::helpers::load_config_with_warning;
 use super::json_types::EnrichedSession;
 
 pub(crate) fn handle_status_command(
@@ -23,12 +24,16 @@ pub(crate) fn handle_status_command(
         json_output = json_output
     );
 
+    let config = load_config_with_warning();
+    let base_branch = config.git.base_branch();
+
     match session_ops::get_session(branch) {
         Ok(mut session) => {
             // Sync daemon-managed session: if daemon says stopped, update JSON
             session_ops::sync_daemon_session_status(&mut session);
 
-            let git_stats = kild_core::git::collect_git_stats(&session.worktree_path, branch);
+            let git_stats =
+                kild_core::git::collect_git_stats(&session.worktree_path, branch, base_branch);
             let status_info = session_ops::read_agent_status(&session.id);
             let pr_info = session_ops::read_pr_info(&session.id);
 
@@ -71,55 +76,44 @@ pub(crate) fn handle_status_command(
 
             // Git stats rows
             if let Some(ref stats) = git_stats {
-                if let Some(ref diff) = stats.diff_stats {
-                    let base = format!(
+                // Show diff vs base as primary changes metric (total branch work)
+                if let Some(ref dvb) = stats.diff_vs_base {
+                    let changes_line = format!(
                         "+{} -{} ({} files)",
-                        diff.insertions, diff.deletions, diff.files_changed
+                        dvb.insertions, dvb.deletions, dvb.files_changed
                     );
-
-                    let line = match &stats.worktree_status {
-                        Some(ws) if ws.uncommitted_details.is_some() => {
-                            let details = ws.uncommitted_details.as_ref().unwrap();
-                            format!(
-                                "{} -- {} staged, {} modified, {} untracked",
-                                base,
-                                details.staged_files,
-                                details.modified_files,
-                                details.untracked_files
-                            )
-                        }
-                        _ => base,
-                    };
-                    rows.push(("Changes:", line));
+                    rows.push(("Changes:", changes_line));
                 }
 
-                if let Some(ref ws) = stats.worktree_status {
-                    let commits_line = if ws.behind_count_failed {
-                        format!(
-                            "{} ahead, ? behind (check failed)",
-                            ws.unpushed_commit_count
-                        )
-                    } else {
-                        format!(
-                            "{} ahead, {} behind",
-                            ws.unpushed_commit_count, ws.behind_commit_count
-                        )
-                    };
+                // Show uncommitted details if present
+                if let Some(ref ws) = stats.worktree_status
+                    && let Some(ref details) = ws.uncommitted_details
+                    && !details.is_empty()
+                {
+                    let uncommitted_line = format!(
+                        "{} staged, {} modified, {} untracked",
+                        details.staged_files, details.modified_files, details.untracked_files
+                    );
+                    rows.push(("Uncommitted:", uncommitted_line));
+                }
+
+                // Show base-branch drift
+                if let Some(ref drift) = stats.drift {
+                    let commits_line = format!(
+                        "{} ahead, {} behind {}",
+                        drift.ahead, drift.behind, drift.base_branch
+                    );
                     rows.push(("Commits:", commits_line));
-                    let remote_status = if !ws.has_remote_branch {
-                        "Never pushed"
-                    } else if ws.unpushed_commit_count == 0
-                        && ws.behind_commit_count == 0
-                        && !ws.behind_count_failed
-                    {
-                        "Up to date"
-                    } else if ws.unpushed_commit_count == 0 {
-                        "Behind remote"
-                    } else if ws.behind_commit_count == 0 && !ws.behind_count_failed {
-                        "Unpushed changes"
-                    } else {
-                        "Diverged"
-                    };
+                } else if stats.diff_vs_base.is_none() {
+                    rows.push((
+                        "Commits:",
+                        "(unavailable — run with -v for details)".to_string(),
+                    ));
+                }
+
+                // Show remote status (push state)
+                if let Some(ref ws) = stats.worktree_status {
+                    let remote_status = determine_remote_status(ws);
                     rows.push(("Remote:", remote_status.to_string()));
                 }
             }
@@ -227,4 +221,25 @@ pub(crate) fn handle_status_command(
             Err(e.into())
         }
     }
+}
+
+/// Determine human-readable remote status from worktree status.
+fn determine_remote_status(ws: &kild_core::git::types::WorktreeStatus) -> &'static str {
+    if !ws.has_remote_branch {
+        return "Never pushed";
+    }
+
+    if ws.unpushed_commit_count == 0 && ws.behind_commit_count == 0 && !ws.behind_count_failed {
+        return "Up to date";
+    }
+
+    if ws.unpushed_commit_count == 0 {
+        return "Behind remote";
+    }
+
+    if ws.behind_commit_count == 0 && !ws.behind_count_failed {
+        return "Unpushed changes";
+    }
+
+    "Diverged"
 }

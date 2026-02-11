@@ -667,13 +667,13 @@ mod tests {
                 session: make_session("1", "project-a"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("2", "project-b"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
 
@@ -717,19 +717,19 @@ mod tests {
                 session: make_session("1", &project_id_a),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("2", &project_id_b),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("3", &project_id_a),
                 process_status: ProcessStatus::Running,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
 
@@ -778,7 +778,7 @@ mod tests {
             session: make_session("1", "other-project-hash"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
 
         // Active project set to a different path - should return empty
@@ -822,7 +822,7 @@ mod tests {
             session: make_session("test-id"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("test-id".to_string());
 
@@ -868,7 +868,7 @@ mod tests {
             session: make_session("test-id"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("test-id".to_string());
 
@@ -880,7 +880,7 @@ mod tests {
             session: make_session("test-id"),
             process_status: ProcessStatus::Running, // Status may change
             git_status: GitStatus::Dirty,           // Git status may change
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
 
         // Selection should persist
@@ -933,13 +933,13 @@ mod tests {
                 session: make_session("id-1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("id-2", "branch-2"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
         state.selection.select("id-1".to_string());
@@ -994,13 +994,13 @@ mod tests {
                 session: make_session("id-1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session("id-2", "branch-2"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
         state.selection.select("id-1".to_string());
@@ -1081,7 +1081,7 @@ mod tests {
             session: make_session_for_event_test("id-1", "branch-1"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("id-1".to_string());
         state.set_dialog(DialogState::open_confirm("branch-1".to_string(), None));
@@ -1102,13 +1102,13 @@ mod tests {
                 session: make_session_for_event_test("id-1", "branch-1"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
             SessionInfo {
                 session: make_session_for_event_test("id-2", "branch-2"),
                 process_status: ProcessStatus::Stopped,
                 git_status: GitStatus::Unknown,
-                diff_stats: None,
+                uncommitted_diff: None,
             },
         ]);
         state.selection.select("id-1".to_string());
@@ -1129,7 +1129,7 @@ mod tests {
             session: make_session_for_event_test("id-1", "branch-1"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("id-1".to_string());
         state.set_dialog(DialogState::open_create());
@@ -1151,7 +1151,7 @@ mod tests {
             session: make_session_for_event_test("id-1", "branch-1"),
             process_status: ProcessStatus::Running,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("id-1".to_string());
         state.set_dialog(DialogState::open_create());
@@ -1172,7 +1172,7 @@ mod tests {
             session: make_session_for_event_test("id-1", "branch-1"),
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
         state.selection.select("id-1".to_string());
 
