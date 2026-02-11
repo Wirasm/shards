@@ -19,6 +19,7 @@ use crate::sessions::{errors::SessionError, persistence, types::*};
 ///
 /// # Errors
 /// Returns `SessionError::NotFound` if the session doesn't exist.
+/// Returns `SessionError::NoPrFound` if no PR exists for the branch (or no remote configured).
 /// Returns `SessionError::UncommittedChanges` if the worktree has uncommitted changes.
 /// Propagates errors from `destroy_session`.
 /// Remote branch deletion errors are logged but do not fail the operation.
@@ -44,33 +45,67 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
 
     let kild_branch = git::kild_branch_name(name);
 
-    // 2. Check if PR was merged (determines if we need to delete remote)
-    // Skip PR check entirely for repos without a remote configured
-    let pr_merged = if super::destroy::has_remote_configured(&session.worktree_path) {
-        match crate::forge::get_forge_backend(&session.worktree_path, forge_override) {
-            Some(backend) => match backend.is_pr_merged(&session.worktree_path, &kild_branch) {
-                Ok(merged) => Some(merged),
-                Err(e) => {
-                    warn!(
-                        event = "core.session.complete_pr_check_failed",
-                        branch = name,
-                        error = %e,
-                    );
-                    None
-                }
-            },
-            None => {
-                debug!(event = "core.session.complete_no_forge", branch = name,);
-                None
+    // 2. Check PR existence — complete requires a PR to exist
+    let has_remote = super::destroy::has_remote_configured(&session.worktree_path);
+
+    if !has_remote {
+        // No remote = branch was never pushed = no PR possible
+        error!(
+            event = "core.session.complete_no_pr",
+            name = name,
+            reason = "no_remote"
+        );
+        return Err(SessionError::NoPrFound {
+            name: name.to_string(),
+        });
+    }
+
+    let forge_backend = crate::forge::get_forge_backend(&session.worktree_path, forge_override);
+
+    // Check PR existence first (uses check_pr_exists for explicit NotFound detection)
+    if let Some(backend) = &forge_backend {
+        match backend.check_pr_exists(&session.worktree_path, &kild_branch) {
+            crate::forge::types::PrCheckResult::Exists => {
+                debug!(event = "core.session.complete_pr_exists", branch = name);
+            }
+            crate::forge::types::PrCheckResult::NotFound => {
+                error!(
+                    event = "core.session.complete_no_pr",
+                    name = name,
+                    reason = "not_found"
+                );
+                return Err(SessionError::NoPrFound {
+                    name: name.to_string(),
+                });
+            }
+            crate::forge::types::PrCheckResult::Unavailable => {
+                // Forge CLI issue — can't confirm PR exists, proceed with warning
+                warn!(
+                    event = "core.session.complete_pr_check_unavailable",
+                    branch = name,
+                    "Cannot verify PR status — proceeding anyway"
+                );
             }
         }
-    } else {
-        debug!(
-            event = "core.session.complete_no_remote",
-            branch = name,
-            "No remote configured — skipping PR check"
-        );
-        None
+    }
+
+    // 3. Check if PR was merged (determines if we need to delete remote)
+    let pr_merged = match forge_backend {
+        Some(backend) => match backend.is_pr_merged(&session.worktree_path, &kild_branch) {
+            Ok(merged) => Some(merged),
+            Err(e) => {
+                warn!(
+                    event = "core.session.complete_pr_check_failed",
+                    branch = name,
+                    error = %e,
+                );
+                None
+            }
+        },
+        None => {
+            debug!(event = "core.session.complete_no_forge", branch = name);
+            None
+        }
     };
 
     info!(
@@ -79,7 +114,7 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
         pr_merged = ?pr_merged
     );
 
-    // 3. Determine the result based on PR status and remote deletion outcome
+    // 4. Determine the result based on PR status and remote deletion outcome
     let result = if pr_merged == Some(true) {
         // PR was merged - attempt to delete remote branch
         match crate::git::cli::delete_remote_branch(&session.worktree_path, "origin", &kild_branch)
@@ -107,7 +142,7 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
         CompleteResult::PrCheckUnavailable
     };
 
-    // 4. Safety check: always block on uncommitted changes (no --force bypass for complete)
+    // 5. Safety check: always block on uncommitted changes (no --force bypass for complete)
     let safety_info = super::destroy::get_destroy_safety_info(name)?;
     if safety_info.should_block() {
         error!(
@@ -120,7 +155,7 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
         });
     }
 
-    // 5. Destroy the session (reuse existing logic, always non-force since we already
+    // 6. Destroy the session (reuse existing logic, always non-force since we already
     //    verified the worktree is clean above)
     super::destroy::destroy_session(name, false)?;
 

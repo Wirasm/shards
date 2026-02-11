@@ -72,6 +72,11 @@ pub enum SessionError {
     )]
     UncommittedChanges { name: String },
 
+    #[error(
+        "Cannot complete '{name}': no PR found for this branch.\n   If the work landed, push the branch and create a PR first.\n   To remove the kild without completing, use 'kild destroy {name}'."
+    )]
+    NoPrFound { name: String },
+
     #[error("Daemon error: {message}")]
     DaemonError { message: String },
 
@@ -120,6 +125,7 @@ impl KildError for SessionError {
             SessionError::InvalidAgentStatus { .. } => "INVALID_AGENT_STATUS",
             SessionError::ConfigError { .. } => "CONFIG_ERROR",
             SessionError::UncommittedChanges { .. } => "SESSION_UNCOMMITTED_CHANGES",
+            SessionError::NoPrFound { .. } => "SESSION_NO_PR_FOUND",
             SessionError::DaemonError { .. } => "DAEMON_ERROR",
             SessionError::DaemonPtyExitedEarly { .. } => "DAEMON_PTY_EXITED_EARLY",
             SessionError::DaemonAutoStartFailed { .. } => "DAEMON_AUTO_START_FAILED",
@@ -147,6 +153,7 @@ impl KildError for SessionError {
                 | SessionError::InvalidAgentStatus { .. }
                 | SessionError::ConfigError { .. }
                 | SessionError::UncommittedChanges { .. }
+                | SessionError::NoPrFound { .. }
                 | SessionError::ResumeUnsupported { .. }
                 | SessionError::ResumeNoSessionId { .. }
         )
@@ -239,6 +246,18 @@ mod tests {
         assert!(error.to_string().contains("my-feature"));
         assert!(error.to_string().contains("No previous session ID"));
         assert_eq!(error.error_code(), "RESUME_NO_SESSION_ID");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_no_pr_found_error() {
+        let error = SessionError::NoPrFound {
+            name: "my-feature".to_string(),
+        };
+        assert!(error.to_string().contains("Cannot complete 'my-feature'"));
+        assert!(error.to_string().contains("no PR found"));
+        assert!(error.to_string().contains("kild destroy my-feature"));
+        assert_eq!(error.error_code(), "SESSION_NO_PR_FOUND");
         assert!(error.is_user_error());
     }
 
