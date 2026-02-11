@@ -262,7 +262,7 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 - `main.rs` - Entry point, file-based logging controlled by KILD_SHIM_LOG env var
 - `errors.rs` - ShimError type
 
-**Module pattern:** Each domain in kild-core starts with `errors.rs`, `types.rs`, `mod.rs`. Additional files vary by domain (e.g., `handler.rs`/`destroy.rs`/`complete.rs`/`agent_status.rs`/`persistence.rs`/`validation.rs` for sessions, `manager.rs`/`persistence.rs` for projects). kild-daemon uses a flatter structure with top-level errors/types and module-specific implementation files. kild-tmux-shim is a flat CLI crate with per-module files (no nested mod structure).
+**Module pattern:** Each domain in kild-core starts with `errors.rs`, `types.rs`, `mod.rs`. Additional files vary by domain (e.g., `create.rs`/`open.rs`/`stop.rs`/`list.rs`/`destroy.rs`/`complete.rs`/`agent_status.rs`/`daemon_helpers.rs` for sessions with `handler.rs` as re-export facade, `manager.rs`/`persistence.rs` for projects). kild-daemon uses a flatter structure with top-level errors/types and module-specific implementation files. kild-tmux-shim is a flat CLI crate with per-module files (no nested mod structure).
 
 **CLI interaction:** Commands delegate directly to `kild-core` handlers. No business logic in CLI layer.
 
@@ -480,9 +480,9 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 - `$KILD_SHIM_LOG` - Enable shim logging (file path or `1` for `~/.kild/shim/<session>/shim.log`)
 
 **Integration points in kild-core:**
-- `handler.rs:ensure_shim_binary()` - Symlinks shim as `~/.kild/bin/tmux` (best-effort, warns on failure)
-- `handler.rs:build_daemon_create_request()` - Injects shim env vars into daemon PTY requests
-- `handler.rs:create_session()` - Initializes shim state directory and `panes.json` after daemon session creation
+- `daemon_helpers.rs:ensure_shim_binary()` - Symlinks shim as `~/.kild/bin/tmux` (best-effort, warns on failure)
+- `daemon_helpers.rs:build_daemon_create_request()` - Injects shim env vars into daemon PTY requests
+- `create.rs:create_session()` - Initializes shim state directory and `panes.json` after daemon session creation
 - `destroy.rs:destroy_session()` - Destroys child shim PTYs via daemon IPC, removes `~/.kild/shim/<session>/`, and cleans up task lists at `~/.claude/tasks/<task_list_id>/`
 
 ## Forge Backend Pattern
