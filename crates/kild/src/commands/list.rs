@@ -53,27 +53,33 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                         )
                         .ok();
                         let status_info = session_ops::read_agent_status(&session.id);
-                        let terminal_window_title = session
-                            .latest_agent()
-                            .and_then(|a| a.terminal_window_id().map(|s| s.to_string()));
-                        let terminal_type = session
-                            .latest_agent()
-                            .and_then(|a| a.terminal_type().map(|t| t.to_string()));
                         let pr_info = session_ops::read_pr_info(&session.id);
+
+                        let latest_agent = session.latest_agent();
+                        let terminal_window_title =
+                            latest_agent.and_then(|a| a.terminal_window_id().map(str::to_string));
+                        let terminal_type =
+                            latest_agent.and_then(|a| a.terminal_type().map(|t| t.to_string()));
+
+                        let worktree_status_ref =
+                            &git_stats.as_ref().and_then(|g| g.worktree_status.clone());
                         let merge_readiness = branch_health.as_ref().map(|h| {
                             kild_core::MergeReadiness::compute(
                                 h,
-                                &git_stats.as_ref().and_then(|g| g.worktree_status.clone()),
+                                worktree_status_ref,
                                 pr_info.as_ref(),
                             )
                         });
-                        let overlapping = overlap_report
-                            .overlapping_files
-                            .iter()
-                            .filter(|fo| fo.branches.contains(&session.branch))
-                            .map(|fo| fo.file.display().to_string())
-                            .collect::<Vec<_>>();
-                        let overlapping_files = Some(overlapping);
+
+                        let overlapping_files = Some(
+                            overlap_report
+                                .overlapping_files
+                                .iter()
+                                .filter(|fo| fo.branches.contains(&session.branch))
+                                .map(|fo| fo.file.display().to_string())
+                                .collect(),
+                        );
+
                         EnrichedSession {
                             session,
                             process_status,

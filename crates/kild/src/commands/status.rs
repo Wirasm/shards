@@ -46,39 +46,20 @@ pub(crate) fn handle_status_command(
                     &session.created_at,
                 )
                 .ok();
-                let merge_readiness = branch_health.as_ref().map(|h| {
-                    kild_core::MergeReadiness::compute(
-                        h,
-                        &git_stats.as_ref().and_then(|g| g.worktree_status.clone()),
-                        pr_info.as_ref(),
-                    )
-                });
-                let terminal_window_title = session
-                    .latest_agent()
-                    .and_then(|a| a.terminal_window_id().map(|s| s.to_string()));
-                let terminal_type = session
-                    .latest_agent()
-                    .and_then(|a| a.terminal_type().map(|t| t.to_string()));
 
-                // Overlaps are inherently cross-session: we must load all sessions
-                // to know which files this session shares with others.
-                let overlapping_files = session_ops::list_sessions().ok().map(|all_sessions| {
-                    let (overlap_report, overlap_errors) =
-                        kild_core::git::collect_file_overlaps(&all_sessions, base_branch);
-                    for (branch, err_msg) in &overlap_errors {
-                        warn!(
-                            event = "cli.status.overlap_detection_failed",
-                            branch = branch,
-                            error = err_msg
-                        );
-                    }
-                    overlap_report
-                        .overlapping_files
-                        .iter()
-                        .filter(|fo| fo.branches.contains(&session.branch))
-                        .map(|fo| fo.file.display().to_string())
-                        .collect::<Vec<_>>()
+                let latest_agent = session.latest_agent();
+                let terminal_window_title =
+                    latest_agent.and_then(|a| a.terminal_window_id().map(str::to_string));
+                let terminal_type =
+                    latest_agent.and_then(|a| a.terminal_type().map(|t| t.to_string()));
+
+                let worktree_status_ref =
+                    &git_stats.as_ref().and_then(|g| g.worktree_status.clone());
+                let merge_readiness = branch_health.as_ref().map(|h| {
+                    kild_core::MergeReadiness::compute(h, worktree_status_ref, pr_info.as_ref())
                 });
+
+                let overlapping_files = compute_overlapping_files(&session, base_branch);
 
                 let agent_count = session.agent_count();
                 let enriched = EnrichedSession {
@@ -265,6 +246,30 @@ pub(crate) fn handle_status_command(
             Err(e.into())
         }
     }
+}
+
+/// Compute overlapping files for a session by loading all sessions and detecting overlaps.
+fn compute_overlapping_files(
+    session: &kild_core::Session,
+    base_branch: &str,
+) -> Option<Vec<String>> {
+    session_ops::list_sessions().ok().map(|all_sessions| {
+        let (overlap_report, overlap_errors) =
+            kild_core::git::collect_file_overlaps(&all_sessions, base_branch);
+        for (branch, err_msg) in &overlap_errors {
+            warn!(
+                event = "cli.status.overlap_detection_failed",
+                branch = branch,
+                error = err_msg
+            );
+        }
+        overlap_report
+            .overlapping_files
+            .iter()
+            .filter(|fo| fo.branches.contains(&session.branch))
+            .map(|fo| fo.file.display().to_string())
+            .collect()
+    })
 }
 
 /// Determine human-readable remote status from worktree status.
