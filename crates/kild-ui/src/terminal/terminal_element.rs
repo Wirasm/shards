@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use gpui::{
-    App, Bounds, Element, ElementId, Font, FontWeight, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, LayoutId, Pixels, SharedString, Size, Style, TextRun, Window, fill, font, point,
-    px, size,
+    App, Bounds, DispatchPhase, Element, ElementId, Font, FontWeight, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, ScrollWheelEvent,
+    SharedString, Size, Style, TextRun, Window, fill, font, point, px, size,
 };
 
 use super::colors;
@@ -21,6 +22,8 @@ pub struct PrepaintState {
     cursor: Option<PreparedCursor>,
     cell_width: Pixels,
     cell_height: Pixels,
+    hitbox: Hitbox,
+    scrolled_up: bool,
 }
 
 struct PreparedLine {
@@ -152,6 +155,7 @@ impl Element for TerminalElement {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let (cell_width, cell_height) = Self::measure_cell(window, cx);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::default());
 
         if cell_width <= px(0.0) || cell_height <= px(0.0) {
             return PrepaintState {
@@ -160,6 +164,8 @@ impl Element for TerminalElement {
                 cursor: None,
                 cell_width,
                 cell_height,
+                hitbox,
+                scrolled_up: false,
             };
         }
 
@@ -172,6 +178,8 @@ impl Element for TerminalElement {
                 cursor: None,
                 cell_width,
                 cell_height,
+                hitbox,
+                scrolled_up: false,
             };
         }
 
@@ -192,6 +200,7 @@ impl Element for TerminalElement {
         // FairMutex (alacritty_terminal::sync) does not poison — it's not
         // std::sync::Mutex. lock() will always succeed (may block, never Err).
         let term = self.term.lock();
+        let scrolled_up = term.grid().display_offset() > 0;
         let content = term.renderable_content();
 
         let terminal_bg = Hsla::from(theme::terminal_background());
@@ -439,6 +448,8 @@ impl Element for TerminalElement {
             cursor,
             cell_width,
             cell_height,
+            hitbox,
+            scrolled_up,
         }
     }
 
@@ -529,5 +540,68 @@ impl Element for TerminalElement {
         if let Some(cursor) = &prepaint.cursor {
             window.paint_quad(fill(cursor.bounds, cursor.color));
         }
+
+        // Layer 5: Scrollback badge (when scrolled up from bottom)
+        if prepaint.scrolled_up {
+            let badge_text = "Scrollback";
+            let badge_font_size = px(theme::TEXT_XS);
+            let padding_h = px(theme::SPACE_1);
+            let padding_v = px(2.0);
+            let badge_bg = Hsla::from(theme::elevated());
+            let badge_fg = Hsla::from(theme::text_muted());
+
+            let badge_run = TextRun {
+                len: badge_text.len(),
+                font: Self::terminal_font(),
+                color: badge_fg,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+
+            let shaped = window.text_system().shape_line(
+                SharedString::from(badge_text),
+                badge_font_size,
+                &[badge_run],
+                None,
+            );
+
+            let text_width = shaped.width;
+            let badge_width = text_width + padding_h + padding_h;
+            let badge_height = badge_font_size + padding_v + padding_v;
+            let margin = px(theme::SPACE_2);
+
+            let badge_x = bounds.origin.x + bounds.size.width - badge_width - margin;
+            let badge_y = bounds.origin.y + margin;
+
+            window.paint_quad(fill(
+                Bounds::new(point(badge_x, badge_y), size(badge_width, badge_height)),
+                badge_bg,
+            ));
+
+            if let Err(e) = shaped.paint(
+                point(badge_x + padding_h, badge_y + padding_v),
+                badge_font_size,
+                window,
+                cx,
+            ) {
+                tracing::error!(event = "ui.terminal.badge_paint_failed", error = %e);
+            }
+        }
+
+        // Scroll wheel handler — translates GPUI scroll events to alacritty display offset.
+        let hitbox = prepaint.hitbox.clone();
+        let term = self.term.clone();
+        let cell_height = prepaint.cell_height;
+        window.on_mouse_event::<ScrollWheelEvent>(move |event, phase, window, _cx| {
+            if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+                let pixel_delta = event.delta.pixel_delta(cell_height);
+                // GPUI: negative y = scroll up. Alacritty: positive Delta = scroll up.
+                let lines = -(pixel_delta.y / cell_height).round() as i32;
+                if lines != 0 {
+                    term.lock().scroll_display(Scroll::Delta(lines));
+                }
+            }
+        });
     }
 }
