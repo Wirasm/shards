@@ -108,6 +108,7 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let term = self.terminal.term().clone();
         let has_focus = self.focus_handle.is_focused(window);
+        let resize_handle = self.terminal.resize_handle();
         let error = self.terminal.error_message();
 
         let mut container = div()
@@ -129,6 +130,6 @@ impl Render for TerminalView {
             );
         }
 
-        container.child(TerminalElement::new(term, has_focus))
+        container.child(TerminalElement::new(term, has_focus, resize_handle))
     }
 }

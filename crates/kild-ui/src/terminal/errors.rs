@@ -26,6 +26,9 @@ pub enum TerminalError {
 
     #[error("Channels already taken (take_channels called more than once)")]
     ChannelsAlreadyTaken,
+
+    #[error("PTY resize failed: {message}")]
+    PtyResize { message: String },
 }
 
 #[allow(dead_code)]
@@ -40,6 +43,7 @@ impl TerminalError {
             TerminalError::WriterLockPoisoned => "terminal.writer_lock_poisoned",
             TerminalError::ChannelSend(_) => "terminal.channel_send_failed",
             TerminalError::ChannelsAlreadyTaken => "terminal.channels_already_taken",
+            TerminalError::PtyResize { .. } => "terminal.pty_resize_failed",
         }
     }
 

@@ -10,7 +10,7 @@ use alacritty_terminal::term::Term;
 use alacritty_terminal::vte::ansi::Processor;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::Task;
-use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use super::errors::TerminalError;
 
@@ -71,6 +71,11 @@ pub struct Terminal {
     error_state: Arc<Mutex<Option<String>>>,
     /// Set to true when the batch loop exits (shell exited or PTY closed).
     exited: Arc<AtomicBool>,
+    /// PTY master handle, stored for resize operations (SIGWINCH).
+    /// Arc<Mutex<>> because MasterPty is Send but not Sync.
+    pty_master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    /// Current PTY dimensions (rows, cols). Compared in prepaint to detect changes.
+    current_size: Arc<Mutex<(u16, u16)>>,
 }
 
 impl Terminal {
@@ -151,8 +156,11 @@ impl Terminal {
                 message: format!("clone_reader: {}", e),
             })?;
 
-        // Keep master alive — dropping it would close the PTY
-        let _pty_master = pair.master;
+        // Store master for resize operations. The reader thread gets a clone
+        // of the Arc to keep the PTY alive (dropping master would close it).
+        let pty_master = Arc::new(Mutex::new(pair.master));
+        let master_keepalive = pty_master.clone();
+        let current_size = Arc::new(Mutex::new((rows, cols)));
 
         // Spawn blocking PTY reader on a dedicated thread via std::thread.
         // GPUI's BackgroundExecutor is async/cooperative — blocking reads would
@@ -162,8 +170,8 @@ impl Terminal {
             // Move the blocking read loop to a dedicated OS thread
             let (done_tx, done_rx) = futures::channel::oneshot::channel::<()>();
             std::thread::spawn(move || {
-                // Hold _pty_master in reader thread to keep PTY alive
-                let _master = _pty_master;
+                // Hold master Arc in reader thread to keep PTY alive
+                let _master = master_keepalive;
                 let mut reader = reader;
                 let mut buf = [0u8; 8192];
                 loop {
@@ -207,6 +215,8 @@ impl Terminal {
             pending_event_rx: Some(event_rx),
             error_state: Arc::new(Mutex::new(None)),
             exited: Arc::new(AtomicBool::new(false)),
+            pty_master,
+            current_size,
         })
     }
 
@@ -366,6 +376,78 @@ impl Terminal {
     /// Get the shared exited flag for use in the batch loop.
     pub(super) fn exited_flag(&self) -> &Arc<AtomicBool> {
         &self.exited
+    }
+
+    /// Get a resize handle for use by TerminalElement.
+    pub(crate) fn resize_handle(&self) -> ResizeHandle {
+        ResizeHandle {
+            terminal_term: self.term.clone(),
+            pty_master: self.pty_master.clone(),
+            current_size: self.current_size.clone(),
+        }
+    }
+}
+
+/// Shared references for resize operations, passed to TerminalElement.
+///
+/// Bundles the Arc refs needed to resize both the PTY (SIGWINCH) and the
+/// terminal grid (reflow). Created via `Terminal::resize_handle()`.
+pub(crate) struct ResizeHandle {
+    terminal_term: Arc<FairMutex<Term<KildListener>>>,
+    pty_master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    current_size: Arc<Mutex<(u16, u16)>>,
+}
+
+impl ResizeHandle {
+    /// Resize PTY and terminal grid if dimensions changed.
+    ///
+    /// Called from TerminalElement::prepaint(). No-op if (rows, cols)
+    /// match the stored size. Lock ordering: current_size → pty_master → term.
+    pub fn resize_if_changed(&self, rows: u16, cols: u16) {
+        // Check + update stored size
+        {
+            let mut size = self
+                .current_size
+                .lock()
+                .expect("current_size lock poisoned");
+            if size.0 == rows && size.1 == cols {
+                return;
+            }
+            *size = (rows, cols);
+        }
+
+        // Resize PTY (sends SIGWINCH to child process)
+        if let Ok(master) = self.pty_master.lock() {
+            let new_size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            if let Err(e) = master.resize(new_size) {
+                tracing::warn!(
+                    event = "ui.terminal.pty_resize_failed",
+                    rows = rows,
+                    cols = cols,
+                    error = %e,
+                );
+            }
+        }
+
+        // Resize terminal grid (reflows content)
+        {
+            let mut term = self.terminal_term.lock();
+            term.resize(TermDimensions {
+                cols: cols as usize,
+                screen_lines: rows as usize,
+            });
+        }
+
+        tracing::debug!(
+            event = "ui.terminal.resize_completed",
+            rows = rows,
+            cols = cols,
+        );
     }
 }
 
