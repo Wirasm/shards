@@ -60,50 +60,57 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
         });
     }
 
-    let forge_backend = crate::forge::get_forge_backend(&session.worktree_path, forge_override);
-
-    // Check PR existence first (uses check_pr_exists for explicit NotFound detection)
-    if let Some(backend) = &forge_backend {
-        match backend.check_pr_exists(&session.worktree_path, &kild_branch) {
-            crate::forge::types::PrCheckResult::Exists => {
-                debug!(event = "core.session.complete_pr_exists", branch = name);
-            }
-            crate::forge::types::PrCheckResult::NotFound => {
+    let forge_backend =
+        match crate::forge::get_forge_backend(&session.worktree_path, forge_override) {
+            Some(backend) => backend,
+            None => {
+                // Remote exists but no forge detected — can't verify PR
                 error!(
                     event = "core.session.complete_no_pr",
                     name = name,
-                    reason = "not_found"
+                    reason = "no_forge_backend"
                 );
                 return Err(SessionError::NoPrFound {
                     name: name.to_string(),
                 });
             }
-            crate::forge::types::PrCheckResult::Unavailable => {
-                // Forge CLI issue — can't confirm PR exists, proceed with warning
-                warn!(
-                    event = "core.session.complete_pr_check_unavailable",
-                    branch = name,
-                    "Cannot verify PR status — proceeding anyway"
-                );
-            }
+        };
+
+    // Check PR existence first (uses check_pr_exists for explicit NotFound detection)
+    match forge_backend.check_pr_exists(&session.worktree_path, &kild_branch) {
+        crate::forge::types::PrCheckResult::Exists => {
+            debug!(event = "core.session.complete_pr_exists", branch = name);
+        }
+        crate::forge::types::PrCheckResult::NotFound => {
+            error!(
+                event = "core.session.complete_no_pr",
+                name = name,
+                reason = "not_found"
+            );
+            return Err(SessionError::NoPrFound {
+                name: name.to_string(),
+            });
+        }
+        crate::forge::types::PrCheckResult::Unavailable => {
+            // Forge CLI issue (e.g., network error) — can't confirm PR exists, proceed with warning.
+            // This is a transient issue, not a missing tool. User sees PrCheckUnavailable result.
+            warn!(
+                event = "core.session.complete_pr_check_unavailable",
+                branch = name,
+                "Cannot verify PR status — proceeding anyway"
+            );
         }
     }
 
     // 3. Check if PR was merged (determines if we need to delete remote)
-    let pr_merged = match forge_backend {
-        Some(backend) => match backend.is_pr_merged(&session.worktree_path, &kild_branch) {
-            Ok(merged) => Some(merged),
-            Err(e) => {
-                warn!(
-                    event = "core.session.complete_pr_check_failed",
-                    branch = name,
-                    error = %e,
-                );
-                None
-            }
-        },
-        None => {
-            debug!(event = "core.session.complete_no_forge", branch = name);
+    let pr_merged = match forge_backend.is_pr_merged(&session.worktree_path, &kild_branch) {
+        Ok(merged) => Some(merged),
+        Err(e) => {
+            warn!(
+                event = "core.session.complete_pr_check_failed",
+                branch = name,
+                error = %e,
+            );
             None
         }
     };
