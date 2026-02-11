@@ -156,6 +156,89 @@ fn test_error_output_is_clean_in_default_mode() {
     );
 }
 
+// =============================================================================
+// Assert Failure Output Tests
+// =============================================================================
+
+/// Verify that assert --exists prints failure message when app doesn't exist
+#[test]
+fn test_assert_exists_failure_prints_output() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild-peek"))
+        .args(["assert", "--app", "NonExistentApp99999", "--exists"])
+        .output()
+        .expect("Failed to execute 'kild-peek assert'");
+
+    assert!(!output.status.success(), "Should exit with non-zero code");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("Assertion: FAIL"),
+        "Should print 'Assertion: FAIL', got stdout: {}",
+        stdout
+    );
+
+    // Should contain diagnostic info about what wasn't found
+    assert!(
+        stdout.contains("NonExistentApp99999"),
+        "Should mention the app name in failure output, got stdout: {}",
+        stdout
+    );
+}
+
+/// Verify that assert --exists --json prints JSON on failure
+#[test]
+fn test_assert_exists_failure_json_output() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild-peek"))
+        .args([
+            "assert",
+            "--app",
+            "NonExistentApp99999",
+            "--exists",
+            "--json",
+        ])
+        .output()
+        .expect("Failed to execute 'kild-peek assert --json'");
+
+    assert!(!output.status.success(), "Should exit with non-zero code");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should be valid JSON
+    let result: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("Should output valid JSON, got '{}': {}", stdout, e));
+
+    assert_eq!(result["passed"], false, "Should report passed: false");
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("NonExistentApp99999"),
+        "JSON message should mention app name, got: {}",
+        result["message"]
+    );
+}
+
+/// Verify that assert failure output does not contain JSON log noise
+#[test]
+fn test_assert_failure_output_is_clean() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild-peek"))
+        .args(["assert", "--app", "NonExistentApp99999", "--exists"])
+        .output()
+        .expect("Failed to execute 'kild-peek assert'");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should NOT contain JSON log lines in default (quiet) mode
+    assert!(
+        !stderr.contains(r#""level":"ERROR""#),
+        "Default mode should suppress ERROR JSON logs, got stderr: {}",
+        stderr
+    );
+}
+
 /// Verify that verbose mode shows JSON logs on error
 #[test]
 fn test_error_output_verbose_shows_json() {
