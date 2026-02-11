@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "KILD daemon - PTY ownership, session persistence, IPC server"
 
+[[bin]]
+name = "kild-daemon"
+path = "src/main.rs"
+
 [dependencies]
 kild-core.workspace = true
 

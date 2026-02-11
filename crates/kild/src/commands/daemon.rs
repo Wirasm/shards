@@ -1,6 +1,23 @@
 use clap::ArgMatches;
 use tracing::{error, info, warn};
 
+fn find_daemon_binary() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let our_binary =
+        std::env::current_exe().map_err(|e| format!("could not determine binary path: {}", e))?;
+    let bin_dir = our_binary
+        .parent()
+        .ok_or_else(|| format!("binary has no parent directory: {}", our_binary.display()))?;
+    let daemon_binary = bin_dir.join("kild-daemon");
+    if !daemon_binary.exists() {
+        return Err(format!(
+            "kild-daemon binary not found at {}. Run 'cargo build --all' to build it.",
+            daemon_binary.display()
+        )
+        .into());
+    }
+    Ok(daemon_binary)
+}
+
 pub(crate) fn handle_daemon_command(
     matches: &ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -24,26 +41,25 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         return Ok(());
     }
 
+    let daemon_binary = find_daemon_binary()?;
+
     if foreground {
-        // Run the server inline (blocks until shutdown)
-        println!(
-            "Starting daemon in foreground (PID: {})...",
-            std::process::id()
-        );
-        let config = kild_daemon::load_daemon_config()?;
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            if let Err(e) = kild_daemon::run_server(config).await {
-                error!(event = "cli.daemon.start_failed", error = %e);
-                eprintln!("Daemon error: {}", e);
-            }
-        });
+        // Spawn kild-daemon with inherited stdio (blocks until child exits)
+        let status = std::process::Command::new(&daemon_binary)
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .stdin(std::process::Stdio::inherit())
+            .status()
+            .map_err(|e| format!("Failed to start daemon: {}", e))?;
+
+        if !status.success() {
+            error!(event = "cli.daemon.start_failed", exit_code = ?status.code());
+            return Err(format!("Daemon exited with {}", status).into());
+        }
         info!(event = "cli.daemon.start_completed");
     } else {
         // Spawn daemon as a detached background process
-        let daemon_binary = std::env::current_exe()?;
         std::process::Command::new(&daemon_binary)
-            .args(["daemon", "start", "--foreground"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .stdin(std::process::Stdio::null())
@@ -62,7 +78,7 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
             if start.elapsed() > timeout {
                 eprintln!("Daemon started but socket not available after 5s.");
                 eprintln!("Try: kild daemon start --foreground  (to see startup errors)");
-                eprintln!("Try: ps aux | grep 'kild daemon'     (to check process status)");
+                eprintln!("Try: ps aux | grep 'kild-daemon'     (to check process status)");
                 return Err("Daemon socket not available after 5s".into());
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
