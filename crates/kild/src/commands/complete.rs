@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use kild_core::events;
 use kild_core::session_ops;
@@ -21,53 +21,11 @@ pub(crate) fn handle_complete_command(
 
     info!(event = "cli.complete_started", branch = branch);
 
-    // Pre-complete safety check (always — complete never bypasses uncommitted check)
-    let safety_info = match session_ops::get_destroy_safety_info(branch) {
-        Ok(info) => Some(info),
-        Err(e) => {
-            warn!(
-                event = "cli.complete_safety_check_failed",
-                branch = branch,
-                error = %e
-            );
-            None
-        }
-    };
-
-    if let Some(safety_info) = &safety_info {
-        if safety_info.has_warnings() {
-            let warnings = safety_info.warning_messages();
-            for warning in &warnings {
-                if safety_info.should_block() {
-                    eprintln!("⚠️  {}", warning);
-                } else {
-                    println!("⚠️  {}", warning);
-                }
-            }
-        }
-
-        if safety_info.should_block() {
-            eprintln!();
-            eprintln!("❌ Cannot complete '{}' with uncommitted changes.", branch);
-            eprintln!("   Use 'kild destroy --force {}' to remove anyway.", branch);
-
-            error!(
-                event = "cli.complete_blocked",
-                branch = branch,
-                reason = "uncommitted_changes"
-            );
-
-            return Err(
-                "Uncommitted changes detected. Use 'kild destroy --force' to override.".into(),
-            );
-        }
-    }
-
     match session_ops::complete_session(branch) {
         Ok(result) => {
             use kild_core::CompleteResult;
 
-            println!("✅ KILD '{}' completed!", branch);
+            println!("\u{2705} KILD '{}' completed!", branch);
             match result {
                 CompleteResult::RemoteDeleted => {
                     println!("   Remote branch deleted (PR was merged)");
@@ -79,7 +37,9 @@ pub(crate) fn handle_complete_command(
                     println!("   Remote branch preserved (merge will delete it)");
                 }
                 CompleteResult::PrCheckUnavailable => {
-                    println!("   Could not verify PR merge status — remote branch preserved");
+                    println!(
+                        "   Could not verify PR merge status \u{2014} remote branch preserved"
+                    );
                 }
             }
 
@@ -92,7 +52,7 @@ pub(crate) fn handle_complete_command(
             Ok(())
         }
         Err(e) => {
-            eprintln!("❌ Failed to complete kild '{}': {}", branch, e);
+            eprintln!("\u{274c} {}", e);
 
             error!(
                 event = "cli.complete_failed",
