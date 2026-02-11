@@ -4,10 +4,15 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TerminalType {
+    #[serde(rename = "iterm", alias = "ITerm")]
     ITerm,
+    #[serde(rename = "terminal", alias = "TerminalApp")]
     TerminalApp,
+    #[serde(rename = "ghostty", alias = "Ghostty")]
     Ghostty,
+    #[serde(rename = "alacritty", alias = "Alacritty")]
     Alacritty,
+    #[serde(rename = "native", alias = "Native")]
     Native, // System default
 }
 
@@ -291,5 +296,68 @@ mod tests {
             "echo hello".to_string(),
         );
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_terminal_type_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&TerminalType::ITerm).unwrap(),
+            r#""iterm""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalType::TerminalApp).unwrap(),
+            r#""terminal""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalType::Ghostty).unwrap(),
+            r#""ghostty""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalType::Alacritty).unwrap(),
+            r#""alacritty""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalType::Native).unwrap(),
+            r#""native""#
+        );
+    }
+
+    #[test]
+    fn test_terminal_type_deserializes_old_pascal_case() {
+        assert_eq!(
+            serde_json::from_str::<TerminalType>(r#""ITerm""#).unwrap(),
+            TerminalType::ITerm
+        );
+        assert_eq!(
+            serde_json::from_str::<TerminalType>(r#""TerminalApp""#).unwrap(),
+            TerminalType::TerminalApp
+        );
+        assert_eq!(
+            serde_json::from_str::<TerminalType>(r#""Ghostty""#).unwrap(),
+            TerminalType::Ghostty
+        );
+        assert_eq!(
+            serde_json::from_str::<TerminalType>(r#""Alacritty""#).unwrap(),
+            TerminalType::Alacritty
+        );
+        assert_eq!(
+            serde_json::from_str::<TerminalType>(r#""Native""#).unwrap(),
+            TerminalType::Native
+        );
+    }
+
+    #[test]
+    fn test_terminal_type_roundtrip_new_format() {
+        for tt in [
+            TerminalType::ITerm,
+            TerminalType::TerminalApp,
+            TerminalType::Ghostty,
+            TerminalType::Alacritty,
+            TerminalType::Native,
+        ] {
+            let json = serde_json::to_string(&tt).unwrap();
+            let parsed: TerminalType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, tt);
+        }
     }
 }
