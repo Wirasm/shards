@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
 use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use gpui::{
     App, Bounds, DispatchPhase, Element, ElementId, Font, FontWeight, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, ScrollWheelEvent,
-    SharedString, Size, Style, TextRun, Window, fill, font, point, px, size,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, Pixels, ScrollWheelEvent, SharedString, Size, Style, TextRun, Window, fill,
+    font, point, px, size,
 };
 
 use super::colors;
@@ -19,9 +22,11 @@ use crate::theme;
 pub struct PrepaintState {
     text_runs: Vec<PreparedLine>,
     bg_regions: Vec<PreparedBgRegion>,
+    selection_rects: Vec<PreparedBgRegion>,
     cursor: Option<PreparedCursor>,
     cell_width: Pixels,
     cell_height: Pixels,
+    bounds: Bounds<Pixels>,
     hitbox: Hitbox,
     scrolled_up: bool,
 }
@@ -85,6 +90,26 @@ impl TerminalElement {
             style: gpui::FontStyle::Italic,
             ..font(theme::FONT_MONO)
         }
+    }
+
+    /// Convert pixel position to terminal grid Point + Side.
+    fn pixel_to_grid(
+        position: gpui::Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        cell_width: Pixels,
+        cell_height: Pixels,
+    ) -> (AlacPoint, Side) {
+        let col = ((position.x - bounds.origin.x) / cell_width).max(0.0);
+        let line = ((position.y - bounds.origin.y) / cell_height).max(0.0);
+        let side = if col - col.floor() < 0.5 {
+            Side::Left
+        } else {
+            Side::Right
+        };
+        (
+            AlacPoint::new(Line(line.floor() as i32), Column(col.floor() as usize)),
+            side,
+        )
     }
 
     /// Measure cell dimensions using a reference character.
@@ -161,9 +186,11 @@ impl Element for TerminalElement {
             return PrepaintState {
                 text_runs: vec![],
                 bg_regions: vec![],
+                selection_rects: vec![],
                 cursor: None,
                 cell_width,
                 cell_height,
+                bounds,
                 hitbox,
                 scrolled_up: false,
             };
@@ -175,9 +202,11 @@ impl Element for TerminalElement {
             return PrepaintState {
                 text_runs: vec![],
                 bg_regions: vec![],
+                selection_rects: vec![],
                 cursor: None,
                 cell_width,
                 cell_height,
+                bounds,
                 hitbox,
                 scrolled_up: false,
             };
@@ -416,6 +445,35 @@ impl Element for TerminalElement {
             cell_height,
         );
 
+        // Selection highlight rectangles
+        let selection_color = Hsla::from(theme::terminal_selection());
+        let mut selection_rects: Vec<PreparedBgRegion> = Vec::new();
+        if let Some(sel) = &content.selection {
+            let start_line = sel.start.line.0.max(0) as usize;
+            let end_line = sel.end.line.0.max(0) as usize;
+            for line_idx in start_line..=end_line.min(rows.saturating_sub(1)) {
+                let start_col = if line_idx == start_line {
+                    sel.start.column.0
+                } else {
+                    0
+                };
+                let end_col = if line_idx == end_line {
+                    sel.end.column.0 + 1
+                } else {
+                    cols
+                };
+                if end_col > start_col {
+                    let x = bounds.origin.x + start_col as f32 * cell_width;
+                    let y = bounds.origin.y + line_idx as f32 * cell_height;
+                    let w = (end_col - start_col) as f32 * cell_width;
+                    selection_rects.push(PreparedBgRegion {
+                        bounds: Bounds::new(point(x, y), size(w, cell_height)),
+                        color: selection_color,
+                    });
+                }
+            }
+        }
+
         // Cursor
         let cursor_point = content.cursor.point;
         let cursor_line = cursor_point.line.0;
@@ -445,9 +503,11 @@ impl Element for TerminalElement {
         PrepaintState {
             text_runs: text_lines,
             bg_regions,
+            selection_rects,
             cursor,
             cell_width,
             cell_height,
+            bounds,
             hitbox,
             scrolled_up,
         }
@@ -475,6 +535,11 @@ impl Element for TerminalElement {
         // Layer 2: Cell background regions (colored backgrounds on top of base)
         for region in &prepaint.bg_regions {
             window.paint_quad(fill(region.bounds, region.color));
+        }
+
+        // Layer 2.5: Selection highlight (between cell bg and text)
+        for rect in &prepaint.selection_rects {
+            window.paint_quad(fill(rect.bounds, rect.color));
         }
 
         // Layer 3: Text runs (glyphs on top of backgrounds)
@@ -605,6 +670,47 @@ impl Element for TerminalElement {
                 let lines = -(pixel_delta.y / cell_height).round() as i32;
                 if lines != 0 {
                     term.lock().scroll_display(Scroll::Delta(lines));
+                }
+            }
+        });
+
+        // Mouse down handler — starts or clears selection.
+        let hitbox = prepaint.hitbox.clone();
+        let term = self.term.clone();
+        let cell_width = prepaint.cell_width;
+        let cell_height = prepaint.cell_height;
+        let sel_bounds = prepaint.bounds;
+        window.on_mouse_event::<MouseDownEvent>(move |event, phase, window, _cx| {
+            if phase == DispatchPhase::Bubble
+                && event.button == MouseButton::Left
+                && hitbox.is_hovered(window)
+            {
+                let (grid_point, side) =
+                    Self::pixel_to_grid(event.position, sel_bounds, cell_width, cell_height);
+                let ty = match event.click_count {
+                    2 => SelectionType::Semantic,
+                    3 => SelectionType::Lines,
+                    _ => SelectionType::Simple,
+                };
+                term.lock().selection = Some(Selection::new(ty, grid_point, side));
+            }
+        });
+
+        // Mouse move handler — extends selection during drag.
+        let hitbox = prepaint.hitbox.clone();
+        let term = self.term.clone();
+        let cell_width = prepaint.cell_width;
+        let cell_height = prepaint.cell_height;
+        let sel_bounds = prepaint.bounds;
+        window.on_mouse_event::<MouseMoveEvent>(move |event, phase, window, _cx| {
+            if phase == DispatchPhase::Bubble
+                && event.pressed_button == Some(MouseButton::Left)
+                && hitbox.is_hovered(window)
+            {
+                let (grid_point, side) =
+                    Self::pixel_to_grid(event.position, sel_bounds, cell_width, cell_height);
+                if let Some(sel) = &mut term.lock().selection {
+                    sel.update(grid_point, side);
                 }
             }
         });

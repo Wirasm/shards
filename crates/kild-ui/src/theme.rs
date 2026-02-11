@@ -281,3 +281,6 @@ pub fn terminal_background() -> Rgba {
 pub fn terminal_cursor() -> Rgba {
     gpui::rgb(0x38BDF8)
 } // Ice (vivid)
+pub fn terminal_selection() -> Rgba {
+    with_alpha(ice(), 0.30)
+}

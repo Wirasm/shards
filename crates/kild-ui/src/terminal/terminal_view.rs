@@ -1,6 +1,6 @@
 use gpui::{
-    Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render, Task, Window, div,
-    prelude::*, px,
+    ClipboardItem, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render, Task,
+    Window, div, prelude::*, px,
 };
 
 use super::input;
@@ -74,6 +74,33 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        let cmd = event.keystroke.modifiers.platform;
+
+        // Cmd+C: copy selection to clipboard, or send Ctrl+C (SIGINT) if no selection
+        if cmd && key == "c" {
+            let text = self.terminal.term().lock().selection_to_string();
+            if let Some(text) = text {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.terminal.term().lock().selection = None;
+                cx.notify();
+            } else if let Err(e) = self.terminal.write_to_pty(&[0x03]) {
+                tracing::error!(event = "ui.terminal.key_write_failed", error = %e);
+            }
+            return;
+        }
+
+        // Cmd+V: paste clipboard to PTY stdin
+        if cmd && key == "v" {
+            if let Some(clipboard) = cx.read_from_clipboard()
+                && let Some(text) = clipboard.text()
+                && let Err(e) = self.terminal.write_to_pty(text.as_bytes())
+            {
+                tracing::error!(event = "ui.terminal.paste_failed", error = %e);
+            }
+            return;
+        }
+
         // Check app cursor mode from terminal state.
         // Must query on every keystroke since apps can change mode anytime.
         let app_cursor = {
