@@ -533,6 +533,8 @@ Runtime mode resolution for `kild open`:
 4. Config `daemon.enabled = true` → Daemon mode
 5. Default → Terminal mode
 
+When using `open --all`, each kild respects its own stored runtime mode unless overridden by explicit flags (`--daemon` or `--no-daemon`). The CLI output shows `[daemon]` or `[terminal]` labels to indicate which mode each kild reopened in
+
 **Daemon status:** The daemon runtime supports both foreground (`--foreground`) and background modes, auto-start via config, scrollback replay on attach, PTY exit notification with session state transitions, lazy status sync on `kild list`/`kild status` (daemon-managed sessions auto-update to Stopped when daemon reports exit), and `kild open` with daemon runtime mode.
 
 **Agent teams:** Daemon sessions automatically inject `$TMUX` environment variable and configure the tmux shim (see "tmux Shim for Agent Teams" section) to enable Claude Code agent teams without external tmux installation.
