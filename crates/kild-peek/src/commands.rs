@@ -4,7 +4,7 @@ use clap::ArgMatches;
 use kild_peek_core::errors::PeekError;
 use tracing::{error, info, warn};
 
-use kild_peek_core::assert::{Assertion, run_assertion};
+use kild_peek_core::assert::{Assertion, AssertionResult, run_assertion};
 use kild_peek_core::diff::{DiffRequest, compare_images};
 use kild_peek_core::element::{ElementsRequest, FindRequest, find_element, list_elements};
 use kild_peek_core::events;
@@ -1060,10 +1060,30 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
     let threshold = (threshold_percent as f64) / 100.0;
 
     // Resolve the window using app and/or title, with optional wait
-    let resolved_title = if wait_flag {
-        resolve_window_title_with_wait(app_name, window_title, timeout_ms)?
+    let resolved_title = match if wait_flag {
+        resolve_window_title_with_wait(app_name, window_title, timeout_ms)
     } else {
-        resolve_window_title(app_name, window_title)?
+        resolve_window_title(app_name, window_title)
+    } {
+        Ok(title) => title,
+        Err(e) => {
+            // For --exists/--visible, window-not-found is an assertion failure, not an error.
+            // Print the failure output so agents and scripts get diagnostic info.
+            if exists_flag || visible_flag {
+                if json_output {
+                    let result = AssertionResult::fail(e.to_string());
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!("Assertion: FAIL");
+                    println!("  {}", e);
+                }
+                info!(event = "peek.cli.assert_completed", passed = false);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                std::process::exit(1);
+            }
+            return Err(e);
+        }
     };
 
     // Validate that window/app is provided when needed
@@ -1108,6 +1128,8 @@ fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error:
 
             // Exit with code 1 if assertion failed
             if !result.passed {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
                 std::process::exit(1);
             }
 
