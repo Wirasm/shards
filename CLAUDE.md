@@ -126,6 +126,11 @@ cargo run -p kild -- destroy my-branch --force   # Force destroy (bypass git che
 cargo run -p kild -- destroy --all               # Destroy all kilds (with confirmation)
 cargo run -p kild -- destroy --all --force       # Force destroy all (skip confirmation)
 cargo run -p kild -- complete my-branch          # Complete kild (check PR, cleanup)
+cargo run -p kild -- completions bash            # Generate bash completions
+cargo run -p kild -- completions zsh             # Generate zsh completions
+cargo run -p kild -- completions fish            # Generate fish completions
+cargo run -p kild -- completions powershell      # Generate powershell completions
+cargo run -p kild -- completions elvish          # Generate elvish completions
 
 # kild-peek - Native app inspection and interaction
 cargo run -p kild-peek -- list windows           # List all visible windows
