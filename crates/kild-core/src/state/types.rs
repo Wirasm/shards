@@ -67,8 +67,9 @@ pub enum Command {
         branch: String,
         /// What to launch: default agent, specific agent, or bare shell.
         mode: OpenMode,
-        /// How the agent process should be hosted (terminal window or daemon PTY).
-        runtime_mode: RuntimeMode,
+        /// Runtime mode explicitly requested via CLI flags.
+        /// `None` = no flag passed; auto-detect from session's stored mode, then config.
+        runtime_mode: Option<RuntimeMode>,
         /// Resume the previous agent conversation instead of starting fresh.
         #[serde(default)]
         resume: bool,
@@ -152,7 +153,13 @@ mod tests {
             Command::OpenKild {
                 branch: "feature".to_string(),
                 mode: OpenMode::DefaultAgent,
-                runtime_mode: RuntimeMode::Terminal,
+                runtime_mode: Some(RuntimeMode::Terminal),
+                resume: false,
+            },
+            Command::OpenKild {
+                branch: "feature".to_string(),
+                mode: OpenMode::DefaultAgent,
+                runtime_mode: None,
                 resume: false,
             },
             Command::StopKild {
@@ -206,7 +213,13 @@ mod tests {
             Command::OpenKild {
                 branch: "test".to_string(),
                 mode: OpenMode::Agent("gemini".to_string()),
-                runtime_mode: RuntimeMode::Terminal,
+                runtime_mode: Some(RuntimeMode::Terminal),
+                resume: false,
+            },
+            Command::OpenKild {
+                branch: "test".to_string(),
+                mode: OpenMode::DefaultAgent,
+                runtime_mode: None,
                 resume: false,
             },
             Command::StopKild {
@@ -245,7 +258,7 @@ mod tests {
         let cmd = Command::OpenKild {
             branch: "feature-auth".to_string(),
             mode: OpenMode::DefaultAgent,
-            runtime_mode: RuntimeMode::Daemon,
+            runtime_mode: Some(RuntimeMode::Daemon),
             resume: true,
         };
         let json = serde_json::to_string(&cmd).unwrap();

@@ -196,6 +196,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         let display = SessionInfo::from_session(session);
@@ -237,6 +238,7 @@ mod tests {
             None,
             None,
             vec![agent],
+            None,
             None,
             None,
         );
@@ -304,6 +306,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -377,6 +380,7 @@ mod tests {
             make_agent_with_pid(Some(999999)), // Non-existent PID
             None,
             None,
+            None,
         );
 
         // Create a session with our own PID (should be Running)
@@ -396,6 +400,7 @@ mod tests {
             make_agent_with_pid(Some(std::process::id())), // Current process PID
             None,
             None,
+            None,
         );
 
         // Create a session with no PID (should remain Stopped)
@@ -413,6 +418,7 @@ mod tests {
             None,
             None,
             make_agent_with_pid(None),
+            None,
             None,
             None,
         );
@@ -501,6 +507,7 @@ mod tests {
                 None,
                 None,
                 vec![],
+                None,
                 None,
                 None,
             )

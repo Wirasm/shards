@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use kild_core::{Command, CoreStore, Event, KildConfig, OpenMode, RuntimeMode, Store, session_ops};
+use kild_core::{Command, CoreStore, Event, KildConfig, OpenMode, Store, session_ops};
 
 use crate::state::OperationError;
 use kild_core::{ProcessStatus, SessionInfo};
@@ -139,7 +139,7 @@ pub fn open_kild(branch: String, agent: Option<String>) -> Result<Vec<Event>, St
         Command::OpenKild {
             branch,
             mode,
-            runtime_mode: RuntimeMode::Terminal,
+            runtime_mode: None,
             resume: false,
         },
         "ui.open_kild",
@@ -174,7 +174,7 @@ pub fn open_all_stopped(displays: &[SessionInfo]) -> (usize, Vec<OperationError>
                 Command::OpenKild {
                     branch: branch.to_string(),
                     mode: OpenMode::DefaultAgent,
-                    runtime_mode: RuntimeMode::Terminal,
+                    runtime_mode: None,
                     resume: false,
                 },
                 "ui.open_all_stopped.dispatch",
@@ -348,6 +348,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
             None,
             None,
         )

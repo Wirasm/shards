@@ -103,6 +103,26 @@ pub fn resolve_runtime_mode(
     }
 }
 
+/// Resolve runtime mode from explicit CLI flags only.
+///
+/// Returns `None` when neither `--daemon` nor `--no-daemon` was passed,
+/// signaling that `open_session` should auto-detect from the session's
+/// stored runtime mode.
+///
+/// Priority: --daemon flag > --no-daemon flag > None (auto-detect)
+pub fn resolve_explicit_runtime_mode(
+    daemon_flag: bool,
+    no_daemon_flag: bool,
+) -> Option<kild_core::RuntimeMode> {
+    if daemon_flag {
+        Some(kild_core::RuntimeMode::Daemon)
+    } else if no_daemon_flag {
+        Some(kild_core::RuntimeMode::Terminal)
+    } else {
+        None
+    }
+}
+
 /// Convert CLI args into an OpenMode.
 pub fn resolve_open_mode(matches: &clap::ArgMatches) -> kild_core::OpenMode {
     if matches.get_flag("no-agent") {
@@ -356,5 +376,23 @@ mod tests {
         let config = KildConfig::default();
         let mode = resolve_runtime_mode(true, true, &config);
         assert!(matches!(mode, kild_core::RuntimeMode::Daemon));
+    }
+
+    #[test]
+    fn test_resolve_explicit_runtime_mode_daemon_flag() {
+        let mode = resolve_explicit_runtime_mode(true, false);
+        assert_eq!(mode, Some(kild_core::RuntimeMode::Daemon));
+    }
+
+    #[test]
+    fn test_resolve_explicit_runtime_mode_no_daemon_flag() {
+        let mode = resolve_explicit_runtime_mode(false, true);
+        assert_eq!(mode, Some(kild_core::RuntimeMode::Terminal));
+    }
+
+    #[test]
+    fn test_resolve_explicit_runtime_mode_no_flags() {
+        let mode = resolve_explicit_runtime_mode(false, false);
+        assert_eq!(mode, None);
     }
 }

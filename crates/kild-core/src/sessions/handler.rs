@@ -23,6 +23,28 @@ fn compute_spawn_id(session_id: &str, spawn_index: usize) -> String {
     format!("{}_{}", session_id, spawn_index)
 }
 
+/// Resolve the effective runtime mode for `open_session`.
+///
+/// Priority: explicit CLI flag > session's stored mode > config > Terminal default.
+/// Returns the resolved mode and its source label for logging.
+fn resolve_effective_runtime_mode(
+    explicit: Option<crate::state::types::RuntimeMode>,
+    from_session: Option<crate::state::types::RuntimeMode>,
+    config: &crate::config::KildConfig,
+) -> (crate::state::types::RuntimeMode, &'static str) {
+    if let Some(mode) = explicit {
+        return (mode, "explicit");
+    }
+    if let Some(mode) = from_session {
+        return (mode, "session");
+    }
+    if config.is_daemon_enabled() {
+        (crate::state::types::RuntimeMode::Daemon, "config")
+    } else {
+        (crate::state::types::RuntimeMode::Terminal, "default")
+    }
+}
+
 /// Capture process metadata from spawn result for PID reuse protection.
 ///
 /// Attempts to get fresh process info from the OS. Falls back to spawn result metadata
@@ -458,6 +480,7 @@ pub fn create_session(
         vec![initial_agent],
         agent_session_id,
         task_list_id,
+        Some(request.runtime_mode.clone()),
     );
 
     // 7. Save session to file
@@ -689,13 +712,12 @@ pub fn restart_session(
 /// This is the preferred way to add agents to a kild. Unlike restart, this does NOT
 /// close existing terminals - multiple agents can run in the same kild.
 ///
-/// The `runtime_mode` parameter controls whether the agent spawns in an external terminal
-/// or a daemon-owned PTY. The CLI resolves this from `--daemon`/`--no-daemon` flags and
-/// config, similar to `create_session`.
+/// The `runtime_mode` parameter overrides the runtime mode. Pass `None` to auto-detect
+/// from the session's stored mode, then config, then Terminal default.
 pub fn open_session(
     name: &str,
     mode: crate::state::types::OpenMode,
-    runtime_mode: crate::state::types::RuntimeMode,
+    runtime_mode: Option<crate::state::types::RuntimeMode>,
     resume: bool,
 ) -> Result<Session, SessionError> {
     info!(
@@ -860,7 +882,16 @@ pub fn open_session(
         spawn_id = %spawn_id
     );
 
-    let use_daemon = runtime_mode == crate::state::types::RuntimeMode::Daemon;
+    let (effective_runtime_mode, source) =
+        resolve_effective_runtime_mode(runtime_mode, session.runtime_mode.clone(), &kild_config);
+
+    info!(
+        event = "core.session.open_runtime_mode_resolved",
+        mode = ?effective_runtime_mode,
+        source = source
+    );
+
+    let use_daemon = effective_runtime_mode == crate::state::types::RuntimeMode::Daemon;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -1000,6 +1031,9 @@ pub fn open_session(
     if let Some(tlid) = new_task_list_id {
         session.task_list_id = Some(tlid);
     }
+
+    // Update runtime mode so future opens auto-detect correctly
+    session.runtime_mode = Some(effective_runtime_mode);
 
     // 6. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1505,6 +1539,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Create worktree directory so validation passes
@@ -1615,6 +1650,7 @@ mod tests {
                 vec![agent],
                 None,
                 None,
+                None,
             );
 
             persistence::save_session_to_file(&session, &sessions_dir)
@@ -1692,6 +1728,7 @@ mod tests {
             vec![agent],
             None,
             None,
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1756,6 +1793,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![], // No agents (old session)
+            None,
             None,
             None,
         );
@@ -1834,6 +1872,7 @@ mod tests {
             vec![iterm_agent],
             None,
             None,
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1889,7 +1928,7 @@ mod tests {
         let result = open_session(
             "non-existent",
             crate::state::types::OpenMode::DefaultAgent,
-            crate::state::types::RuntimeMode::Terminal,
+            Some(crate::state::types::RuntimeMode::Terminal),
             false,
         );
         assert!(result.is_err());
@@ -1953,6 +1992,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![agent],
+            None,
             None,
             None,
         );
@@ -2114,6 +2154,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -2156,6 +2197,7 @@ mod tests {
             vec![agent],
             None,
             None,
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -2182,6 +2224,7 @@ mod tests {
             None,
             None,
             vec![], // No agents
+            None,
             None,
             None,
         );
@@ -2468,6 +2511,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Save the session
@@ -2728,6 +2772,7 @@ mod tests {
             vec![agent],
             Some(session_id.clone()),
             None,
+            None,
         );
 
         // Save initial session
@@ -2788,5 +2833,111 @@ mod tests {
         // Non-Claude should get nothing
         let args = agents::resume::resume_session_args("kiro", sid);
         assert!(args.is_empty());
+    }
+
+    // --- resolve_effective_runtime_mode tests ---
+
+    #[test]
+    fn test_resolve_runtime_mode_explicit_wins() {
+        use crate::state::types::RuntimeMode;
+
+        let config = crate::config::KildConfig::default();
+        let (mode, source) = resolve_effective_runtime_mode(
+            Some(RuntimeMode::Daemon),
+            Some(RuntimeMode::Terminal),
+            &config,
+        );
+        assert_eq!(mode, RuntimeMode::Daemon);
+        assert_eq!(source, "explicit");
+    }
+
+    #[test]
+    fn test_resolve_runtime_mode_session_when_no_explicit() {
+        use crate::state::types::RuntimeMode;
+
+        let config = crate::config::KildConfig::default();
+        let (mode, source) =
+            resolve_effective_runtime_mode(None, Some(RuntimeMode::Daemon), &config);
+        assert_eq!(mode, RuntimeMode::Daemon);
+        assert_eq!(source, "session");
+    }
+
+    #[test]
+    fn test_resolve_runtime_mode_config_when_daemon_enabled() {
+        use crate::state::types::RuntimeMode;
+
+        let mut config = crate::config::KildConfig::default();
+        config.daemon.enabled = Some(true);
+        let (mode, source) = resolve_effective_runtime_mode(None, None, &config);
+        assert_eq!(mode, RuntimeMode::Daemon);
+        assert_eq!(source, "config");
+    }
+
+    #[test]
+    fn test_resolve_runtime_mode_default_terminal() {
+        use crate::state::types::RuntimeMode;
+
+        let config = crate::config::KildConfig::default();
+        let (mode, source) = resolve_effective_runtime_mode(None, None, &config);
+        assert_eq!(mode, RuntimeMode::Terminal);
+        assert_eq!(source, "default");
+    }
+
+    #[test]
+    fn test_runtime_mode_persists_through_stop_reload_cycle() {
+        use crate::sessions::persistence;
+        use crate::sessions::types::{Session, SessionStatus};
+        use crate::state::types::RuntimeMode;
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "kild_test_runtime_mode_persistence_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let sessions_dir = temp_dir.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("Failed to create sessions dir");
+
+        let worktree_dir = temp_dir.join("worktree");
+        fs::create_dir_all(&worktree_dir).expect("Failed to create worktree dir");
+
+        let mut session = Session::new(
+            "test-project_runtime-persist".to_string(),
+            "test-project".to_string(),
+            "runtime-persist".to_string(),
+            worktree_dir,
+            "claude".to_string(),
+            SessionStatus::Active,
+            chrono::Utc::now().to_rfc3339(),
+            3000,
+            3009,
+            10,
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            Some(RuntimeMode::Daemon),
+        );
+
+        // Simulate stop: clear agents, set stopped
+        session.clear_agents();
+        session.status = SessionStatus::Stopped;
+        persistence::save_session_to_file(&session, &sessions_dir)
+            .expect("Failed to save stopped session");
+
+        // Reload from disk
+        let reloaded = persistence::find_session_by_name(&sessions_dir, "runtime-persist")
+            .expect("Failed to find")
+            .expect("Session should exist");
+
+        assert_eq!(reloaded.status, SessionStatus::Stopped);
+        assert_eq!(
+            reloaded.runtime_mode,
+            Some(RuntimeMode::Daemon),
+            "runtime_mode must survive stop + reload from disk"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
