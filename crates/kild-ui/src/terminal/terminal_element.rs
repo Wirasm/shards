@@ -177,8 +177,17 @@ impl Element for TerminalElement {
 
         // Resize PTY and terminal grid if dimensions changed.
         // Must happen before term.lock() so the snapshot reflects the new size.
-        self.resize_handle
-            .resize_if_changed(rows as u16, cols as u16);
+        if let Err(e) = self
+            .resize_handle
+            .resize_if_changed(rows as u16, cols as u16)
+        {
+            tracing::error!(
+                event = "ui.terminal.resize_failed",
+                rows = rows,
+                cols = cols,
+                error = %e,
+            );
+        }
 
         // FairMutex (alacritty_terminal::sync) does not poison — it's not
         // std::sync::Mutex. lock() will always succeed (may block, never Err).

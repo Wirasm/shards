@@ -402,22 +402,40 @@ impl ResizeHandle {
     /// Resize PTY and terminal grid if dimensions changed.
     ///
     /// Called from TerminalElement::prepaint(). No-op if (rows, cols)
-    /// match the stored size. Lock ordering: current_size → pty_master → term.
-    pub fn resize_if_changed(&self, rows: u16, cols: u16) {
+    /// match the stored size.
+    ///
+    /// Lock ordering: current_size → pty_master → term. Each lock is held
+    /// only for its specific operation and released before acquiring the next,
+    /// minimizing contention with the PTY reader thread and batch loop.
+    pub fn resize_if_changed(&self, rows: u16, cols: u16) -> Result<(), TerminalError> {
         // Check + update stored size
         {
-            let mut size = self
-                .current_size
-                .lock()
-                .expect("current_size lock poisoned");
+            let mut size = self.current_size.lock().map_err(|e| {
+                tracing::error!(
+                    event = "ui.terminal.resize_size_lock_failed",
+                    error = %e,
+                );
+                TerminalError::PtyResize {
+                    message: format!("current_size lock poisoned: {e}"),
+                }
+            })?;
             if size.0 == rows && size.1 == cols {
-                return;
+                return Ok(());
             }
             *size = (rows, cols);
         }
 
-        // Resize PTY (sends SIGWINCH to child process)
-        if let Ok(master) = self.pty_master.lock() {
+        // Resize PTY (updates kernel winsize, triggering SIGWINCH to child process)
+        {
+            let master = self.pty_master.lock().map_err(|e| {
+                tracing::error!(
+                    event = "ui.terminal.resize_master_lock_failed",
+                    error = %e,
+                );
+                TerminalError::PtyResize {
+                    message: format!("pty_master lock poisoned: {e}"),
+                }
+            })?;
             let new_size = PtySize {
                 rows,
                 cols,
@@ -448,6 +466,7 @@ impl ResizeHandle {
             rows = rows,
             cols = cols,
         );
+        Ok(())
     }
 }
 
