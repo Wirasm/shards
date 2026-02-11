@@ -257,11 +257,35 @@ pub fn focus_window(window: &NativeWindowInfo) -> Result<(), TerminalError> {
         event = "core.terminal.native.focus_started",
         window_id = window.id,
         title = %window.title,
-        pid = pid
+        pid = pid,
+        is_minimized = window.is_minimized
     );
 
-    // Try Accessibility API first
-    match ax_raise_window(pid, &window.title) {
+    // Choose AX action based on whether the window is minimized
+    let ax_result = if window.is_minimized {
+        debug!(
+            event = "core.terminal.native.focus_unminimizing",
+            window_id = window.id,
+            pid = pid
+        );
+        match ax_unminimize_and_raise_window(pid, &window.title) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                warn!(
+                    event = "core.terminal.native.focus_unminimize_failed",
+                    window_id = window.id,
+                    pid = pid,
+                    error = %e,
+                    message = "Failed to unminimize window via AX API — window may remain in Dock"
+                );
+                Err(e)
+            }
+        }
+    } else {
+        ax_raise_window(pid, &window.title)
+    };
+
+    match ax_result {
         Ok(()) => {
             debug!(
                 event = "core.terminal.native.focus_ax_succeeded",
@@ -378,8 +402,32 @@ fn ax_minimize_window(pid: i32, title: &str) -> Result<(), String> {
     result
 }
 
+/// Unminimize and raise a window via the Accessibility API by matching its title.
+fn ax_unminimize_and_raise_window(pid: i32, title: &str) -> Result<(), String> {
+    // SAFETY: AXUIElementCreateApplication creates a +1 retained AXUIElementRef.
+    let app_element = unsafe { AXUIElementCreateApplication(pid) };
+    if app_element.is_null() {
+        return Err(format!("Failed to create AX element for PID {}", pid));
+    }
+
+    // SAFETY: app_element is a valid AXUIElementRef we just created.
+    unsafe {
+        AXUIElementSetMessagingTimeout(app_element, AX_MESSAGING_TIMEOUT);
+    }
+
+    let result = ax_find_and_act_on_window(app_element, title, WindowAction::UnminimizeAndRaise);
+
+    // SAFETY: Release the app element (Create Rule — we own it).
+    unsafe {
+        core_foundation::base::CFRelease(app_element as *mut c_void);
+    }
+
+    result
+}
+
 enum WindowAction {
     Raise,
+    UnminimizeAndRaise,
     Minimize,
 }
 
@@ -429,6 +477,10 @@ fn ax_find_and_act_on_window(
         {
             return match action {
                 WindowAction::Raise => ax_perform_raise(window_element),
+                WindowAction::UnminimizeAndRaise => {
+                    ax_set_minimized(window_element, false)?;
+                    ax_perform_raise(window_element)
+                }
                 WindowAction::Minimize => ax_set_minimized(window_element, true),
             };
         }
@@ -638,6 +690,23 @@ mod tests {
         let result = find_window_by_pid("NonExistentApp12345XYZ", 99999);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_window_action_exhaustive_match() {
+        // Exhaustive match ensures compile failure if a variant is added without handling
+        let test_action = |action: WindowAction| match action {
+            WindowAction::Raise => "raise",
+            WindowAction::UnminimizeAndRaise => "unminimize_and_raise",
+            WindowAction::Minimize => "minimize",
+        };
+
+        assert_eq!(test_action(WindowAction::Raise), "raise");
+        assert_eq!(
+            test_action(WindowAction::UnminimizeAndRaise),
+            "unminimize_and_raise"
+        );
+        assert_eq!(test_action(WindowAction::Minimize), "minimize");
     }
 
     #[test]
