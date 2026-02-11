@@ -243,6 +243,8 @@ impl Element for TerminalElement {
         let mut text_lines: Vec<PreparedLine> = Vec::with_capacity(rows);
         let mut bg_regions: Vec<PreparedBgRegion> = Vec::with_capacity(rows * 2);
         let mut cursor: Option<PreparedCursor> = None;
+        let cursor_point = content.cursor.point;
+        let mut cursor_is_wide = false;
 
         // Text run state
         let mut current_line: i32 = -1;
@@ -383,6 +385,44 @@ impl Element for TerminalElement {
                 bg_color = Some(bg);
             }
 
+            // Wide characters get their own text run so each is positioned at
+            // its exact grid column. Batching them with normal chars causes the
+            // text shaper to misplace subsequent glyphs because it doesn't know
+            // about the 2-cell grid width.
+            let is_wide = cell.flags.contains(CellFlags::WIDE_CHAR);
+
+            if is_wide && indexed.point == cursor_point {
+                cursor_is_wide = true;
+            }
+
+            if is_wide {
+                // Flush pending normal-width run
+                if !run_text.is_empty() {
+                    current_runs.push(BatchedTextRun::new(
+                        std::mem::take(&mut run_text),
+                        run_fg,
+                        run_start_col,
+                        run_bold,
+                        run_italic,
+                        run_underline,
+                        run_strikethrough,
+                    ));
+                }
+                // Push wide char as its own run
+                let ch = cell.c;
+                let wch = if ch != ' ' && ch != '\0' { ch } else { ' ' };
+                current_runs.push(BatchedTextRun::new(
+                    String::from(wch),
+                    fg,
+                    col,
+                    bold,
+                    italic,
+                    underline,
+                    strikethrough,
+                ));
+                continue;
+            }
+
             // Text run batching
             let same_style = fg == run_fg
                 && bold == run_bold
@@ -499,7 +539,12 @@ impl Element for TerminalElement {
 
                 cursor = Some(PreparedCursor {
                     bounds: if self.has_focus {
-                        Bounds::new(point(cx_pos, cy_pos), size(cell_width, cell_height))
+                        let cursor_w = if cursor_is_wide {
+                            cell_width + cell_width
+                        } else {
+                            cell_width
+                        };
+                        Bounds::new(point(cx_pos, cy_pos), size(cursor_w, cell_height))
                     } else {
                         Bounds::new(point(cx_pos, cy_pos), size(px(2.0), cell_height))
                     },
