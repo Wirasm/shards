@@ -446,6 +446,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Save session
@@ -490,6 +491,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -538,6 +540,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -589,6 +592,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -647,6 +651,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         let session2 = Session::new(
@@ -663,6 +668,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -725,6 +731,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Save session
@@ -769,6 +776,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -816,6 +824,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -871,6 +880,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -930,6 +940,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Session 2: missing worktree
@@ -947,6 +958,7 @@ mod tests {
             Some("2024-01-01T00:00:00Z".to_string()),
             None,
             vec![],
+            None,
             None,
             None,
         );

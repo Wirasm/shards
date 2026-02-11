@@ -500,6 +500,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         let state = AppState::test_with_displays(vec![SessionInfo {

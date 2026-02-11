@@ -6,16 +6,15 @@ use kild_core::events;
 use kild_core::session_ops;
 
 use super::helpers::{
-    FailedOperation, OpenedKild, format_partial_failure_error, load_config_with_warning,
-    resolve_open_mode, resolve_runtime_mode,
+    FailedOperation, OpenedKild, format_partial_failure_error, resolve_explicit_runtime_mode,
+    resolve_open_mode,
 };
 
 pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let mode = resolve_open_mode(matches);
-    let config = load_config_with_warning();
     let daemon_flag = matches.get_flag("daemon");
     let no_daemon_flag = matches.get_flag("no-daemon");
-    let runtime_mode = resolve_runtime_mode(daemon_flag, no_daemon_flag, &config);
+    let runtime_mode = resolve_explicit_runtime_mode(daemon_flag, no_daemon_flag);
     let resume = matches.get_flag("resume");
 
     // Check for --all flag first
@@ -68,7 +67,7 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
 /// Handle `kild open --all` - open agents in all stopped kilds
 fn handle_open_all(
     mode: kild_core::OpenMode,
-    runtime_mode: kild_core::RuntimeMode,
+    runtime_mode: Option<kild_core::RuntimeMode>,
     resume: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(event = "cli.open_all_started", mode = ?mode);

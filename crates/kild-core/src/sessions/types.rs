@@ -183,6 +183,12 @@ pub struct Session {
     #[serde(default)]
     pub task_list_id: Option<String>,
 
+    /// Runtime mode this session was created with (Terminal or Daemon).
+    /// Used by `kild open` to auto-detect runtime mode when no flags are passed.
+    /// `None` for sessions created before this field was added.
+    #[serde(default)]
+    pub runtime_mode: Option<crate::state::types::RuntimeMode>,
+
     /// All agent processes opened in this kild session.
     ///
     /// Populated by `kild create` (initial agent) and `kild open` (additional agents).
@@ -393,6 +399,7 @@ impl Session {
         agents: Vec<AgentProcess>,
         agent_session_id: Option<String>,
         task_list_id: Option<String>,
+        runtime_mode: Option<crate::state::types::RuntimeMode>,
     ) -> Self {
         Self {
             id,
@@ -410,6 +417,7 @@ impl Session {
             agents,
             agent_session_id,
             task_list_id,
+            runtime_mode,
         }
     }
 
@@ -479,6 +487,7 @@ impl Session {
             agents: vec![],
             agent_session_id: None,
             task_list_id: None,
+            runtime_mode: None,
         }
     }
 }
@@ -670,6 +679,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         assert_eq!(session.branch, "branch");
@@ -837,6 +847,7 @@ mod tests {
             vec![agent],
             None,
             None,
+            None,
         );
 
         // Test serialization round-trip
@@ -939,6 +950,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         assert!(session.is_worktree_valid());
@@ -963,6 +975,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
             None,
             None,
         );
@@ -1351,6 +1364,7 @@ mod tests {
             ],
             None,
             None,
+            None,
         );
         let json = serde_json::to_string_pretty(&session).unwrap();
         let deserialized: Session = serde_json::from_str(&json).unwrap();
@@ -1548,6 +1562,7 @@ mod tests {
             vec![],
             Some("550e8400-e29b-41d4-a716-446655440000".to_string()),
             None,
+            None,
         );
 
         assert_eq!(
@@ -1579,6 +1594,7 @@ mod tests {
             vec![],
             Some("550e8400-e29b-41d4-a716-446655440000".to_string()),
             None,
+            None,
         );
 
         // Simulate stop: clear agents
@@ -1590,6 +1606,91 @@ mod tests {
             session.agent_session_id,
             Some("550e8400-e29b-41d4-a716-446655440000".to_string())
         );
+        assert!(!session.has_agents());
+    }
+
+    // --- runtime_mode tests ---
+
+    #[test]
+    fn test_session_backward_compatibility_runtime_mode() {
+        // Old session JSON without runtime_mode should deserialize with None
+        let json = r#"{
+            "id": "test/branch",
+            "project_id": "test",
+            "branch": "branch",
+            "worktree_path": "/tmp/test",
+            "agent": "claude",
+            "status": "Active",
+            "created_at": "2024-01-01T00:00:00Z",
+            "port_range_start": 3000,
+            "port_range_end": 3009,
+            "port_count": 10
+        }"#;
+
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.runtime_mode, None);
+    }
+
+    #[test]
+    fn test_session_with_runtime_mode_roundtrip() {
+        use crate::state::types::RuntimeMode;
+
+        let session = Session::new(
+            "test/branch".to_string(),
+            "test".to_string(),
+            "branch".to_string(),
+            PathBuf::from("/tmp/test"),
+            "claude".to_string(),
+            SessionStatus::Active,
+            "2024-01-01T00:00:00Z".to_string(),
+            3000,
+            3009,
+            10,
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            Some(RuntimeMode::Daemon),
+        );
+
+        assert_eq!(session.runtime_mode, Some(RuntimeMode::Daemon));
+
+        // Verify round-trip preserves runtime_mode
+        let serialized = serde_json::to_string(&session).unwrap();
+        let deserialized: Session = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.runtime_mode, Some(RuntimeMode::Daemon));
+    }
+
+    #[test]
+    fn test_session_runtime_mode_survives_clear_agents() {
+        use crate::state::types::RuntimeMode;
+
+        let mut session = Session::new(
+            "test/branch".to_string(),
+            "test".to_string(),
+            "branch".to_string(),
+            PathBuf::from("/tmp/test"),
+            "claude".to_string(),
+            SessionStatus::Active,
+            "2024-01-01T00:00:00Z".to_string(),
+            3000,
+            3009,
+            10,
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            Some(RuntimeMode::Daemon),
+        );
+
+        // Simulate stop: clear agents
+        session.clear_agents();
+        session.status = SessionStatus::Stopped;
+
+        // runtime_mode should survive clear_agents()
+        assert_eq!(session.runtime_mode, Some(RuntimeMode::Daemon));
         assert!(!session.has_agents());
     }
 }

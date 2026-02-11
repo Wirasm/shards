@@ -130,7 +130,7 @@ mod tests {
             .dispatch(Command::OpenKild {
                 branch: "feat".to_string(),
                 mode: crate::state::types::OpenMode::DefaultAgent,
-                runtime_mode: crate::state::types::RuntimeMode::Terminal,
+                runtime_mode: Some(crate::state::types::RuntimeMode::Terminal),
                 resume: false,
             })
             .unwrap();
@@ -234,7 +234,7 @@ mod tests {
             Command::OpenKild {
                 branch: "b".to_string(),
                 mode: crate::state::types::OpenMode::DefaultAgent,
-                runtime_mode: crate::state::types::RuntimeMode::Terminal,
+                runtime_mode: Some(crate::state::types::RuntimeMode::Terminal),
                 resume: false,
             },
             Command::StopKild {

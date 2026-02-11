@@ -458,6 +458,7 @@ pub fn create_session(
         vec![initial_agent],
         agent_session_id,
         task_list_id,
+        Some(request.runtime_mode.clone()),
     );
 
     // 7. Save session to file
@@ -695,7 +696,7 @@ pub fn restart_session(
 pub fn open_session(
     name: &str,
     mode: crate::state::types::OpenMode,
-    runtime_mode: crate::state::types::RuntimeMode,
+    runtime_mode: Option<crate::state::types::RuntimeMode>,
     resume: bool,
 ) -> Result<Session, SessionError> {
     info!(
@@ -860,7 +861,26 @@ pub fn open_session(
         spawn_id = %spawn_id
     );
 
-    let use_daemon = runtime_mode == crate::state::types::RuntimeMode::Daemon;
+    // Resolve runtime mode: explicit flag > session's stored mode > config > Terminal default
+    let runtime_mode_explicit = runtime_mode.is_some();
+    let runtime_mode_from_session = !runtime_mode_explicit && session.runtime_mode.is_some();
+    let effective_runtime_mode = runtime_mode.unwrap_or_else(|| {
+        session.runtime_mode.clone().unwrap_or_else(|| {
+            if kild_config.is_daemon_enabled() {
+                crate::state::types::RuntimeMode::Daemon
+            } else {
+                crate::state::types::RuntimeMode::Terminal
+            }
+        })
+    });
+
+    info!(
+        event = "core.session.open_runtime_mode_resolved",
+        mode = ?effective_runtime_mode,
+        source = if runtime_mode_explicit { "explicit" } else if runtime_mode_from_session { "session" } else { "default" }
+    );
+
+    let use_daemon = effective_runtime_mode == crate::state::types::RuntimeMode::Daemon;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -1000,6 +1020,9 @@ pub fn open_session(
     if let Some(tlid) = new_task_list_id {
         session.task_list_id = Some(tlid);
     }
+
+    // Update runtime mode so future opens auto-detect correctly
+    session.runtime_mode = Some(effective_runtime_mode);
 
     // 6. Save updated session
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
@@ -1505,6 +1528,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Create worktree directory so validation passes
@@ -1615,6 +1639,7 @@ mod tests {
                 vec![agent],
                 None,
                 None,
+                None,
             );
 
             persistence::save_session_to_file(&session, &sessions_dir)
@@ -1692,6 +1717,7 @@ mod tests {
             vec![agent],
             None,
             None,
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1756,6 +1782,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![], // No agents (old session)
+            None,
             None,
             None,
         );
@@ -1834,6 +1861,7 @@ mod tests {
             vec![iterm_agent],
             None,
             None,
+            None,
         );
 
         persistence::save_session_to_file(&session, &sessions_dir).expect("Failed to save session");
@@ -1889,7 +1917,7 @@ mod tests {
         let result = open_session(
             "non-existent",
             crate::state::types::OpenMode::DefaultAgent,
-            crate::state::types::RuntimeMode::Terminal,
+            Some(crate::state::types::RuntimeMode::Terminal),
             false,
         );
         assert!(result.is_err());
@@ -1953,6 +1981,7 @@ mod tests {
             Some(chrono::Utc::now().to_rfc3339()),
             None,
             vec![agent],
+            None,
             None,
             None,
         );
@@ -2114,6 +2143,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -2156,6 +2186,7 @@ mod tests {
             vec![agent],
             None,
             None,
+            None,
         );
 
         let changed = sync_daemon_session_status(&mut session);
@@ -2182,6 +2213,7 @@ mod tests {
             None,
             None,
             vec![], // No agents
+            None,
             None,
             None,
         );
@@ -2468,6 +2500,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
         );
 
         // Save the session
@@ -2727,6 +2760,7 @@ mod tests {
             None,
             vec![agent],
             Some(session_id.clone()),
+            None,
             None,
         );
 
