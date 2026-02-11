@@ -290,21 +290,43 @@ pub fn open_session(
             && status == kild_protocol::SessionStatus::Stopped
         {
             let scrollback_tail =
-                crate::daemon::client::read_scrollback(&daemon_result.daemon_session_id)
-                    .ok()
-                    .flatten()
-                    .map(|bytes| {
+                match crate::daemon::client::read_scrollback(&daemon_result.daemon_session_id) {
+                    Ok(Some(bytes)) => {
                         let text = String::from_utf8_lossy(&bytes);
                         let lines: Vec<&str> = text.lines().collect();
                         let start = lines.len().saturating_sub(20);
                         lines[start..].join("\n")
-                    })
-                    .unwrap_or_default();
+                    }
+                    Ok(None) => {
+                        warn!(
+                            event = "core.session.open_scrollback_empty",
+                            daemon_session_id = %daemon_result.daemon_session_id,
+                            "Daemon session exited early with empty scrollback"
+                        );
+                        String::new()
+                    }
+                    Err(e) => {
+                        warn!(
+                            event = "core.session.open_scrollback_read_failed",
+                            daemon_session_id = %daemon_result.daemon_session_id,
+                            error = %e,
+                            "Failed to read scrollback after early PTY exit"
+                        );
+                        String::new()
+                    }
+                };
 
-            let _ = crate::daemon::client::destroy_daemon_session(
+            if let Err(e) = crate::daemon::client::destroy_daemon_session(
                 &daemon_result.daemon_session_id,
                 true,
-            );
+            ) {
+                warn!(
+                    event = "core.session.open_daemon_cleanup_failed",
+                    daemon_session_id = %daemon_result.daemon_session_id,
+                    error = %e,
+                    "Failed to clean up daemon session after early exit"
+                );
+            }
 
             return Err(SessionError::DaemonPtyExitedEarly {
                 exit_code,
@@ -714,6 +736,51 @@ mod tests {
         let (mode, source) = resolve_effective_runtime_mode(None, None, &config);
         assert_eq!(mode, RuntimeMode::Terminal);
         assert_eq!(source, "default");
+    }
+
+    /// Validates the core of `open --all` behavior: when no explicit flag is passed,
+    /// each session's stored runtime_mode is respected.
+    #[test]
+    fn test_resolve_runtime_mode_none_explicit_with_daemon_session() {
+        use crate::state::types::RuntimeMode;
+
+        let config = crate::config::KildConfig::default();
+        // Simulates open --all (no flags): explicit=None, session has Daemon
+        let (mode, source) =
+            resolve_effective_runtime_mode(None, Some(RuntimeMode::Daemon), &config);
+        assert_eq!(mode, RuntimeMode::Daemon);
+        assert_eq!(source, "session");
+
+        // Same with Terminal session
+        let (mode, source) =
+            resolve_effective_runtime_mode(None, Some(RuntimeMode::Terminal), &config);
+        assert_eq!(mode, RuntimeMode::Terminal);
+        assert_eq!(source, "session");
+    }
+
+    /// Regression test: explicit flags should override all sessions (open --all --daemon)
+    #[test]
+    fn test_resolve_runtime_mode_explicit_overrides_session_in_open_all() {
+        use crate::state::types::RuntimeMode;
+
+        let config = crate::config::KildConfig::default();
+        // open --all --daemon: explicit=Daemon should override session=Terminal
+        let (mode, source) = resolve_effective_runtime_mode(
+            Some(RuntimeMode::Daemon),
+            Some(RuntimeMode::Terminal),
+            &config,
+        );
+        assert_eq!(mode, RuntimeMode::Daemon);
+        assert_eq!(source, "explicit");
+
+        // open --all --no-daemon: explicit=Terminal should override session=Daemon
+        let (mode, source) = resolve_effective_runtime_mode(
+            Some(RuntimeMode::Terminal),
+            Some(RuntimeMode::Daemon),
+            &config,
+        );
+        assert_eq!(mode, RuntimeMode::Terminal);
+        assert_eq!(source, "explicit");
     }
 
     #[test]
