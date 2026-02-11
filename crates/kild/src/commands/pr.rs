@@ -39,7 +39,18 @@ pub(crate) fn handle_pr_command(matches: &ArgMatches) -> Result<(), Box<dyn std:
 
     // 2. Check for remote
     if !session_ops::has_remote_configured(&session.worktree_path) {
-        println!("No remote configured — PR tracking unavailable.");
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "pr": null,
+                    "branch": format!("kild/{}", branch),
+                    "reason": "no_remote_configured"
+                }))?
+            );
+        } else {
+            println!("No remote configured — PR tracking unavailable.");
+        }
         info!(
             event = "cli.pr_completed",
             branch = branch,
@@ -101,7 +112,17 @@ pub(crate) fn handle_pr_command(matches: &ArgMatches) -> Result<(), Box<dyn std:
             );
         }
         None => {
-            println!("No PR found for branch 'kild/{}'", branch);
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "pr": null,
+                        "branch": format!("kild/{}", branch)
+                    }))?
+                );
+            } else {
+                println!("No PR found for branch 'kild/{}'", branch);
+            }
             info!(
                 event = "cli.pr_completed",
                 branch = branch,

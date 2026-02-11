@@ -24,13 +24,35 @@ pub(crate) fn handle_overlaps_command(
     let sessions = session_ops::list_sessions()?;
 
     if sessions.is_empty() {
-        println!("No kilds found.");
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "overlapping_files": [],
+                    "clean_kilds": [],
+                    "reason": "no_kilds_found"
+                }))?
+            );
+        } else {
+            println!("No kilds found.");
+        }
         info!(event = "cli.overlaps_completed", overlap_count = 0);
         return Ok(());
     }
 
     if sessions.len() < 2 {
-        println!("Only 1 kild active. Overlaps require at least 2 kilds.");
+        if json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "overlapping_files": [],
+                    "clean_kilds": [],
+                    "reason": "insufficient_kilds"
+                }))?
+            );
+        } else {
+            println!("Only 1 kild active. Overlaps require at least 2 kilds.");
+        }
         info!(event = "cli.overlaps_completed", overlap_count = 0);
         return Ok(());
     }

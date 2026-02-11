@@ -341,6 +341,40 @@ fn test_list_json_includes_git_stats() {
     }
 }
 
+/// Verify that 'kild stats --all --json' always returns valid JSON (even empty)
+#[test]
+fn test_stats_all_json_outputs_valid_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild"))
+        .args(["stats", "--all", "--json"])
+        .output()
+        .expect("Failed to execute 'kild stats --all --json'");
+
+    if !output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let _value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stats --all --json stdout should be valid JSON");
+}
+
+/// Verify that 'kild overlaps --json' always returns valid JSON (even empty)
+#[test]
+fn test_overlaps_json_outputs_valid_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild"))
+        .args(["overlaps", "--json"])
+        .output()
+        .expect("Failed to execute 'kild overlaps --json'");
+
+    if !output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let _value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("overlaps --json stdout should be valid JSON");
+}
+
 /// Verify that 'kild status <branch> --json' includes git_stats
 #[test]
 fn test_status_json_includes_git_stats() {

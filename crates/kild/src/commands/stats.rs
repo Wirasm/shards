@@ -127,7 +127,11 @@ fn handle_all_stats(
     let sessions = session_ops::list_sessions()?;
 
     if sessions.is_empty() {
-        println!("No kilds found.");
+        if json_output {
+            println!("[]");
+        } else {
+            println!("No kilds found.");
+        }
         info!(event = "cli.stats_all_completed", count = 0);
         return Ok(());
     }
