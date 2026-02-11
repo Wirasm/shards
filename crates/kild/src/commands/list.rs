@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::events;
 use kild_core::session_ops;
@@ -25,8 +25,15 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                 let base_branch = config.git.base_branch();
 
                 // Compute overlaps once for all sessions
-                let (overlap_report, _overlap_errors) =
+                let (overlap_report, overlap_errors) =
                     kild_core::git::collect_file_overlaps(&sessions, base_branch);
+                for (branch, err_msg) in &overlap_errors {
+                    warn!(
+                        event = "cli.list.overlap_detection_failed",
+                        branch = branch,
+                        error = err_msg
+                    );
+                }
 
                 let enriched: Vec<EnrichedSession> = sessions
                     .into_iter()

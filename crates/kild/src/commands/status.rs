@@ -60,10 +60,18 @@ pub(crate) fn handle_status_command(
                     .latest_agent()
                     .and_then(|a| a.terminal_type().map(|t| t.to_string()));
 
-                // Compute overlapping files by loading all sessions
+                // Overlaps are inherently cross-session: we must load all sessions
+                // to know which files this session shares with others.
                 let overlapping_files = session_ops::list_sessions().ok().map(|all_sessions| {
-                    let (overlap_report, _) =
+                    let (overlap_report, overlap_errors) =
                         kild_core::git::collect_file_overlaps(&all_sessions, base_branch);
+                    for (branch, err_msg) in &overlap_errors {
+                        warn!(
+                            event = "cli.status.overlap_detection_failed",
+                            branch = branch,
+                            error = err_msg
+                        );
+                    }
                     overlap_report
                         .overlapping_files
                         .iter()

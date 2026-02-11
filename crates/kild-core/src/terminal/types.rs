@@ -3,16 +3,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TerminalType {
-    #[serde(rename = "iterm", alias = "ITerm")]
+    #[serde(alias = "ITerm")]
     ITerm,
     #[serde(rename = "terminal", alias = "TerminalApp")]
     TerminalApp,
-    #[serde(rename = "ghostty", alias = "Ghostty")]
+    #[serde(alias = "Ghostty")]
     Ghostty,
-    #[serde(rename = "alacritty", alias = "Alacritty")]
+    #[serde(alias = "Alacritty")]
     Alacritty,
-    #[serde(rename = "native", alias = "Native")]
+    #[serde(alias = "Native")]
     Native, // System default
 }
 

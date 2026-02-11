@@ -638,7 +638,7 @@ impl CreateSessionRequest {
 ///
 /// Represents whether the agent process is currently running, stopped,
 /// or in an unknown state (detection failed).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessStatus {
     /// Process is confirmed running
@@ -1760,6 +1760,19 @@ mod tests {
             serde_json::to_string(&ProcessStatus::Unknown).unwrap(),
             r#""unknown""#
         );
+    }
+
+    #[test]
+    fn test_process_status_roundtrip() {
+        for status in [
+            ProcessStatus::Running,
+            ProcessStatus::Stopped,
+            ProcessStatus::Unknown,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let parsed: ProcessStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, status);
+        }
     }
 
     #[test]
