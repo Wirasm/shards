@@ -4,6 +4,7 @@ use gpui::{
     ClipboardItem, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render, Task,
     Window, div, prelude::*, px,
 };
+use tracing::debug;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
@@ -73,23 +74,7 @@ impl TerminalView {
         });
 
         let blink_epoch: usize = 0;
-        let blink_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            loop {
-                cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
-                let should_continue = this.update(cx, |view, cx| {
-                    if view.blink_epoch != blink_epoch {
-                        return false;
-                    }
-                    view.cursor_visible = !view.cursor_visible;
-                    cx.notify();
-                    true
-                });
-                match should_continue {
-                    Ok(true) => continue,
-                    _ => break,
-                }
-            }
-        });
+        let blink_task = Self::spawn_blink_timer(cx, blink_epoch);
 
         Self {
             terminal,
@@ -106,13 +91,11 @@ impl TerminalView {
         &self.terminal
     }
 
-    /// Reset blink cycle: make cursor visible immediately and start a fresh
-    /// timer. The old timer detects the incremented epoch and exits.
-    fn reset_blink(&mut self, cx: &mut Context<Self>) {
-        self.cursor_visible = true;
-        self.blink_epoch = self.blink_epoch.wrapping_add(1);
-        let epoch = self.blink_epoch;
-        self._blink_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+    /// Spawn a blink timer that toggles `cursor_visible` every interval.
+    /// The timer exits when its captured epoch no longer matches `self.blink_epoch`
+    /// (i.e. a newer timer replaced it) or when the view is dropped.
+    fn spawn_blink_timer(cx: &mut Context<Self>, epoch: usize) -> Task<()> {
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             loop {
                 cx.background_executor().timer(CURSOR_BLINK_INTERVAL).await;
                 let should_continue = this.update(cx, |view, cx| {
@@ -125,10 +108,34 @@ impl TerminalView {
                 });
                 match should_continue {
                     Ok(true) => continue,
-                    _ => break,
+                    Ok(false) => {
+                        debug!(
+                            event = "ui.terminal.blink_stopped",
+                            reason = "stale_epoch",
+                            epoch,
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        debug!(
+                            event = "ui.terminal.blink_stopped",
+                            reason = "view_dropped",
+                            error = ?e,
+                            epoch,
+                        );
+                        break;
+                    }
                 }
             }
-        });
+        })
+    }
+
+    /// Reset blink cycle: make cursor visible immediately and start a fresh
+    /// timer. The old timer detects the incremented epoch and exits.
+    fn reset_blink(&mut self, cx: &mut Context<Self>) {
+        self.cursor_visible = true;
+        self.blink_epoch = self.blink_epoch.wrapping_add(1);
+        self._blink_task = Self::spawn_blink_timer(cx, self.blink_epoch);
         cx.notify();
     }
 
@@ -228,7 +235,7 @@ impl Render for TerminalView {
             );
         }
 
-        // Unfocused cursors don't blink — always show the thin bar.
+        // Focused cursors blink; unfocused cursors are always visible (rendered as thin bar in element).
         let cursor_visible = if has_focus { self.cursor_visible } else { true };
 
         container.child(TerminalElement::new(
