@@ -783,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn test_destroy_session_with_terminal_type_calls_close() {
+    fn test_persistence_lifecycle_with_terminal_type() {
         use crate::terminal::types::TerminalType;
         use std::fs;
 
@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn test_destroy_session_without_terminal_type_backward_compat() {
+    fn test_persistence_lifecycle_without_agents_backward_compat() {
         use std::fs;
 
         let unique_id = format!(
@@ -922,31 +922,4 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
-    #[test]
-    fn test_destroy_session_force_not_found() {
-        use crate::sessions::destroy::destroy_session;
-
-        let result = destroy_session("non-existent", true);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
-    }
-
-    #[test]
-    fn test_destroy_session_force_vs_non_force_behavior() {
-        use crate::sessions::destroy::destroy_session;
-
-        let result_non_force = destroy_session("test-force-behavior", false);
-        assert!(result_non_force.is_err());
-        assert!(matches!(
-            result_non_force.unwrap_err(),
-            SessionError::NotFound { .. }
-        ));
-
-        let result_force = destroy_session("test-force-behavior", true);
-        assert!(result_force.is_err());
-        assert!(matches!(
-            result_force.unwrap_err(),
-            SessionError::NotFound { .. }
-        ));
-    }
 }

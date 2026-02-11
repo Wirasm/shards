@@ -626,6 +626,30 @@ mod tests {
     }
 
     #[test]
+    fn test_destroy_session_force_not_found() {
+        let result = destroy_session("non-existent", true);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
+    }
+
+    #[test]
+    fn test_destroy_force_vs_non_force_both_return_not_found() {
+        let result_non_force = destroy_session("test-force-behavior", false);
+        assert!(result_non_force.is_err());
+        assert!(matches!(
+            result_non_force.unwrap_err(),
+            SessionError::NotFound { .. }
+        ));
+
+        let result_force = destroy_session("test-force-behavior", true);
+        assert!(result_force.is_err());
+        assert!(matches!(
+            result_force.unwrap_err(),
+            SessionError::NotFound { .. }
+        ));
+    }
+
+    #[test]
     fn test_cleanup_task_list_skipped_when_no_task_list_id() {
         // When session.task_list_id is None, cleanup_task_list is never called.
         // Verify the guard logic by simulating what destroy_session does.
