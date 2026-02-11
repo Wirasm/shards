@@ -54,7 +54,7 @@ pub fn render_detail_panel(state: &AppState, cx: &mut Context<MainView>) -> AnyE
         GitStatus::Dirty => ("Uncommitted", theme::copper()),
         GitStatus::Unknown => ("Unknown", theme::text_muted()),
     };
-    let diff_stats_display = kild.diff_stats.as_ref().map(|s| {
+    let diff_stats_display = kild.uncommitted_diff.as_ref().map(|s| {
         format!(
             "+{} -{} ({} files)",
             s.insertions, s.deletions, s.files_changed

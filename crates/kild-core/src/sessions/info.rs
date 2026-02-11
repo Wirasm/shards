@@ -21,13 +21,13 @@ use crate::terminal::is_terminal_window_open;
 /// processes start/stop and files change. Refresh via `from_session()` or
 /// targeted field updates as needed.
 ///
-/// Invariant: `diff_stats` is `Some` only when `git_status` is `Dirty`.
+/// Invariant: `uncommitted_diff` is `Some` only when `git_status` is `Dirty`.
 #[derive(Clone)]
 pub struct SessionInfo {
     pub session: Session,
     pub process_status: ProcessStatus,
     pub git_status: GitStatus,
-    pub diff_stats: Option<DiffStats>,
+    pub uncommitted_diff: Option<DiffStats>,
 }
 
 impl SessionInfo {
@@ -43,7 +43,7 @@ impl SessionInfo {
             GitStatus::Unknown
         };
 
-        let diff_stats = if git_status == GitStatus::Dirty {
+        let uncommitted_diff = if git_status == GitStatus::Dirty {
             get_diff_stats(&session.worktree_path)
                 .map_err(|e| {
                     tracing::warn!(
@@ -62,7 +62,7 @@ impl SessionInfo {
             session,
             process_status,
             git_status,
-            diff_stats,
+            uncommitted_diff,
         }
     }
 }
@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_session_dirty_repo_has_diff_stats() {
+    fn test_from_session_dirty_repo_has_uncommitted_diff() {
         use std::process::Command;
         use tempfile::TempDir;
 
@@ -479,8 +479,8 @@ mod tests {
         let info = SessionInfo::from_session(session);
 
         assert_eq!(info.git_status, GitStatus::Dirty);
-        assert!(info.diff_stats.is_some());
-        let stats = info.diff_stats.unwrap();
+        assert!(info.uncommitted_diff.is_some());
+        let stats = info.uncommitted_diff.unwrap();
         assert_eq!(stats.insertions, 2);
         assert_eq!(stats.files_changed, 1);
     }

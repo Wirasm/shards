@@ -3,8 +3,12 @@ use std::path::Path;
 use git2::{Repository, Status, StatusOptions};
 use tracing::{debug, warn};
 
+use git2::Oid;
+
 use crate::git::errors::GitError;
-use crate::git::types::{CommitCounts, DiffStats, GitStats, UncommittedDetails, WorktreeStatus};
+use crate::git::types::{
+    BaseBranchDrift, CommitCounts, DiffStats, GitStats, UncommittedDetails, WorktreeStatus,
+};
 
 /// Get diff statistics for unstaged changes in a worktree.
 ///
@@ -334,7 +338,14 @@ fn count_unpushed_commits(repo: &Repository) -> CommitCounts {
 /// Returns `None` if the worktree path doesn't exist.
 /// Individual stat failures are logged as warnings and degraded to `None`
 /// fields rather than failing the entire operation.
-pub fn collect_git_stats(worktree_path: &Path, branch: &str) -> Option<GitStats> {
+///
+/// The `base_branch` parameter is used to compute drift (ahead/behind) and
+/// diff_vs_base (total committed changes) relative to the base branch.
+pub fn collect_git_stats(
+    worktree_path: &Path,
+    branch: &str,
+    base_branch: &str,
+) -> Option<GitStats> {
     if !worktree_path.exists() {
         return None;
     }
@@ -363,10 +374,75 @@ pub fn collect_git_stats(worktree_path: &Path, branch: &str) -> Option<GitStats>
         }
     };
 
+    // Compute base-branch metrics (drift + diff_vs_base)
+    let (drift, diff_vs_base) = compute_base_metrics(worktree_path, branch, base_branch);
+
     Some(GitStats {
-        diff_stats: diff,
+        diff_vs_base,
+        drift,
+        uncommitted_diff: diff,
         worktree_status: status,
     })
+}
+
+/// Compute base-branch-relative metrics for a worktree.
+///
+/// Returns `(drift, diff_vs_base)` — both `None` if branches cannot be resolved.
+fn compute_base_metrics(
+    worktree_path: &Path,
+    branch: &str,
+    base_branch: &str,
+) -> (Option<BaseBranchDrift>, Option<DiffStats>) {
+    let repo = match Repository::open(worktree_path) {
+        Ok(r) => r,
+        Err(e) => {
+            debug!(
+                event = "core.git.stats.base_metrics_repo_open_failed",
+                branch = branch,
+                error = %e
+            );
+            return (None, None);
+        }
+    };
+
+    let kild_branch = crate::git::naming::kild_branch_name(branch);
+    let branch_oid = match resolve_branch_oid(&repo, &kild_branch) {
+        Some(oid) => oid,
+        None => {
+            debug!(
+                event = "core.git.stats.kild_branch_not_found",
+                branch = %kild_branch
+            );
+            return (None, None);
+        }
+    };
+    let base_oid = match resolve_branch_oid(&repo, base_branch) {
+        Some(oid) => oid,
+        None => {
+            debug!(
+                event = "core.git.stats.base_branch_not_found",
+                base = base_branch
+            );
+            return (None, None);
+        }
+    };
+
+    let drift = Some(super::health::count_base_drift(
+        &repo,
+        branch_oid,
+        base_oid,
+        base_branch,
+    ));
+    let merge_base = super::health::find_merge_base(&repo, branch_oid, base_oid);
+    let diff_vs_base =
+        merge_base.and_then(|mb| super::health::diff_against_base(&repo, branch_oid, mb));
+
+    (drift, diff_vs_base)
+}
+
+/// Resolve a branch name to its OID, delegating to health module.
+fn resolve_branch_oid(repo: &Repository, branch_name: &str) -> Option<Oid> {
+    super::health::resolve_branch_oid(repo, branch_name)
 }
 
 #[cfg(test)]
@@ -864,7 +940,7 @@ mod tests {
 
     #[test]
     fn test_collect_git_stats_nonexistent_path() {
-        let result = collect_git_stats(Path::new("/nonexistent/path"), "test-branch");
+        let result = collect_git_stats(Path::new("/nonexistent/path"), "test-branch", "main");
         assert!(result.is_none());
     }
 
@@ -884,10 +960,10 @@ mod tests {
             .output()
             .unwrap();
 
-        let stats = collect_git_stats(dir.path(), "test-branch");
+        let stats = collect_git_stats(dir.path(), "test-branch", "main");
         assert!(stats.is_some());
         let stats = stats.unwrap();
-        assert!(stats.diff_stats.is_some());
+        assert!(stats.uncommitted_diff.is_some());
         assert!(stats.worktree_status.is_some());
         assert!(stats.has_data());
         assert!(!stats.is_empty());
@@ -912,12 +988,12 @@ mod tests {
         // Modify tracked file to create diff stats
         fs::write(dir.path().join("file.txt"), "modified").unwrap();
 
-        let stats = collect_git_stats(dir.path(), "test-branch");
+        let stats = collect_git_stats(dir.path(), "test-branch", "main");
         assert!(stats.is_some());
         let stats = stats.unwrap();
         assert!(stats.has_data());
-        assert!(stats.diff_stats.is_some());
-        let diff = stats.diff_stats.unwrap();
+        assert!(stats.uncommitted_diff.is_some());
+        let diff = stats.uncommitted_diff.unwrap();
         assert!(diff.insertions > 0 || diff.deletions > 0);
     }
 }

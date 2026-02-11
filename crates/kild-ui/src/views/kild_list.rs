@@ -216,7 +216,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                             // Status indicator (dot with optional glow)
                                             .child(StatusIndicator::dot(status))
                                             // Git diff stats (when dirty) or unknown indicator
-                                            .when_some(display.diff_stats, |row, stats| {
+                                            .when_some(display.uncommitted_diff, |row, stats| {
                                                 row.child(
                                                     div()
                                                         .flex()
@@ -240,7 +240,7 @@ pub fn render_kild_list(state: &AppState, cx: &mut Context<MainView>) -> impl In
                                             // Fallback: dirty but no stats (shouldn't happen often)
                                             .when(
                                                 git_status == GitStatus::Dirty
-                                                    && display.diff_stats.is_none(),
+                                                    && display.uncommitted_diff.is_none(),
                                                 |row| {
                                                     row.child(
                                                         div()
@@ -507,7 +507,7 @@ mod tests {
             session,
             process_status: ProcessStatus::Stopped,
             git_status: GitStatus::Unknown,
-            diff_stats: None,
+            uncommitted_diff: None,
         }]);
 
         assert!(!should_show_welcome(&state));
