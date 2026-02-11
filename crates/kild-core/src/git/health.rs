@@ -325,9 +325,6 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
-    use crate::forge::types::{CiStatus, PrInfo};
-    use crate::git::types::{MergeReadiness, WorktreeStatus};
-
     fn init_git_repo(dir: &Path) {
         Command::new("git")
             .args(["init"])
