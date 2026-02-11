@@ -1280,11 +1280,24 @@ pub fn sync_daemon_session_status(session: &mut Session) -> bool {
         "Syncing stale session status to Stopped"
     );
 
-    session.status = SessionStatus::Stopped;
-    session.last_activity = Some(chrono::Utc::now().to_rfc3339());
+    let now = chrono::Utc::now().to_rfc3339();
 
+    // Update in-memory session for callers (list/status display)
+    session.status = SessionStatus::Stopped;
+    session.last_activity = Some(now.clone());
+
+    // Patch status and last_activity via targeted JSON update to preserve unknown fields.
+    // Using patch instead of full save prevents older binaries from dropping new fields
+    // (e.g., installed kild binary dropping task_list_id added by a newer version).
     let config = Config::new();
-    if let Err(e) = persistence::save_session_to_file(session, &config.sessions_dir()) {
+    if let Err(e) = persistence::patch_session_json_fields(
+        &config.sessions_dir(),
+        &session.id,
+        &[
+            ("status", serde_json::json!("Stopped")),
+            ("last_activity", serde_json::Value::String(now)),
+        ],
+    ) {
         error!(
             event = "core.session.daemon_status_sync_save_failed",
             session_id = session.id,
