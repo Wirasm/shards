@@ -586,6 +586,11 @@ impl Element for TerminalElement {
                 cx,
             ) {
                 tracing::error!(event = "ui.terminal.badge_paint_failed", error = %e);
+                // Fallback: thin accent bar so the user still sees "scrolled up".
+                window.paint_quad(fill(
+                    Bounds::new(point(badge_x, badge_y), size(badge_width, px(2.0))),
+                    badge_fg,
+                ));
             }
         }
 
