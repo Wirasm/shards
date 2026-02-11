@@ -73,11 +73,17 @@ impl TerminalView {
         &self.terminal
     }
 
+    fn set_error(&self, msg: String) {
+        if let Ok(mut err) = self.terminal.error_state().lock() {
+            *err = Some(msg);
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform;
 
-        // Cmd+C: copy selection to clipboard, or send Ctrl+C (SIGINT) if no selection
+        // Cmd+C: copy selection to clipboard and clear it, or send Ctrl+C (SIGINT) if no selection
         if cmd && key == "c" {
             let text = self.terminal.term().lock().selection_to_string();
             if let Some(text) = text {
@@ -86,6 +92,8 @@ impl TerminalView {
                 cx.notify();
             } else if let Err(e) = self.terminal.write_to_pty(&[0x03]) {
                 tracing::error!(event = "ui.terminal.key_write_failed", error = %e);
+                self.set_error(format!("Failed to send interrupt: {e}"));
+                cx.notify();
             }
             return;
         }
@@ -97,6 +105,8 @@ impl TerminalView {
                 && let Err(e) = self.terminal.write_to_pty(text.as_bytes())
             {
                 tracing::error!(event = "ui.terminal.paste_failed", error = %e);
+                self.set_error(format!("Paste failed: {e}"));
+                cx.notify();
             }
             return;
         }

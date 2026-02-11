@@ -93,6 +93,8 @@ impl TerminalElement {
     }
 
     /// Convert pixel position to terminal grid Point + Side.
+    /// Clamps negative coordinates to 0. Does not clamp to terminal dimensions
+    /// (alacritty's Selection API handles out-of-bounds points).
     fn pixel_to_grid(
         position: gpui::Point<Pixels>,
         bounds: Bounds<Pixels>,
@@ -106,10 +108,10 @@ impl TerminalElement {
         } else {
             Side::Right
         };
-        (
-            AlacPoint::new(Line(line.floor() as i32), Column(col.floor() as usize)),
-            side,
-        )
+        // Clamp before casting to prevent overflow on extreme values.
+        let line_i32 = (line.floor() as f64).min(i32::MAX as f64) as i32;
+        let col_usize = (col.floor() as f64).min(usize::MAX as f64) as usize;
+        (AlacPoint::new(Line(line_i32), Column(col_usize)), side)
     }
 
     /// Measure cell dimensions using a reference character.
@@ -449,6 +451,14 @@ impl Element for TerminalElement {
         let selection_color = Hsla::from(theme::terminal_selection());
         let mut selection_rects: Vec<PreparedBgRegion> = Vec::new();
         if let Some(sel) = &content.selection {
+            if sel.start.line.0 < 0 || sel.end.line.0 < 0 || (sel.end.line.0 as usize) >= rows {
+                tracing::debug!(
+                    event = "ui.terminal.selection_clamped",
+                    start_line = sel.start.line.0,
+                    end_line = sel.end.line.0,
+                    rows = rows,
+                );
+            }
             let start_line = sel.start.line.0.max(0) as usize;
             let end_line = sel.end.line.0.max(0) as usize;
             for line_idx in start_line..=end_line.min(rows.saturating_sub(1)) {
@@ -674,7 +684,7 @@ impl Element for TerminalElement {
             }
         });
 
-        // Mouse down handler — starts or clears selection.
+        // Mouse down handler — starts new selection (replaces any existing).
         let hitbox = prepaint.hitbox.clone();
         let term = self.term.clone();
         let cell_width = prepaint.cell_width;
