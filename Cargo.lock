@@ -3368,12 +3368,10 @@ dependencies = [
  "base64",
  "clap",
  "kild-core",
- "kild-daemon",
  "nix 0.29.0",
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
  "tracing",
 ]
 

@@ -195,7 +195,7 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 **Workspace structure:**
 - `crates/kild-core` - Core library with all business logic, no CLI dependencies
 - `crates/kild` - Thin CLI that consumes kild-core (clap for arg parsing)
-- `crates/kild-daemon` - Daemon server for PTY management (async tokio server, JSONL IPC protocol, portable-pty integration)
+- `crates/kild-daemon` - Standalone daemon binary for PTY management (async tokio server, JSONL IPC protocol, portable-pty integration). CLI spawns this as subprocess.
 - `crates/kild-tmux-shim` - tmux-compatible shim binary for agent team support (CLI that intercepts tmux commands, routes to daemon IPC)
 - `crates/kild-ui` - GPUI-based native GUI with multi-project support
 - `crates/kild-peek-core` - Core library for native app inspection and interaction (window listing, screenshots, image comparison, assertions, UI automation)
@@ -205,7 +205,7 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 - `sessions/` - Session lifecycle (create, open, stop, destroy, complete, list)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app, Alacritty)
 - `agents/` - Agent backend system (amp, claude, kiro, gemini, codex, opencode, resume.rs for session continuity)
-- `daemon/` - Daemon client for IPC communication (sync Unix socket client) and auto-start logic
+- `daemon/` - Daemon client for IPC communication (sync Unix socket client) and auto-start logic (discovers kild-daemon binary as sibling executable)
 - `git/` - Git worktree operations via git2
 - `forge/` - Forge backend system (GitHub, future: GitLab, Bitbucket, Gitea) for PR operations
 - `config/` - Hierarchical TOML config (defaults → user → project → CLI)

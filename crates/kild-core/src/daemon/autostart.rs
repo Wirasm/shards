@@ -9,7 +9,7 @@ use super::errors::DaemonAutoStartError;
 ///
 /// 1. Pings the daemon — if alive, returns immediately.
 /// 2. Checks `config.daemon_auto_start()` — if disabled, returns `Disabled` error.
-/// 3. Spawns `kild daemon start --foreground` in background (stderr inherited).
+/// 3. Spawns `kild-daemon` binary in background (stderr inherited).
 /// 4. Polls socket + ping with 5s timeout, 100ms interval. Checks child process
 ///    exit status each iteration to detect early crashes.
 pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartError> {
@@ -28,13 +28,10 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
     info!(event = "core.daemon.auto_start_started");
     eprintln!("Starting daemon...");
 
-    let daemon_binary =
-        std::env::current_exe().map_err(|e| DaemonAutoStartError::BinaryNotFound {
-            message: e.to_string(),
-        })?;
+    let daemon_binary = super::find_sibling_binary("kild-daemon")
+        .map_err(|message| DaemonAutoStartError::BinaryNotFound { message })?;
 
     let mut child = std::process::Command::new(&daemon_binary)
-        .args(["daemon", "start", "--foreground"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
         .stdin(std::process::Stdio::null())
@@ -55,8 +52,10 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
                 return Err(DaemonAutoStartError::SpawnFailed {
                     message: format!(
                         "Daemon process exited with {} before becoming ready.\n\
-                         Check daemon logs: kild daemon start --foreground",
-                        status
+                         Check daemon logs: kild daemon start --foreground\n\
+                         Daemon binary: {}",
+                        status,
+                        daemon_binary.display()
                     ),
                 });
             }
@@ -92,9 +91,12 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
                     socket_exists = false
                 );
                 return Err(DaemonAutoStartError::Timeout {
-                    message: "Daemon process spawned but socket not created after 5s.\n\
-                              Check daemon logs: kild daemon start --foreground"
-                        .to_string(),
+                    message: format!(
+                        "Daemon process spawned but socket not created after 5s.\n\
+                         Check daemon logs: kild daemon start --foreground\n\
+                         Daemon binary: {}",
+                        daemon_binary.display()
+                    ),
                 });
             }
         }
