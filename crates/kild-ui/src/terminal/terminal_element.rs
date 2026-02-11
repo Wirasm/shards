@@ -7,11 +7,12 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use gpui::{
-    App, Bounds, DispatchPhase, Element, ElementId, Font, FontWeight, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, ScrollWheelEvent, SharedString, Size, Style, TextRun, Window, fill,
-    font, point, px, size,
+    App, Bounds, CursorStyle, DispatchPhase, Element, ElementId, Font, FontWeight, GlobalElementId,
+    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, SharedString, Size, Style, TextRun,
+    Window, fill, font, point, px, size,
 };
+use linkify::{LinkFinder, LinkKind};
 
 use super::colors;
 use super::state::{KildListener, ResizeHandle};
@@ -23,6 +24,7 @@ pub struct PrepaintState {
     text_runs: Vec<PreparedLine>,
     bg_regions: Vec<PreparedBgRegion>,
     selection_rects: Vec<PreparedBgRegion>,
+    url_regions: Vec<PreparedUrlRegion>,
     cursor: Option<PreparedCursor>,
     cell_width: Pixels,
     cell_height: Pixels,
@@ -46,12 +48,20 @@ struct PreparedCursor {
     color: Hsla,
 }
 
+/// A detected URL region in terminal output with precomputed pixel bounds.
+struct PreparedUrlRegion {
+    bounds: Bounds<Pixels>,
+    url: String,
+}
+
 /// Custom GPUI Element that renders terminal cells as GPU draw calls.
 pub struct TerminalElement {
     term: Arc<FairMutex<Term<KildListener>>>,
     has_focus: bool,
     resize_handle: ResizeHandle,
     cursor_visible: bool,
+    mouse_position: Option<gpui::Point<Pixels>>,
+    cmd_held: bool,
 }
 
 impl TerminalElement {
@@ -60,12 +70,16 @@ impl TerminalElement {
         has_focus: bool,
         resize_handle: ResizeHandle,
         cursor_visible: bool,
+        mouse_position: Option<gpui::Point<Pixels>>,
+        cmd_held: bool,
     ) -> Self {
         Self {
             term,
             has_focus,
             resize_handle,
             cursor_visible,
+            mouse_position,
+            cmd_held,
         }
     }
 
@@ -192,6 +206,7 @@ impl Element for TerminalElement {
                 text_runs: vec![],
                 bg_regions: vec![],
                 selection_rects: vec![],
+                url_regions: vec![],
                 cursor: None,
                 cell_width,
                 cell_height,
@@ -208,6 +223,7 @@ impl Element for TerminalElement {
                 text_runs: vec![],
                 bg_regions: vec![],
                 selection_rects: vec![],
+                url_regions: vec![],
                 cursor: None,
                 cell_width,
                 cell_height,
@@ -263,6 +279,14 @@ impl Element for TerminalElement {
         let mut bg_start_col: usize = 0;
         let mut bg_color: Option<Hsla> = None;
         let mut bg_line: i32 = -1;
+
+        // Per-line text accumulation for URL scanning.
+        // Each entry: (line_index, line_text, col_offsets).
+        // col_offsets maps char index to grid column (handles wide chars).
+        let mut line_texts: Vec<(i32, String, Vec<usize>)> = Vec::with_capacity(rows);
+        let mut current_line_text = String::new();
+        let mut current_col_offsets: Vec<usize> = Vec::new();
+        let mut url_text_line: i32 = -1;
 
         let flush_bg = |bg_color: Option<Hsla>,
                         bg_line: i32,
@@ -329,6 +353,15 @@ impl Element for TerminalElement {
                         runs: std::mem::take(&mut current_runs),
                     });
                 }
+                // Flush line text for URL scanning
+                if !current_line_text.is_empty() {
+                    line_texts.push((
+                        url_text_line,
+                        std::mem::take(&mut current_line_text),
+                        std::mem::take(&mut current_col_offsets),
+                    ));
+                }
+                url_text_line = line_idx;
                 current_line = line_idx;
                 run_start_col = col;
                 bg_line = line_idx;
@@ -420,6 +453,9 @@ impl Element for TerminalElement {
                     underline,
                     strikethrough,
                 ));
+                // Track for URL scanning (wide char = 1 char, 2 grid columns)
+                current_col_offsets.push(col);
+                current_line_text.push(wch);
                 continue;
             }
 
@@ -453,11 +489,11 @@ impl Element for TerminalElement {
             }
 
             let ch = cell.c;
-            if ch != ' ' && ch != '\0' {
-                run_text.push(ch);
-            } else {
-                run_text.push(' ');
-            }
+            let display_ch = if ch != ' ' && ch != '\0' { ch } else { ' ' };
+            run_text.push(display_ch);
+            // Track for URL scanning
+            current_col_offsets.push(col);
+            current_line_text.push(display_ch);
         }
 
         // Flush final run/line/bg
@@ -489,6 +525,35 @@ impl Element for TerminalElement {
             cell_width,
             cell_height,
         );
+        // Flush final line text
+        if !current_line_text.is_empty() {
+            line_texts.push((url_text_line, current_line_text, current_col_offsets));
+        }
+
+        // URL detection — scan accumulated line texts with linkify
+        let mut url_regions: Vec<PreparedUrlRegion> = Vec::new();
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url]);
+        for (line_idx, text, col_offsets) in &line_texts {
+            for link in finder.links(text) {
+                let start_char = link.start();
+                let end_char = link.end();
+                if start_char >= col_offsets.len() || end_char == 0 {
+                    continue;
+                }
+                let start_col = col_offsets[start_char];
+                // end_char is exclusive; use last char's column + 1
+                let last_char = (end_char - 1).min(col_offsets.len() - 1);
+                let end_col = col_offsets[last_char] + 1;
+                let x = bounds.origin.x + start_col as f32 * cell_width;
+                let y = bounds.origin.y + *line_idx as f32 * cell_height;
+                let w = (end_col - start_col) as f32 * cell_width;
+                url_regions.push(PreparedUrlRegion {
+                    bounds: Bounds::new(point(x, y), size(w, cell_height)),
+                    url: link.as_str().to_string(),
+                });
+            }
+        }
 
         // Selection highlight rectangles
         let selection_color = Hsla::from(theme::terminal_selection());
@@ -564,6 +629,7 @@ impl Element for TerminalElement {
             text_runs: text_lines,
             bg_regions,
             selection_rects,
+            url_regions,
             cursor,
             cell_width,
             cell_height,
@@ -600,6 +666,33 @@ impl Element for TerminalElement {
         // Layer 2.5: Selection highlight (between cell bg and text)
         for rect in &prepaint.selection_rects {
             window.paint_quad(fill(rect.bounds, rect.color));
+        }
+
+        // Layer 2.7: URL underline highlights (Cmd+hover)
+        if self.cmd_held
+            && let Some(mouse_pos) = self.mouse_position
+        {
+            let url_color = Hsla {
+                a: 0.5,
+                ..Hsla::from(theme::ice())
+            };
+            let mut hovering_url = false;
+            for region in &prepaint.url_regions {
+                if region.bounds.contains(&mouse_pos) {
+                    hovering_url = true;
+                    let underline_y = region.bounds.origin.y + prepaint.cell_height - px(1.5);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(region.bounds.origin.x, underline_y),
+                            size(region.bounds.size.width, px(1.5)),
+                        ),
+                        url_color,
+                    ));
+                }
+            }
+            if hovering_url {
+                window.set_cursor_style(CursorStyle::PointingHand, &prepaint.hitbox);
+            }
         }
 
         // Layer 3: Text runs (glyphs on top of backgrounds)
@@ -734,17 +827,38 @@ impl Element for TerminalElement {
             }
         });
 
-        // Mouse down handler — starts new selection (replaces any existing).
+        // Mouse down handler — Cmd+click opens URL, otherwise starts selection.
         let hitbox = prepaint.hitbox.clone();
         let term = self.term.clone();
         let cell_width = prepaint.cell_width;
         let cell_height = prepaint.cell_height;
         let sel_bounds = prepaint.bounds;
+        let click_url_regions: Vec<(Bounds<Pixels>, String)> = prepaint
+            .url_regions
+            .iter()
+            .map(|r| (r.bounds, r.url.clone()))
+            .collect();
         window.on_mouse_event::<MouseDownEvent>(move |event, phase, window, _cx| {
             if phase == DispatchPhase::Bubble
                 && event.button == MouseButton::Left
                 && hitbox.is_hovered(window)
             {
+                // Cmd+click on URL → open in browser
+                if event.modifiers.platform {
+                    for (url_bounds, url) in &click_url_regions {
+                        if url_bounds.contains(&event.position) {
+                            if let Err(e) = open::that(url) {
+                                tracing::error!(
+                                    event = "ui.terminal.url_open_failed",
+                                    url = url,
+                                    error = %e,
+                                );
+                            }
+                            return;
+                        }
+                    }
+                }
+
                 let (grid_point, side) =
                     Self::pixel_to_grid(event.position, sel_bounds, cell_width, cell_height);
                 let ty = match event.click_count {
