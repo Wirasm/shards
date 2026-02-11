@@ -13,6 +13,7 @@ mod cleanup;
 mod code;
 mod commits;
 mod complete;
+mod completions;
 mod create;
 mod daemon;
 mod destroy;
@@ -40,6 +41,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("cd", sub_matches)) => cd::handle_cd_command(sub_matches),
         Some(("destroy", sub_matches)) => destroy::handle_destroy_command(sub_matches),
         Some(("complete", sub_matches)) => complete::handle_complete_command(sub_matches),
+        Some(("completions", sub_matches)) => completions::handle_completions_command(sub_matches),
         Some(("restart", sub_matches)) => restart::handle_restart_command(sub_matches),
         Some(("open", sub_matches)) => open::handle_open_command(sub_matches),
         Some(("stop", sub_matches)) => stop::handle_stop_command(sub_matches),

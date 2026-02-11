@@ -1,4 +1,5 @@
 use clap::{Arg, ArgAction, Command};
+use clap_complete::Shell;
 
 pub fn build_cli() -> Command {
     Command::new("kild")
@@ -579,6 +580,17 @@ pub fn build_cli() -> Command {
                         .help("Branch name of the kild to attach to")
                         .required(true)
                         .index(1),
+                )
+        )
+        .subcommand(
+            Command::new("completions")
+                .about("Generate shell completion scripts")
+                .arg(
+                    Arg::new("shell")
+                        .help("Target shell")
+                        .required(true)
+                        .index(1)
+                        .value_parser(clap::value_parser!(Shell))
                 )
         )
 }
@@ -1863,6 +1875,29 @@ mod tests {
         let matches = matches.unwrap();
         let sub = matches.subcommand_matches("overlaps").unwrap();
         assert_eq!(sub.get_one::<String>("base").unwrap(), "dev");
+    }
+
+    // --- completions command tests ---
+
+    #[test]
+    fn test_cli_completions_command() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "completions", "bash"]);
+        assert!(matches.is_ok());
+    }
+
+    #[test]
+    fn test_cli_completions_requires_shell() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "completions"]);
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn test_cli_completions_rejects_invalid_shell() {
+        let app = build_cli();
+        let matches = app.try_get_matches_from(vec!["kild", "completions", "invalid"]);
+        assert!(matches.is_err());
     }
 
     #[test]
