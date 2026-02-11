@@ -1,9 +1,7 @@
-use crate::forge::types::{CiStatus, PrInfo};
 use crate::git::errors::GitError;
 use crate::git::types::{
     BaseBranchDrift, BranchHealth, CleanKild, CommitActivity, CommitCounts, ConflictStatus,
-    DiffStats, FileOverlap, GitStats, MergeReadiness, OverlapReport, UncommittedDetails,
-    WorktreeStatus,
+    DiffStats, FileOverlap, GitStats, OverlapReport, UncommittedDetails, WorktreeStatus,
 };
 use git2::{Oid, Repository, Status, StatusOptions};
 use std::path::{Path, PathBuf};
@@ -1054,57 +1052,11 @@ pub fn collect_file_overlaps(
     (report, errors)
 }
 
-/// Compute merge readiness from git health metrics, worktree status, and optional PR info.
-///
-/// Priority order (highest severity first):
-/// 1. HasConflicts / ConflictCheckFailed — blocks merge entirely
-/// 2. NeedsRebase — behind base, conflicts likely if not rebased
-/// 3. NeedsPush — local-only commits, PR can't be created/updated
-/// 4. NeedsPr — pushed but no tracking PR exists
-/// 5. CiFailing — PR exists but not passing checks
-/// 6. Ready / ReadyLocal — all checks passed
-pub fn compute_merge_readiness(
-    health: &BranchHealth,
-    worktree_status: &Option<WorktreeStatus>,
-    pr_info: Option<&PrInfo>,
-) -> MergeReadiness {
-    match health.conflict_status {
-        ConflictStatus::Conflicts => return MergeReadiness::HasConflicts,
-        ConflictStatus::Unknown => return MergeReadiness::ConflictCheckFailed,
-        ConflictStatus::Clean => {}
-    }
-
-    if health.drift.behind > 0 {
-        return MergeReadiness::NeedsRebase;
-    }
-
-    if !health.has_remote {
-        return MergeReadiness::ReadyLocal;
-    }
-
-    // Check if there are unpushed commits
-    let has_unpushed = worktree_status
-        .as_ref()
-        .is_some_and(|ws| ws.unpushed_commit_count > 0 || !ws.has_remote_branch);
-
-    if has_unpushed {
-        return MergeReadiness::NeedsPush;
-    }
-
-    let Some(pr) = pr_info else {
-        return MergeReadiness::NeedsPr;
-    };
-
-    if pr.ci_status == CiStatus::Failing {
-        return MergeReadiness::CiFailing;
-    }
-
-    MergeReadiness::Ready
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forge::types::{CiStatus, PrInfo};
+    use crate::git::types::MergeReadiness;
 
     #[test]
     fn test_sanitize_for_path() {
@@ -2360,7 +2312,7 @@ mod tests {
     fn test_readiness_has_conflicts() {
         let h = make_health(ConflictStatus::Conflicts, 0, true);
         assert_eq!(
-            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::compute(&h, &None, None),
             MergeReadiness::HasConflicts
         );
     }
@@ -2369,7 +2321,7 @@ mod tests {
     fn test_readiness_conflict_check_failed() {
         let h = make_health(ConflictStatus::Unknown, 0, true);
         assert_eq!(
-            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::compute(&h, &None, None),
             MergeReadiness::ConflictCheckFailed
         );
     }
@@ -2378,7 +2330,7 @@ mod tests {
     fn test_readiness_needs_rebase() {
         let h = make_health(ConflictStatus::Clean, 5, true);
         assert_eq!(
-            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::compute(&h, &None, None),
             MergeReadiness::NeedsRebase
         );
     }
@@ -2387,7 +2339,7 @@ mod tests {
     fn test_readiness_ready_local() {
         let h = make_health(ConflictStatus::Clean, 0, false);
         assert_eq!(
-            compute_merge_readiness(&h, &None, None),
+            MergeReadiness::compute(&h, &None, None),
             MergeReadiness::ReadyLocal
         );
     }
@@ -2401,7 +2353,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::compute(&h, &Some(ws), None),
             MergeReadiness::NeedsPush
         );
     }
@@ -2415,7 +2367,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::compute(&h, &Some(ws), None),
             MergeReadiness::NeedsPush
         );
     }
@@ -2429,7 +2381,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            compute_merge_readiness(&h, &Some(ws), None),
+            MergeReadiness::compute(&h, &Some(ws), None),
             MergeReadiness::NeedsPr
         );
     }
@@ -2454,7 +2406,7 @@ mod tests {
             updated_at: "2026-02-09T12:00:00Z".to_string(),
         };
         assert_eq!(
-            compute_merge_readiness(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::compute(&h, &Some(ws), Some(&pr)),
             MergeReadiness::CiFailing
         );
     }
@@ -2479,7 +2431,7 @@ mod tests {
             updated_at: "2026-02-09T12:00:00Z".to_string(),
         };
         assert_eq!(
-            compute_merge_readiness(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::compute(&h, &Some(ws), Some(&pr)),
             MergeReadiness::Ready
         );
     }
@@ -2512,5 +2464,83 @@ mod tests {
 
         let json = serde_json::to_string(&MergeReadiness::ReadyLocal).unwrap();
         assert_eq!(json, "\"ready_local\"");
+    }
+
+    #[test]
+    fn test_readiness_ready_with_pending_ci() {
+        use crate::forge::types::{PrState, ReviewStatus};
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        let pr = PrInfo {
+            number: 1,
+            url: "https://example.com/pull/1".to_string(),
+            state: PrState::Open,
+            ci_status: CiStatus::Pending,
+            ci_summary: None,
+            review_status: ReviewStatus::Unknown,
+            review_summary: None,
+            updated_at: "2026-02-09T12:00:00Z".to_string(),
+        };
+        // Pending CI is non-blocking — only explicit failure blocks
+        assert_eq!(
+            MergeReadiness::compute(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::Ready
+        );
+    }
+
+    #[test]
+    fn test_readiness_ready_with_unknown_ci() {
+        use crate::forge::types::{PrState, ReviewStatus};
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        let pr = PrInfo {
+            number: 1,
+            url: "https://example.com/pull/1".to_string(),
+            state: PrState::Open,
+            ci_status: CiStatus::Unknown,
+            ci_summary: None,
+            review_status: ReviewStatus::Unknown,
+            review_summary: None,
+            updated_at: "2026-02-09T12:00:00Z".to_string(),
+        };
+        // Unknown CI is non-blocking — only explicit failure blocks
+        assert_eq!(
+            MergeReadiness::compute(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::Ready
+        );
+    }
+
+    #[test]
+    fn test_readiness_ready_with_draft_pr() {
+        use crate::forge::types::{PrState, ReviewStatus};
+        let h = make_health(ConflictStatus::Clean, 0, true);
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        let pr = PrInfo {
+            number: 1,
+            url: "https://example.com/pull/1".to_string(),
+            state: PrState::Draft,
+            ci_status: CiStatus::Passing,
+            ci_summary: None,
+            review_status: ReviewStatus::Unknown,
+            review_summary: None,
+            updated_at: "2026-02-09T12:00:00Z".to_string(),
+        };
+        // Draft PRs are treated as ready if CI passes
+        assert_eq!(
+            MergeReadiness::compute(&h, &Some(ws), Some(&pr)),
+            MergeReadiness::Ready
+        );
     }
 }

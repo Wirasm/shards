@@ -1,3 +1,4 @@
+use crate::forge::types::{CiStatus, PrInfo};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -258,6 +259,56 @@ pub enum MergeReadiness {
     CiFailing,
     /// Ready to merge locally (no remote configured)
     ReadyLocal,
+}
+
+impl MergeReadiness {
+    /// Compute merge readiness from git health metrics, worktree status, and optional PR info.
+    ///
+    /// Priority order (highest severity first):
+    /// 1. HasConflicts / ConflictCheckFailed — blocks merge entirely
+    /// 2. NeedsRebase — behind base, conflicts likely if not rebased
+    /// 3. NeedsPush — local-only commits, PR can't be created/updated
+    /// 4. NeedsPr — pushed but no tracking PR exists
+    /// 5. CiFailing — PR exists but not passing checks
+    /// 6. Ready / ReadyLocal — all checks passed
+    pub fn compute(
+        health: &BranchHealth,
+        worktree_status: &Option<WorktreeStatus>,
+        pr_info: Option<&PrInfo>,
+    ) -> Self {
+        match health.conflict_status {
+            ConflictStatus::Conflicts => return Self::HasConflicts,
+            ConflictStatus::Unknown => return Self::ConflictCheckFailed,
+            ConflictStatus::Clean => {}
+        }
+
+        if health.drift.behind > 0 {
+            return Self::NeedsRebase;
+        }
+
+        if !health.has_remote {
+            return Self::ReadyLocal;
+        }
+
+        // Check if there are unpushed commits
+        let has_unpushed = worktree_status
+            .as_ref()
+            .is_some_and(|ws| ws.unpushed_commit_count > 0 || !ws.has_remote_branch);
+
+        if has_unpushed {
+            return Self::NeedsPush;
+        }
+
+        let Some(pr) = pr_info else {
+            return Self::NeedsPr;
+        };
+
+        if pr.ci_status == CiStatus::Failing {
+            return Self::CiFailing;
+        }
+
+        Self::Ready
+    }
 }
 
 impl std::fmt::Display for MergeReadiness {

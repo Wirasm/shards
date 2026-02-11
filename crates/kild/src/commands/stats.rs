@@ -6,7 +6,6 @@ use kild_core::BranchHealth;
 use kild_core::ConflictStatus;
 use kild_core::MergeReadiness;
 use kild_core::events;
-use kild_core::git::operations::compute_merge_readiness;
 use kild_core::session_ops;
 
 use super::helpers::{
@@ -83,7 +82,7 @@ fn handle_single_stats(
             let worktree_status =
                 kild_core::git::operations::get_worktree_status(&session.worktree_path).ok();
             let pr_info = session_ops::read_pr_info(&session.id);
-            let readiness = compute_merge_readiness(&h, &worktree_status, pr_info.as_ref());
+            let readiness = MergeReadiness::compute(&h, &worktree_status, pr_info.as_ref());
 
             info!(
                 event = "cli.stats_completed",
@@ -148,7 +147,7 @@ fn handle_all_stats(
                 let worktree_status =
                     kild_core::git::operations::get_worktree_status(&session.worktree_path).ok();
                 let pr_info = session_ops::read_pr_info(&session.id);
-                let readiness = compute_merge_readiness(&h, &worktree_status, pr_info.as_ref());
+                let readiness = MergeReadiness::compute(&h, &worktree_status, pr_info.as_ref());
                 results.push((h, readiness));
             }
             Err(msg) => {
