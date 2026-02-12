@@ -187,6 +187,11 @@ impl TerminalView {
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform;
 
+        if event.keystroke.modifiers.control && key == "tab" {
+            cx.propagate();
+            return;
+        }
+
         tracing::debug!(
             event = "ui.terminal.key_down_started",
             key = key,
@@ -237,6 +242,8 @@ impl TerminalView {
             Some(bytes) => {
                 if let Err(e) = self.terminal.write_to_pty(&bytes) {
                     tracing::error!(event = "ui.terminal.key_write_failed", error = %e);
+                    self.set_error(format!("Failed to send input: {e}"));
+                    cx.notify();
                 }
             }
             None => {

@@ -121,6 +121,109 @@ fn canonicalize_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+fn adjust_active_after_close(active: usize, closed: usize, new_len: usize) -> usize {
+    if new_len == 0 {
+        0
+    } else if active >= new_len {
+        new_len - 1
+    } else if active > closed {
+        active - 1
+    } else {
+        active
+    }
+}
+
+struct TabEntry {
+    view: gpui::Entity<crate::terminal::TerminalView>,
+    label: String,
+}
+
+struct TerminalTabs {
+    tabs: Vec<TabEntry>,
+    active: usize,
+    next_id: usize,
+}
+
+impl TerminalTabs {
+    fn new() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active: 0,
+            next_id: 1,
+        }
+    }
+
+    fn active_view(&self) -> Option<&gpui::Entity<crate::terminal::TerminalView>> {
+        self.tabs.get(self.active).map(|e| &e.view)
+    }
+
+    fn push(&mut self, view: gpui::Entity<crate::terminal::TerminalView>) {
+        let label = format!("Shell {}", self.next_id);
+        tracing::debug!(
+            event = "ui.terminal_tabs.push",
+            label = label,
+            new_len = self.tabs.len() + 1
+        );
+        self.tabs.push(TabEntry { view, label });
+        self.active = self.tabs.len() - 1;
+        self.next_id += 1;
+    }
+
+    fn close(&mut self, idx: usize) -> bool {
+        if idx >= self.tabs.len() {
+            tracing::warn!(
+                event = "ui.terminal_tabs.close_oob",
+                idx = idx,
+                len = self.tabs.len()
+            );
+            return false;
+        }
+        tracing::debug!(
+            event = "ui.terminal_tabs.close",
+            idx = idx,
+            remaining = self.tabs.len() - 1
+        );
+        self.tabs.remove(idx);
+        self.active = adjust_active_after_close(self.active, idx, self.tabs.len());
+        true
+    }
+
+    fn cycle_next(&mut self) {
+        if self.tabs.len() > 1 {
+            self.active = (self.active + 1) % self.tabs.len();
+            tracing::debug!(event = "ui.terminal_tabs.cycle_next", active = self.active);
+        }
+    }
+
+    fn cycle_prev(&mut self) {
+        if self.tabs.len() > 1 {
+            self.active = self.active.checked_sub(1).unwrap_or(self.tabs.len() - 1);
+            tracing::debug!(event = "ui.terminal_tabs.cycle_prev", active = self.active);
+        }
+    }
+
+    fn rename(&mut self, idx: usize, name: String) {
+        if let Some(entry) = self.tabs.get_mut(idx) {
+            tracing::debug!(
+                event = "ui.terminal_tabs.rename",
+                idx = idx,
+                old = entry.label,
+                new = name
+            );
+            entry.label = name;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    fn has_exited_active(&self, cx: &gpui::App) -> bool {
+        self.active_view()
+            .is_some_and(|v| v.read(cx).terminal().has_exited())
+    }
+}
+
 /// Main application view that composes the kild list, header, and create dialog.
 ///
 /// Owns application state and handles keyboard input for the create dialog.
@@ -139,10 +242,12 @@ pub struct MainView {
     path_input: Option<gpui::Entity<InputState>>,
     /// Input state for add project dialog name field.
     name_input: Option<gpui::Entity<InputState>>,
-    /// Cached terminal views keyed by session ID. Terminals persist across kild switching.
-    terminal_views: std::collections::HashMap<String, gpui::Entity<crate::terminal::TerminalView>>,
+    /// Cached terminal tabs keyed by session ID. Each kild has its own set of tabs.
+    terminal_tabs: std::collections::HashMap<String, TerminalTabs>,
     /// Session ID of the currently visible terminal, or None for dashboard view.
     active_terminal_id: Option<String>,
+    /// Active tab rename: (session_id, tab_index, input entity). Set when user clicks the active tab.
+    renaming_tab: Option<(String, usize, gpui::Entity<InputState>)>,
 }
 
 impl MainView {
@@ -283,8 +388,9 @@ impl MainView {
             note_input: None,
             path_input: None,
             name_input: None,
-            terminal_views: std::collections::HashMap::new(),
+            terminal_tabs: std::collections::HashMap::new(),
             active_terminal_id: None,
+            renaming_tab: None,
         }
     }
 
@@ -309,7 +415,8 @@ impl MainView {
     fn active_terminal_view(&self) -> Option<&gpui::Entity<crate::terminal::TerminalView>> {
         self.active_terminal_id
             .as_ref()
-            .and_then(|id| self.terminal_views.get(id))
+            .and_then(|id| self.terminal_tabs.get(id))
+            .and_then(|tabs| tabs.active_view())
     }
 
     fn prune_terminal_cache(&mut self) {
@@ -320,7 +427,7 @@ impl MainView {
             .map(|d| d.session.id.as_str())
             .collect();
 
-        self.terminal_views
+        self.terminal_tabs
             .retain(|id, _| live_ids.contains(id.as_str()));
 
         if self
@@ -551,6 +658,40 @@ impl MainView {
         self.mutate_state(cx, |s| s.close_dialog());
     }
 
+    fn add_terminal_tab(
+        &mut self,
+        session_id: &str,
+        worktree: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match crate::terminal::state::Terminal::new(Some(worktree), cx) {
+            Ok(terminal) => {
+                let view =
+                    cx.new(|cx| crate::terminal::TerminalView::from_terminal(terminal, window, cx));
+                let tabs = self
+                    .terminal_tabs
+                    .entry(session_id.to_string())
+                    .or_insert_with(TerminalTabs::new);
+                tabs.push(view);
+                true
+            }
+            Err(e) => {
+                tracing::error!(event = "ui.terminal.create_failed", error = %e);
+                self.state
+                    .push_error(format!("Terminal creation failed: {}", e));
+                false
+            }
+        }
+    }
+
+    fn focus_active_terminal(&self, window: &mut Window, cx: &gpui::App) {
+        if let Some(view) = self.active_terminal_view() {
+            let h = view.read(cx).focus_handle(cx).clone();
+            window.focus(&h);
+        }
+    }
+
     /// Handle kild row click - select for detail panel and open its terminal.
     pub fn on_kild_select(
         &mut self,
@@ -568,43 +709,21 @@ impl MainView {
         };
         let worktree = display.session.worktree_path.clone();
 
-        // Recycle exited terminal
-        if self
-            .terminal_views
-            .get(&id)
-            .is_some_and(|v| v.read(cx).terminal().has_exited())
+        if let Some(tabs) = self.terminal_tabs.get_mut(&id)
+            && tabs.has_exited_active(cx)
         {
-            self.terminal_views.remove(&id);
+            tabs.close(tabs.active);
         }
 
-        // Create only if not cached
-        if !self.terminal_views.contains_key(&id) {
-            match crate::terminal::state::Terminal::new(Some(worktree), cx) {
-                Ok(terminal) => {
-                    let view = cx.new(|cx| {
-                        crate::terminal::TerminalView::from_terminal(terminal, window, cx)
-                    });
-                    self.terminal_views.insert(id.clone(), view);
-                }
-                Err(e) => {
-                    tracing::error!(event = "ui.terminal.create_failed", error = %e);
-                    self.state
-                        .push_error(format!("Terminal creation failed: {}", e));
-                    cx.notify();
-                    return;
-                }
-            }
+        if self.terminal_tabs.get(&id).is_none_or(|t| t.is_empty())
+            && !self.add_terminal_tab(&id, worktree, window, cx)
+        {
+            cx.notify();
+            return;
         }
 
-        // Show this terminal
-        self.active_terminal_id = Some(id.clone());
-
-        // Focus it
-        if let Some(v) = self.terminal_views.get(&id) {
-            let h = v.read(cx).focus_handle(cx).clone();
-            window.focus(&h);
-        }
-
+        self.active_terminal_id = Some(id);
+        self.focus_active_terminal(window, cx);
         cx.notify();
     }
 
@@ -1040,14 +1159,225 @@ impl MainView {
         cx.notify();
     }
 
-    /// Handle keyboard shortcuts for dialogs and terminal toggling.
-    ///
-    /// Text input is handled by gpui-component's Input widget internally.
-    /// This handler manages Escape (close), Enter (submit), and Tab (agent cycling).
-    ///
-    /// When a terminal view is shown, all non-reserved keys are propagated to the
-    /// child TerminalView. Reserved keys (Ctrl+T, Ctrl+D) are consumed here for
-    /// terminal toggling.
+    fn on_select_tab(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_already_active = self
+            .terminal_tabs
+            .get(session_id)
+            .is_some_and(|tabs| tabs.active == idx);
+
+        if is_already_active {
+            self.start_rename(session_id, idx, window, cx);
+            return;
+        }
+
+        if let Some(tabs) = self.terminal_tabs.get_mut(session_id)
+            && idx < tabs.tabs.len()
+        {
+            tabs.active = idx;
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn start_rename(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_label = self
+            .terminal_tabs
+            .get(session_id)
+            .and_then(|tabs| tabs.tabs.get(idx))
+            .map(|e| e.label.clone())
+            .unwrap_or_default();
+
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(current_label));
+        self.renaming_tab = Some((session_id.to_string(), idx, input));
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((session_id, idx, input)) = self.renaming_tab.take() {
+            let new_name = input.read(cx).value().to_string();
+            let new_name = new_name.trim();
+            if !new_name.is_empty()
+                && let Some(tabs) = self.terminal_tabs.get_mut(&session_id)
+            {
+                tabs.rename(idx, new_name.to_string());
+            }
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming_tab = None;
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn on_close_tab(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tabs) = self.terminal_tabs.get_mut(session_id) {
+            tabs.close(idx);
+            if tabs.is_empty() {
+                self.active_terminal_id = None;
+                window.focus(&self.focus_handle);
+                cx.notify();
+                return;
+            }
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn on_add_tab(&mut self, session_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(display) = self
+            .state
+            .displays()
+            .iter()
+            .find(|d| d.session.id == session_id)
+        else {
+            return;
+        };
+        let worktree = display.session.worktree_path.clone();
+        self.add_terminal_tab(session_id, worktree, window, cx);
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn render_tab_bar(&self, session_id: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(tabs) = self.terminal_tabs.get(session_id) else {
+            return div().into_any_element();
+        };
+
+        let session_id_owned = session_id.to_string();
+
+        div()
+            .flex()
+            .items_center()
+            .px(px(theme::SPACE_2))
+            .py(px(theme::SPACE_1))
+            .bg(theme::surface())
+            .border_b_1()
+            .border_color(theme::border_subtle())
+            .gap(px(theme::SPACE_1))
+            .children(tabs.tabs.iter().enumerate().map(|(idx, entry)| {
+                let is_active = idx == tabs.active;
+                let close_sid = session_id_owned.clone();
+                let select_sid = session_id_owned.clone();
+
+                let is_renaming = self
+                    .renaming_tab
+                    .as_ref()
+                    .is_some_and(|(s, i, _)| s == session_id && *i == idx);
+
+                if is_renaming {
+                    let input = self
+                        .renaming_tab
+                        .as_ref()
+                        .map(|(_, _, input)| input.clone())
+                        .unwrap();
+                    return div()
+                        .flex()
+                        .items_center()
+                        .px(px(theme::SPACE_2))
+                        .py(px(2.0))
+                        .rounded(px(theme::RADIUS_SM))
+                        .bg(theme::elevated())
+                        .border_b_2()
+                        .border_color(theme::ice())
+                        .text_size(px(theme::TEXT_SM))
+                        .child(input)
+                        .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
+                            let key = event.keystroke.key.as_str();
+                            if key == "enter" {
+                                view.commit_rename(window, cx);
+                            } else if key == "escape" {
+                                view.cancel_rename(window, cx);
+                            }
+                        }))
+                        .into_any_element();
+                }
+
+                let label = entry.label.clone();
+
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::SPACE_1))
+                    .px(px(theme::SPACE_2))
+                    .py(px(2.0))
+                    .rounded(px(theme::RADIUS_SM))
+                    .cursor_pointer()
+                    .when(is_active, |d| {
+                        d.bg(theme::elevated())
+                            .text_color(theme::text_bright())
+                            .border_b_2()
+                            .border_color(theme::ice())
+                    })
+                    .when(!is_active, |d| {
+                        d.text_color(theme::text_muted())
+                            .hover(|d| d.text_color(theme::text()))
+                    })
+                    .text_size(px(theme::TEXT_SM))
+                    .child(label)
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_XS))
+                            .text_color(theme::text_muted())
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(theme::ember()))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |view, _, window, cx| {
+                                    view.on_close_tab(&close_sid, idx, window, cx);
+                                }),
+                            )
+                            .child("×"),
+                    )
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |view, _, window, cx| {
+                            view.on_select_tab(&select_sid, idx, window, cx);
+                        }),
+                    )
+                    .into_any_element()
+            }))
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_SM))
+                    .text_color(theme::text_muted())
+                    .cursor_pointer()
+                    .hover(|d| d.text_color(theme::ice()))
+                    .px(px(theme::SPACE_2))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener({
+                            let sid = session_id_owned.clone();
+                            move |view, _, window, cx| {
+                                view.on_add_tab(&sid, window, cx);
+                            }
+                        }),
+                    )
+                    .child("+"),
+            )
+            .into_any_element()
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         use crate::state::DialogState;
 
@@ -1061,6 +1391,33 @@ impl MainView {
             self.active_terminal_id = None;
             window.focus(&self.focus_handle);
             cx.notify();
+            return;
+        }
+
+        // Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs
+        if key_str == "tab" && event.keystroke.modifiers.control {
+            let should_focus = if let Some(id) = &self.active_terminal_id {
+                if let Some(tabs) = self.terminal_tabs.get_mut(id) {
+                    if tabs.tabs.len() > 1 {
+                        if event.keystroke.modifiers.shift {
+                            tabs.cycle_prev();
+                        } else {
+                            tabs.cycle_next();
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if should_focus {
+                self.focus_active_terminal(window, cx);
+                cx.notify();
+            }
             return;
         }
 
@@ -1279,12 +1636,22 @@ impl Render for MainView {
                         })),
                 )
             })
-            // Main content: terminal (full-area) or 3-column dashboard
+            // Main content: terminal with tab bar (full-area) or 3-column dashboard
             .map(|this| {
                 if let Some(id) = &self.active_terminal_id
-                    && let Some(term_view) = self.terminal_views.get(id)
+                    && let Some(tabs) = self.terminal_tabs.get(id)
+                    && let Some(active_view) = tabs.active_view()
                 {
-                    return this.child(div().flex_1().overflow_hidden().child(term_view.clone()));
+                    let id = id.clone();
+                    return this.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(self.render_tab_bar(&id, cx))
+                            .child(div().flex_1().overflow_hidden().child(active_view.clone())),
+                    );
                 }
                 this.child(
                     div()
@@ -1468,5 +1835,48 @@ mod tests {
             result, symlink_path,
             "Result should differ from symlink path"
         );
+    }
+
+    // --- TerminalTabs index adjustment tests ---
+
+    #[test]
+    fn test_adjust_active_close_only_tab() {
+        assert_eq!(adjust_active_after_close(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_active_in_middle() {
+        // [A, B, C], active=1, close=1 → active stays 1 (now pointing to former C)
+        assert_eq!(adjust_active_after_close(1, 1, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_before_active() {
+        // [A, B, C], active=2, close=0 → active becomes 1
+        assert_eq!(adjust_active_after_close(2, 0, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_after_active() {
+        // [A, B, C], active=0, close=2 → active stays 0
+        assert_eq!(adjust_active_after_close(0, 2, 2), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_last_when_active_is_last() {
+        // [A, B, C], active=2, close=2 → active becomes 1 (new last)
+        assert_eq!(adjust_active_after_close(2, 2, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_first_of_two() {
+        // [A, B], active=0, close=0 → active stays 0
+        assert_eq!(adjust_active_after_close(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_second_of_two_when_active() {
+        // [A, B], active=1, close=1 → active becomes 0
+        assert_eq!(adjust_active_after_close(1, 1, 1), 0);
     }
 }
