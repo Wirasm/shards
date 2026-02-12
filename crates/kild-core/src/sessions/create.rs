@@ -259,13 +259,13 @@ pub fn create_session(
                 Ok(()) => {
                     debug!(
                         event = "core.session.preemptive_cleanup_completed",
-                        session_id = session_id,
+                        spawn_id = spawn_id,
                     );
                 }
                 Err(e) => {
                     debug!(
                         event = "core.session.preemptive_cleanup_skipped",
-                        session_id = session_id,
+                        spawn_id = spawn_id,
                         error = %e,
                     );
                 }
@@ -315,10 +315,16 @@ pub fn create_session(
                         })
                         .unwrap_or_default();
 
-                let _ = crate::daemon::client::destroy_daemon_session(
+                if let Err(e) = crate::daemon::client::destroy_daemon_session(
                     &daemon_result.daemon_session_id,
                     true,
-                );
+                ) {
+                    warn!(
+                        event = "core.session.create_daemon_cleanup_failed",
+                        daemon_session_id = %daemon_result.daemon_session_id,
+                        error = %e,
+                    );
+                }
 
                 return Err(SessionError::DaemonPtyExitedEarly {
                     exit_code,
