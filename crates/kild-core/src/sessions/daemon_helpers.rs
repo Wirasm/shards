@@ -1,4 +1,6 @@
-use tracing::{info, warn};
+use std::path::Path;
+
+use tracing::{debug, info, warn};
 
 use crate::agents;
 use crate::sessions::errors::SessionError;
@@ -50,6 +52,153 @@ pub(crate) fn ensure_shim_binary() -> Result<(), String> {
     Ok(())
 }
 
+/// Ensure the Codex notify hook script is installed at `<home>/.kild/hooks/codex-notify`.
+///
+/// This script is called by Codex CLI's `notify` config. It reads JSON from stdin,
+/// maps event types to KILD agent statuses, and calls `kild agent-status`.
+/// Event mappings: `agent-turn-complete` → `idle`, `approval-requested` → `waiting`.
+/// Idempotent: skips if script already exists.
+fn ensure_codex_notify_hook_with_home(home: &Path) -> Result<(), String> {
+    let hooks_dir = home.join(".kild").join("hooks");
+    let hook_path = hooks_dir.join("codex-notify");
+
+    if hook_path.exists() {
+        debug!(
+            event = "core.session.codex_notify_hook_already_exists",
+            path = %hook_path.display()
+        );
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&hooks_dir)
+        .map_err(|e| format!("failed to create {}: {}", hooks_dir.display(), e))?;
+
+    let script = r#"#!/bin/sh
+# KILD Codex notify hook — auto-generated, do not edit.
+# Called by Codex CLI via notify config with JSON on stdin.
+# Maps Codex events to KILD agent statuses.
+INPUT=$(cat)
+EVENT_TYPE=$(echo "$INPUT" | grep -o '"type":"[^"]*"' | head -1 | sed 's/"type":"//;s/"//')
+case "$EVENT_TYPE" in
+  agent-turn-complete) kild agent-status --self idle --notify ;;
+  approval-requested)  kild agent-status --self waiting --notify ;;
+esac
+"#;
+
+    std::fs::write(&hook_path, script)
+        .map_err(|e| format!("failed to write {}: {}", hook_path.display(), e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("failed to chmod {}: {}", hook_path.display(), e))?;
+    }
+
+    info!(
+        event = "core.session.codex_notify_hook_installed",
+        path = %hook_path.display()
+    );
+
+    Ok(())
+}
+
+pub(crate) fn ensure_codex_notify_hook() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("HOME not set — cannot install Codex notify hook")?;
+    ensure_codex_notify_hook_with_home(&home)
+}
+
+/// Ensure Codex CLI config has the KILD notify hook configured.
+///
+/// Patches `<home>/.codex/config.toml` to add `notify = ["<path>"]` if the notify
+/// field is missing or empty. Respects existing user configuration — if notify
+/// is already set to a non-empty array, it is left unchanged and this function
+/// returns Ok without modifying the file.
+fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
+    let codex_dir = home.join(".codex");
+    let config_path = codex_dir.join("config.toml");
+    let hook_path = home.join(".kild").join("hooks").join("codex-notify");
+    let hook_path_str = hook_path.display().to_string();
+
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("failed to read {}: {}", config_path.display(), e))?;
+
+        // Parse to check if notify is already configured with a non-empty array.
+        // Propagate parse errors so we don't blindly append to a malformed file.
+        let parsed = content.parse::<toml::Value>().map_err(|e| {
+            format!(
+                "failed to parse {}: {} — fix TOML syntax or remove the file to reset",
+                config_path.display(),
+                e
+            )
+        })?;
+
+        if let Some(toml::Value::Array(arr)) = parsed.get("notify")
+            && !arr.is_empty()
+        {
+            info!(event = "core.session.codex_config_already_configured");
+            return Ok(());
+        }
+
+        // notify is missing or empty — append it, preserving existing content
+        let mut new_content = content;
+        if !new_content.ends_with('\n') && !new_content.is_empty() {
+            new_content.push('\n');
+        }
+        new_content.push_str(&format!("notify = [\"{}\"]\n", hook_path_str));
+
+        std::fs::write(&config_path, new_content)
+            .map_err(|e| format!("failed to write {}: {}", config_path.display(), e))?;
+    } else {
+        // Config doesn't exist — create it with just the notify line
+        std::fs::create_dir_all(&codex_dir)
+            .map_err(|e| format!("failed to create {}: {}", codex_dir.display(), e))?;
+        std::fs::write(&config_path, format!("notify = [\"{}\"]\n", hook_path_str))
+            .map_err(|e| format!("failed to write {}: {}", config_path.display(), e))?;
+    }
+
+    info!(
+        event = "core.session.codex_config_patched",
+        path = %config_path.display()
+    );
+
+    Ok(())
+}
+
+pub(crate) fn ensure_codex_config() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("HOME not set — cannot patch Codex config")?;
+    ensure_codex_config_with_home(&home)
+}
+
+/// Install Codex notify hook and patch config if needed.
+///
+/// Best-effort: warns on failure but doesn't block session creation.
+/// No-op for non-Codex agents.
+pub(crate) fn setup_codex_integration(agent: &str) {
+    if agent != "codex" {
+        return;
+    }
+
+    if let Err(msg) = ensure_codex_notify_hook() {
+        warn!(event = "core.session.codex_notify_hook_failed", error = %msg);
+        eprintln!("Warning: {msg}");
+        eprintln!("Codex status reporting may not work.");
+    }
+
+    if let Err(msg) = ensure_codex_config() {
+        warn!(event = "core.session.codex_config_patch_failed", error = %msg);
+        eprintln!("Warning: {msg}");
+        let hook_path = dirs::home_dir()
+            .map(|h| h.join(".kild/hooks/codex-notify").display().to_string())
+            .unwrap_or_else(|| "<HOME>/.kild/hooks/codex-notify".to_string());
+        let config_path = dirs::home_dir()
+            .map(|h| h.join(".codex/config.toml").display().to_string())
+            .unwrap_or_else(|| "<HOME>/.codex/config.toml".to_string());
+        eprintln!("Add notify = [\"{hook_path}\"] to {config_path} manually.");
+    }
+}
+
 /// Build the command, args, env vars, and login shell flag for a daemon PTY create request.
 ///
 /// Both `create_session` and `open_session` need to parse the agent command string
@@ -64,12 +213,16 @@ pub(crate) fn ensure_shim_binary() -> Result<(), String> {
 ///
 /// The `session_id` is used to set up tmux shim environment variables so that agents
 /// running inside daemon PTYs see a `$TMUX` environment and can use pane-based workflows.
+///
+/// The `branch` is used to inject `KILD_SESSION_BRANCH` for agents like Codex that need
+/// to report their status back to KILD via notify hooks.
 #[allow(clippy::type_complexity)]
 pub(super) fn build_daemon_create_request(
     agent_command: &str,
     agent_name: &str,
     session_id: &str,
     task_list_id: Option<&str>,
+    branch: &str,
 ) -> Result<(String, Vec<String>, Vec<(String, String)>, bool), SessionError> {
     let use_login_shell = agent_name == "shell";
 
@@ -161,6 +314,10 @@ pub(super) fn build_daemon_create_request(
         env_vars.extend(task_env);
     }
 
+    // $KILD_SESSION_BRANCH for Codex notify hook status reporting
+    let codex_env = agents::resume::codex_env_vars(agent_name, branch);
+    env_vars.extend(codex_env);
+
     Ok((cmd, cmd_args, env_vars, use_login_shell))
 }
 
@@ -224,9 +381,14 @@ mod tests {
 
     #[test]
     fn test_build_daemon_request_agent_wraps_in_login_shell() {
-        let (cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("claude --agent --verbose", "claude", "test-session", None)
-                .unwrap();
+        let (cmd, args, _env, use_login_shell) = build_daemon_create_request(
+            "claude --agent --verbose",
+            "claude",
+            "test-session",
+            None,
+            "test-branch",
+        )
+        .unwrap();
         assert!(!use_login_shell, "Agent should not use login shell mode");
         // Agent commands are wrapped in $SHELL -lc 'exec <command>'
         assert!(
@@ -246,7 +408,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_single_word_agent_wraps_in_login_shell() {
         let (cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("claude", "claude", "test-session", None).unwrap();
+            build_daemon_create_request("claude", "claude", "test-session", None, "test-branch")
+                .unwrap();
         assert!(!use_login_shell);
         assert_eq!(args.len(), 2);
         assert_eq!(args[0], "-lc");
@@ -261,14 +424,15 @@ mod tests {
     #[test]
     fn test_build_daemon_request_bare_shell_uses_login_shell() {
         let (_cmd, args, _env, use_login_shell) =
-            build_daemon_create_request("/bin/zsh", "shell", "test-session", None).unwrap();
+            build_daemon_create_request("/bin/zsh", "shell", "test-session", None, "test-branch")
+                .unwrap();
         assert!(use_login_shell, "Bare shell should use login shell mode");
         assert!(args.is_empty(), "Login shell mode should have no args");
     }
 
     #[test]
     fn test_build_daemon_request_empty_command_returns_error() {
-        let result = build_daemon_create_request("", "claude", "test-session", None);
+        let result = build_daemon_create_request("", "claude", "test-session", None, "test-branch");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -290,7 +454,8 @@ mod tests {
 
     #[test]
     fn test_build_daemon_request_whitespace_only_command_returns_error() {
-        let result = build_daemon_create_request("   ", "kiro", "test-session", None);
+        let result =
+            build_daemon_create_request("   ", "kiro", "test-session", None, "test-branch");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -305,7 +470,7 @@ mod tests {
     fn test_build_daemon_request_bare_shell_empty_command_still_works() {
         // Bare shell with empty-ish command: since use_login_shell=true,
         // the command is passed through for logging only (daemon ignores it)
-        let result = build_daemon_create_request("", "shell", "test-session", None);
+        let result = build_daemon_create_request("", "shell", "test-session", None, "test-branch");
         assert!(result.is_ok(), "Bare shell should accept empty command");
         let (_cmd, _args, _env, use_login_shell) = result.unwrap();
         assert!(use_login_shell);
@@ -318,6 +483,7 @@ mod tests {
             "claude",
             "test-session",
             None,
+            "test-branch",
         )
         .unwrap();
         assert!(
@@ -330,7 +496,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_collects_env_vars() {
         let (_cmd, _args, env_vars, _) =
-            build_daemon_create_request("claude", "claude", "test-session", None).unwrap();
+            build_daemon_create_request("claude", "claude", "test-session", None, "test-branch")
+                .unwrap();
 
         // PATH and HOME should always be present in the environment
         let keys: Vec<&str> = env_vars.iter().map(|(k, _)| k.as_str()).collect();
@@ -349,7 +516,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_includes_shim_env_vars() {
         let (_cmd, _args, env_vars, _) =
-            build_daemon_create_request("claude", "claude", "proj_my-branch", None).unwrap();
+            build_daemon_create_request("claude", "claude", "proj_my-branch", None, "my-branch")
+                .unwrap();
 
         let keys: Vec<&str> = env_vars.iter().map(|(k, _)| k.as_str()).collect();
 
@@ -404,6 +572,7 @@ mod tests {
             "claude",
             "myproject_my-branch",
             Some("kild-myproject_my-branch"),
+            "my-branch",
         )
         .unwrap();
 
@@ -431,6 +600,7 @@ mod tests {
                 agent_name,
                 "test-session",
                 Some("kild-test"),
+                "test-branch",
             )
             .unwrap();
 
@@ -461,7 +631,8 @@ mod tests {
     #[test]
     fn test_build_daemon_request_no_task_list_env_var_when_none() {
         let (_cmd, _args, env_vars, _) =
-            build_daemon_create_request("claude", "claude", "test-session", None).unwrap();
+            build_daemon_create_request("claude", "claude", "test-session", None, "test-branch")
+                .unwrap();
 
         let has_task_list = env_vars
             .iter()
@@ -470,5 +641,299 @@ mod tests {
             !has_task_list,
             "CLAUDE_CODE_TASK_LIST_ID should not be set when task_list_id is None"
         );
+    }
+
+    #[test]
+    fn test_build_daemon_request_includes_codex_env_vars() {
+        let (_cmd, _args, env_vars, _) =
+            build_daemon_create_request("codex", "codex", "test-session", None, "my-feature")
+                .unwrap();
+
+        let branch_val = env_vars
+            .iter()
+            .find(|(k, _)| k == "KILD_SESSION_BRANCH")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            branch_val,
+            Some("my-feature"),
+            "KILD_SESSION_BRANCH should be set for codex agent"
+        );
+    }
+
+    #[test]
+    fn test_build_daemon_request_no_codex_env_for_claude() {
+        let (_cmd, _args, env_vars, _) =
+            build_daemon_create_request("claude", "claude", "test-session", None, "my-feature")
+                .unwrap();
+
+        let has_branch = env_vars.iter().any(|(k, _)| k == "KILD_SESSION_BRANCH");
+        assert!(
+            !has_branch,
+            "KILD_SESSION_BRANCH should not be set for claude agent"
+        );
+    }
+
+    #[test]
+    fn test_ensure_codex_notify_hook_creates_script() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_codex_hook_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        let hook_path = temp_home.join(".kild").join("hooks").join("codex-notify");
+
+        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        assert!(result.is_ok(), "Hook install should succeed: {:?}", result);
+        assert!(hook_path.exists(), "Hook script should exist");
+
+        let content = fs::read_to_string(&hook_path).unwrap();
+        assert!(
+            content.starts_with("#!/bin/sh"),
+            "Script should have shebang"
+        );
+        assert!(
+            content.contains("agent-turn-complete"),
+            "Script should handle agent-turn-complete"
+        );
+        assert!(
+            content.contains("approval-requested"),
+            "Script should handle approval-requested"
+        );
+        assert!(
+            content.contains("kild agent-status --self idle --notify"),
+            "Script should call kild agent-status for idle"
+        );
+        assert!(
+            content.contains("kild agent-status --self waiting --notify"),
+            "Script should call kild agent-status for waiting"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&hook_path).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "Script should be executable, mode: {:o}",
+                mode
+            );
+        }
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_notify_hook_idempotent() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_codex_hook_idem_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        let hook_path = temp_home.join(".kild").join("hooks").join("codex-notify");
+
+        // First call creates the script
+        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        assert!(result.is_ok());
+        let content1 = fs::read_to_string(&hook_path).unwrap();
+
+        // Second call should succeed without changing content
+        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        assert!(result.is_ok());
+        let content2 = fs::read_to_string(&hook_path).unwrap();
+        assert_eq!(
+            content1, content2,
+            "Content should not change on second call"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_patches_empty_config() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_codex_cfg_empty_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        let codex_dir = temp_home.join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        fs::write(codex_dir.join("config.toml"), "").unwrap();
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(result.is_ok(), "Config patch should succeed: {:?}", result);
+
+        let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert!(
+            content.contains("notify = [\""),
+            "Config should contain notify setting, got: {}",
+            content
+        );
+        assert!(
+            content.contains("codex-notify"),
+            "Config should reference codex-notify hook, got: {}",
+            content
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_preserves_existing_notify() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_codex_cfg_existing_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let codex_dir = temp_home.join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        fs::write(
+            codex_dir.join("config.toml"),
+            "notify = [\"my-custom-program\"]\n",
+        )
+        .unwrap();
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(result.is_ok());
+
+        let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert!(
+            content.contains("my-custom-program"),
+            "Custom notify should be preserved"
+        );
+        assert!(
+            !content.contains("codex-notify"),
+            "Should NOT overwrite user's custom notify config"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_patches_empty_notify_array() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_codex_cfg_empty_arr_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let codex_dir = temp_home.join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        fs::write(codex_dir.join("config.toml"), "notify = []\n").unwrap();
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(result.is_ok());
+
+        let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert!(
+            content.contains("codex-notify"),
+            "Empty notify array should be patched, got: {}",
+            content
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_creates_new_config() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_codex_cfg_new_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        // Don't create .codex dir — it shouldn't exist yet
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(
+            result.is_ok(),
+            "Should create config from scratch: {:?}",
+            result
+        );
+
+        let config_path = temp_home.join(".codex").join("config.toml");
+        assert!(config_path.exists(), "Config file should be created");
+
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("notify = [\""),
+            "New config should contain notify, got: {}",
+            content
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_preserves_existing_content() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_codex_cfg_preserve_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let codex_dir = temp_home.join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        fs::write(
+            codex_dir.join("config.toml"),
+            "[model]\nprovider = \"openai\"\n",
+        )
+        .unwrap();
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(result.is_ok());
+
+        let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert!(
+            content.contains("[model]"),
+            "Existing content should be preserved"
+        );
+        assert!(
+            content.contains("provider = \"openai\""),
+            "Existing settings should be preserved"
+        );
+        assert!(content.contains("codex-notify"), "notify should be added");
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_codex_config_rejects_malformed_toml() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_codex_cfg_malformed_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let codex_dir = temp_home.join(".codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        fs::write(codex_dir.join("config.toml"), "[invalid toml syntax\n").unwrap();
+
+        let result = ensure_codex_config_with_home(&temp_home);
+        assert!(result.is_err(), "Should fail on malformed TOML");
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("failed to parse"),
+            "Error should mention parse failure, got: {}",
+            err
+        );
+        assert!(
+            err.contains("fix TOML syntax"),
+            "Error should suggest fixing TOML syntax, got: {}",
+            err
+        );
+
+        // Verify the file was NOT modified
+        let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert_eq!(
+            content, "[invalid toml syntax\n",
+            "Malformed file should not be modified"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
     }
 }

@@ -6,7 +6,9 @@ use crate::git;
 use crate::sessions::{errors::SessionError, persistence, ports, types::*, validation};
 use crate::terminal;
 
-use super::daemon_helpers::{build_daemon_create_request, compute_spawn_id, ensure_shim_binary};
+use super::daemon_helpers::{
+    build_daemon_create_request, compute_spawn_id, ensure_shim_binary, setup_codex_integration,
+};
 
 pub fn create_session(
     request: CreateSessionRequest,
@@ -193,11 +195,18 @@ pub fn create_session(
 
     let initial_agent = match request.runtime_mode {
         crate::state::types::RuntimeMode::Terminal => {
+            setup_codex_integration(&validated.agent);
+
             // Terminal path: spawn in external terminal
             // Prepend task list env vars via `env` command for agents that support it.
             // Uses `env KEY=val command` so it works with `exec` (env is an executable).
-            let terminal_command = if let Some(ref tlid) = task_list_id {
-                let env_prefix = agents::resume::task_list_env_vars(&agent, tlid);
+            let terminal_command = {
+                let mut env_prefix: Vec<(String, String)> = Vec::new();
+                if let Some(ref tlid) = task_list_id {
+                    env_prefix.extend(agents::resume::task_list_env_vars(&agent, tlid));
+                }
+                env_prefix.extend(agents::resume::codex_env_vars(&agent, &validated.name));
+
                 if env_prefix.is_empty() {
                     validated.command.clone()
                 } else {
@@ -207,8 +216,6 @@ pub fn create_session(
                         .collect();
                     format!("env {} {}", env_args.join(" "), validated.command)
                 }
-            } else {
-                validated.command.clone()
             };
             let spawn_result = terminal::handler::spawn_terminal(
                 &worktree.path,
@@ -253,6 +260,8 @@ pub fn create_session(
                 eprintln!("Agent teams will not work in this session.");
             }
 
+            setup_codex_integration(&validated.agent);
+
             // Pre-emptive cleanup: remove stale daemon session if previous destroy failed.
             // Daemon-not-running and session-not-found are expected (normal case).
             match crate::daemon::client::destroy_daemon_session(&spawn_id, true) {
@@ -276,6 +285,7 @@ pub fn create_session(
                 &validated.agent,
                 &session_id,
                 task_list_id.as_deref(),
+                &validated.name,
             )?;
 
             let daemon_request = crate::daemon::client::DaemonCreateRequest {

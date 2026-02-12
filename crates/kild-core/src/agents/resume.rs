@@ -51,6 +51,20 @@ pub fn task_list_env_vars(agent: &str, task_list_id: &str) -> Vec<(String, Strin
     }
 }
 
+/// Build env vars for Codex agent sessions.
+///
+/// Returns `KILD_SESSION_BRANCH` so the Codex notify hook can identify
+/// which kild session to report status for. This serves as a fallback when
+/// `--self` PWD detection is unavailable (e.g., the hook runs from outside
+/// the worktree directory).
+/// Returns an empty vec for non-Codex agents.
+pub fn codex_env_vars(agent: &str, branch: &str) -> Vec<(String, String)> {
+    match agent {
+        "codex" => vec![("KILD_SESSION_BRANCH".into(), branch.into())],
+        _ => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +163,27 @@ mod tests {
             assert!(
                 vars.is_empty(),
                 "agent '{}' should not have task list env vars",
+                agent
+            );
+        }
+    }
+
+    #[test]
+    fn test_codex_env_vars_codex_agent() {
+        let vars = codex_env_vars("codex", "my-feature");
+        assert_eq!(
+            vars,
+            vec![("KILD_SESSION_BRANCH".to_string(), "my-feature".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_codex_env_vars_other_agents() {
+        for agent in &["claude", "kiro", "gemini", "amp", "opencode"] {
+            let vars = codex_env_vars(agent, "my-branch");
+            assert!(
+                vars.is_empty(),
+                "agent '{}' should not have codex env vars",
                 agent
             );
         }
