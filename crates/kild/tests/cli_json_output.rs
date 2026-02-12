@@ -932,7 +932,12 @@ fn test_status_nonexistent_without_json_uses_stderr() {
 #[test]
 fn test_agent_status_json_nonexistent_returns_json_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_kild"))
-        .args(["agent-status", "nonexistent-branch-xyz-12345", "working", "--json"])
+        .args([
+            "agent-status",
+            "nonexistent-branch-xyz-12345",
+            "working",
+            "--json",
+        ])
         .output()
         .expect("Failed to execute 'kild agent-status --json'");
 
