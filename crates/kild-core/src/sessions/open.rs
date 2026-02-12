@@ -6,7 +6,9 @@ use crate::sessions::{errors::SessionError, persistence, types::*};
 use crate::terminal;
 use crate::terminal::types::SpawnResult;
 
-use super::daemon_helpers::{build_daemon_create_request, compute_spawn_id};
+use super::daemon_helpers::{
+    build_daemon_create_request, compute_spawn_id, ensure_codex_config, ensure_codex_notify_hook,
+};
 
 /// Resolve the effective runtime mode for `open_session`.
 ///
@@ -254,12 +256,32 @@ pub fn open_session(
         // Auto-start daemon if not running (config.daemon.auto_start, default: true)
         crate::daemon::ensure_daemon_running(&kild_config)?;
 
+        // Codex: install notify hook and patch config
+        if agent == "codex" {
+            if let Err(msg) = ensure_codex_notify_hook() {
+                warn!(event = "core.session.codex_notify_hook_failed", error = %msg);
+                eprintln!("Warning: {}", msg);
+                eprintln!("Codex status reporting may not work.");
+            }
+            if let Err(msg) = ensure_codex_config() {
+                warn!(event = "core.session.codex_config_patch_failed", error = %msg);
+                eprintln!("Warning: {}", msg);
+                eprintln!(
+                    "Add notify = [\"{}\"] to ~/.codex/config.toml manually.",
+                    dirs::home_dir()
+                        .map(|h| h.join(".kild/hooks/codex-notify").display().to_string())
+                        .unwrap_or_else(|| "~/.kild/hooks/codex-notify".to_string())
+                );
+            }
+        }
+
         // Daemon path: create new daemon PTY (uses shared helper with create_session)
         let (cmd, cmd_args, env_vars, use_login_shell) = build_daemon_create_request(
             &agent_command,
             &agent,
             &session.id,
             new_task_list_id.as_deref(),
+            &session.branch,
         )?;
 
         let daemon_request = crate::daemon::client::DaemonCreateRequest {
@@ -347,11 +369,35 @@ pub fn open_session(
             Some(daemon_result.daemon_session_id),
         )?
     } else {
+        // Codex: install notify hook and patch config
+        if agent == "codex" {
+            if let Err(msg) = ensure_codex_notify_hook() {
+                warn!(event = "core.session.codex_notify_hook_failed", error = %msg);
+                eprintln!("Warning: {}", msg);
+                eprintln!("Codex status reporting may not work.");
+            }
+            if let Err(msg) = ensure_codex_config() {
+                warn!(event = "core.session.codex_config_patch_failed", error = %msg);
+                eprintln!("Warning: {}", msg);
+                eprintln!(
+                    "Add notify = [\"{}\"] to ~/.codex/config.toml manually.",
+                    dirs::home_dir()
+                        .map(|h| h.join(".kild/hooks/codex-notify").display().to_string())
+                        .unwrap_or_else(|| "~/.kild/hooks/codex-notify".to_string())
+                );
+            }
+        }
+
         // Terminal path: spawn in external terminal
         // Prepend task list env vars via `env` command for agents that support it.
         // Uses `env KEY=val command` so it works with `exec` (env is an executable).
-        let terminal_command = if let Some(ref tlid) = new_task_list_id {
-            let env_prefix = agents::resume::task_list_env_vars(&agent, tlid);
+        let terminal_command = {
+            let mut env_prefix: Vec<(String, String)> = Vec::new();
+            if let Some(ref tlid) = new_task_list_id {
+                env_prefix.extend(agents::resume::task_list_env_vars(&agent, tlid));
+            }
+            env_prefix.extend(agents::resume::codex_env_vars(&agent, &session.branch));
+
             if env_prefix.is_empty() {
                 agent_command.clone()
             } else {
@@ -361,8 +407,6 @@ pub fn open_session(
                     .collect();
                 format!("env {} {}", env_args.join(" "), agent_command)
             }
-        } else {
-            agent_command.clone()
         };
         let spawn_result = terminal::handler::spawn_terminal(
             &session.worktree_path,
