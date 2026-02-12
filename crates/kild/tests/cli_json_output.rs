@@ -93,7 +93,7 @@ fn test_list_json_empty_returns_empty_array() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let sessions = parse_list_sessions(&stdout);
 
-    // If sessions is empty, verify fleet_summary has zeros
+    // If sessions is empty, verify fleet_summary has zeros for all fields
     if sessions.is_empty() {
         let value: serde_json::Value =
             serde_json::from_str(&stdout).expect("stdout should be valid JSON");
@@ -103,6 +103,14 @@ fn test_list_json_empty_returns_empty_array() {
         assert_eq!(summary["total"], 0, "empty fleet should have total=0");
         assert_eq!(summary["active"], 0, "empty fleet should have active=0");
         assert_eq!(summary["stopped"], 0, "empty fleet should have stopped=0");
+        assert_eq!(
+            summary["conflicts"], 0,
+            "empty fleet should have conflicts=0"
+        );
+        assert_eq!(
+            summary["needs_push"], 0,
+            "empty fleet should have needs_push=0"
+        );
     }
 }
 
@@ -670,4 +678,137 @@ fn test_list_json_process_status_values() {
             ps
         );
     }
+}
+
+/// Verify fleet_summary totals are consistent with sessions array
+#[test]
+fn test_fleet_summary_consistency_with_sessions() {
+    let output = run_kild_list_json();
+
+    if !output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+
+    let sessions = value["sessions"]
+        .as_array()
+        .expect("should have sessions array");
+    let summary = value
+        .get("fleet_summary")
+        .expect("should have fleet_summary");
+
+    let total = summary["total"].as_u64().expect("total should be a number");
+    let active = summary["active"]
+        .as_u64()
+        .expect("active should be a number");
+    let stopped = summary["stopped"]
+        .as_u64()
+        .expect("stopped should be a number");
+
+    // total must match sessions.len()
+    assert_eq!(
+        total,
+        sessions.len() as u64,
+        "fleet_summary.total ({}) must equal sessions.len() ({})",
+        total,
+        sessions.len()
+    );
+
+    // active + stopped <= total (destroyed sessions may account for the rest)
+    assert!(
+        active + stopped <= total,
+        "active ({}) + stopped ({}) should be <= total ({})",
+        active,
+        stopped,
+        total
+    );
+
+    // Verify counts match actual session statuses
+    let actual_active = sessions
+        .iter()
+        .filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("active"))
+        .count() as u64;
+    let actual_stopped = sessions
+        .iter()
+        .filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("stopped"))
+        .count() as u64;
+
+    assert_eq!(
+        active, actual_active,
+        "fleet_summary.active ({}) should match actual active sessions ({})",
+        active, actual_active
+    );
+    assert_eq!(
+        stopped, actual_stopped,
+        "fleet_summary.stopped ({}) should match actual stopped sessions ({})",
+        stopped, actual_stopped
+    );
+
+    // needs_push must match sessions with unpushed commits or no remote branch
+    let needs_push = summary["needs_push"]
+        .as_u64()
+        .expect("needs_push should be a number");
+    let actual_needs_push = sessions
+        .iter()
+        .filter(|s| {
+            s.get("git_stats")
+                .and_then(|gs| gs.get("worktree_status"))
+                .is_some_and(|ws| {
+                    let unpushed = ws
+                        .get("unpushed_commit_count")
+                        .and_then(|c| c.as_u64())
+                        .unwrap_or(0);
+                    let has_remote = ws
+                        .get("has_remote_branch")
+                        .and_then(|h| h.as_bool())
+                        .unwrap_or(true);
+                    unpushed > 0 || !has_remote
+                })
+        })
+        .count() as u64;
+    assert_eq!(
+        needs_push, actual_needs_push,
+        "fleet_summary.needs_push ({}) should match sessions needing push ({})",
+        needs_push, actual_needs_push
+    );
+}
+
+/// Verify text output includes fleet summary line when sessions exist
+#[test]
+fn test_list_text_output_includes_fleet_summary() {
+    let output = Command::new(env!("CARGO_BIN_EXE_kild"))
+        .arg("list")
+        .output()
+        .expect("Failed to execute 'kild list'");
+
+    if !output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Skip if no sessions (empty state shows different message)
+    if stdout.contains("No active kilds found") {
+        return;
+    }
+
+    // Verify summary line exists with expected format:
+    // "3 kilds: 2 active, 1 stopped | 0 conflicts | 1 needs push"
+    let has_summary_line = stdout.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.contains("kilds:")
+            && trimmed.contains("active,")
+            && trimmed.contains("stopped")
+            && trimmed.contains("conflicts")
+            && trimmed.contains("needs push")
+    });
+
+    assert!(
+        has_summary_line,
+        "text output should include fleet summary line. Got:\n{}",
+        stdout
+    );
 }

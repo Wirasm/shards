@@ -5,7 +5,6 @@ use tracing::{error, info, warn};
 
 use kild_core::events;
 use kild_core::session_ops;
-use kild_core::sessions::types::SessionStatus;
 
 use super::json_types::{EnrichedSession, FleetSummary, ListOutput};
 
@@ -113,34 +112,7 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                     })
                     .collect();
 
-                let fleet_summary = FleetSummary {
-                    total: enriched.len(),
-                    active: enriched
-                        .iter()
-                        .filter(|e| e.session.status == SessionStatus::Active)
-                        .count(),
-                    stopped: enriched
-                        .iter()
-                        .filter(|e| e.session.status == SessionStatus::Stopped)
-                        .count(),
-                    conflicts: conflict_count,
-                    needs_push: enriched
-                        .iter()
-                        .filter(|e| {
-                            e.git_stats
-                                .as_ref()
-                                .and_then(|gs| gs.worktree_status.as_ref())
-                                .is_some_and(|ws| {
-                                    ws.unpushed_commit_count > 0 || !ws.has_remote_branch
-                                })
-                        })
-                        .count(),
-                };
-
-                let output = ListOutput {
-                    sessions: enriched,
-                    fleet_summary,
-                };
+                let output = ListOutput::new(enriched, &kilds_with_conflicts);
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 println!("Active kilds:");
@@ -156,37 +128,24 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                 let formatter = crate::table::TableFormatter::new(&sessions, &statuses, &pr_infos);
                 formatter.print_table(&sessions, &statuses, &pr_infos);
 
-                // Fleet summary line
-                let active_count = sessions
+                // Collect git stats once for fleet summary
+                let git_stats: Vec<Option<kild_core::GitStats>> = sessions
                     .iter()
-                    .filter(|s| s.status == SessionStatus::Active)
-                    .count();
-                let stopped_count = sessions
-                    .iter()
-                    .filter(|s| s.status == SessionStatus::Stopped)
-                    .count();
+                    .map(|s| {
+                        kild_core::git::collect_git_stats(&s.worktree_path, &s.branch, base_branch)
+                    })
+                    .collect();
 
-                let mut needs_push_count = 0;
-                for session in &sessions {
-                    if let Some(stats) = kild_core::git::collect_git_stats(
-                        &session.worktree_path,
-                        &session.branch,
-                        base_branch,
-                    ) && let Some(ws) = &stats.worktree_status
-                        && (ws.unpushed_commit_count > 0 || !ws.has_remote_branch)
-                    {
-                        needs_push_count += 1;
-                    }
-                }
+                let summary = FleetSummary::from_sessions(&sessions, &git_stats, conflict_count);
 
                 println!();
                 println!(
                     "{} kilds: {} active, {} stopped | {} conflicts | {} needs push",
-                    sessions.len(),
-                    active_count,
-                    stopped_count,
-                    conflict_count,
-                    needs_push_count,
+                    summary.total,
+                    summary.active,
+                    summary.stopped,
+                    summary.conflicts,
+                    summary.needs_push,
                 );
             }
 
