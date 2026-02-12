@@ -68,7 +68,7 @@ cargo run -p kild -- create my-branch --no-agent       # Open bare terminal with
 cargo run -p kild -- create my-branch --daemon         # Launch in daemon-owned PTY
 cargo run -p kild -- create my-branch --no-daemon      # Force external terminal (override config)
 cargo run -p kild -- list
-cargo run -p kild -- list --json                 # JSON output for scripting
+cargo run -p kild -- list --json                 # JSON object with sessions array and fleet_summary
 cargo run -p kild -- status my-branch --json     # JSON output for single kild
 cargo run -p kild -- -v list                     # Verbose mode (enable JSON logs)
 cargo run -p kild -- cd my-branch                # Print worktree path for shell integration
