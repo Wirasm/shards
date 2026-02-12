@@ -5,7 +5,9 @@ use kild_core::SessionStatus;
 use kild_core::events;
 use kild_core::session_ops;
 
-use super::helpers::{FailedOperation, format_partial_failure_error, get_terminal_info, plural};
+use super::helpers::{
+    FailedOperation, format_count, format_partial_failure_error, get_terminal_info, plural,
+};
 
 pub(crate) fn handle_hide_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     if matches.get_flag("all") {
@@ -131,7 +133,7 @@ fn handle_hide_all() -> Result<(), Box<dyn std::error::Error>> {
 
     // Report successes
     if !hidden.is_empty() {
-        println!("Hidden {} {}:", hidden.len(), plural(hidden.len()));
+        println!("Hidden {}:", format_count(hidden.len()));
         for branch in &hidden {
             println!("  {}", branch);
         }
@@ -139,7 +141,7 @@ fn handle_hide_all() -> Result<(), Box<dyn std::error::Error>> {
 
     // Report failures
     if !errors.is_empty() {
-        eprintln!("{} {} failed to hide:", errors.len(), plural(errors.len()));
+        eprintln!("{} failed to hide:", format_count(errors.len()));
         for (branch, err) in &errors {
             eprintln!("  {}: {}", branch, err);
         }

@@ -5,7 +5,7 @@ use kild_core::SessionStatus;
 use kild_core::events;
 use kild_core::session_ops;
 
-use super::helpers::{FailedOperation, format_partial_failure_error, plural};
+use super::helpers::{FailedOperation, format_count, format_partial_failure_error};
 
 pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     // Check for --all flag first
@@ -75,7 +75,7 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 
     // Report successes
     if !stopped.is_empty() {
-        println!("Stopped {} {}:", stopped.len(), plural(stopped.len()));
+        println!("Stopped {}:", format_count(stopped.len()));
         for branch in &stopped {
             println!("  {}", branch);
         }
@@ -83,7 +83,7 @@ fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
 
     // Report failures
     if !errors.is_empty() {
-        eprintln!("{} {} failed to stop:", errors.len(), plural(errors.len()));
+        eprintln!("{} failed to stop:", format_count(errors.len()));
         for (branch, err) in &errors {
             eprintln!("  {}: {}", branch, err);
         }

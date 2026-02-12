@@ -56,9 +56,9 @@ pub(crate) fn handle_code_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                     "  Hint: Install '{}' or configure a different editor:",
                     editor
                 );
-                eprintln!("        --editor <name>            (CLI override)");
-                eprintln!("        [editor] default = \"...\"   (config file)");
-                eprintln!("        export EDITOR=...          (environment)");
+                eprintln!("    --editor <name>            (CLI override)");
+                eprintln!("    [editor] default = \"...\"   (config file)");
+                eprintln!("    export EDITOR=...          (environment)");
             } else if matches!(e, EditorError::NoEditorFound) {
                 eprintln!("No supported editor found.");
                 eprintln!("  Hint: Install one of: zed, code (VS Code), vim/nvim");

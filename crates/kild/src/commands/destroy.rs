@@ -5,7 +5,7 @@ use kild_core::events;
 use kild_core::session_ops;
 
 use super::helpers::{
-    FailedOperation, format_partial_failure_error, is_confirmation_accepted, plural,
+    FailedOperation, format_count, format_partial_failure_error, is_confirmation_accepted,
 };
 
 pub(crate) fn handle_destroy_command(
@@ -106,9 +106,8 @@ fn handle_destroy_all(force: bool) -> Result<(), Box<dyn std::error::Error>> {
         use std::io::{self, Write};
 
         print!(
-            "Destroy all {} {}? Worktrees and sessions will be removed. [y/N] ",
-            sessions.len(),
-            plural(sessions.len())
+            "Destroy all {}? Worktrees and sessions will be removed. [y/N] ",
+            format_count(sessions.len())
         );
         io::stdout().flush()?;
 
@@ -145,7 +144,7 @@ fn handle_destroy_all(force: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     // Report successes
     if !destroyed.is_empty() {
-        println!("Destroyed {} {}:", destroyed.len(), plural(destroyed.len()));
+        println!("Destroyed {}:", format_count(destroyed.len()));
         for branch in &destroyed {
             println!("  {}", branch);
         }
@@ -153,11 +152,7 @@ fn handle_destroy_all(force: bool) -> Result<(), Box<dyn std::error::Error>> {
 
     // Report failures
     if !errors.is_empty() {
-        eprintln!(
-            "{} {} failed to destroy:",
-            errors.len(),
-            plural(errors.len())
-        );
+        eprintln!("{} failed to destroy:", format_count(errors.len()));
         for (branch, err) in &errors {
             eprintln!("  {}: {}", branch, err);
         }

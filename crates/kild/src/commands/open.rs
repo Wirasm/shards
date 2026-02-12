@@ -6,7 +6,7 @@ use kild_core::events;
 use kild_core::session_ops;
 
 use super::helpers::{
-    FailedOperation, OpenedKild, format_partial_failure_error, plural,
+    FailedOperation, OpenedKild, format_count, format_partial_failure_error,
     resolve_explicit_runtime_mode, resolve_open_mode,
 };
 
@@ -34,7 +34,7 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
             match mode {
                 kild_core::OpenMode::BareShell => {
                     println!("Opened bare terminal for '{}'.", branch);
-                    println!("  Agent  (none)");
+                    println!("  Agent: (none)");
                 }
                 _ => {
                     if resume {
@@ -42,11 +42,11 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                     } else {
                         println!("Opened agent for '{}'.", branch);
                     }
-                    println!("  Agent  {}", session.agent);
+                    println!("  Agent: {}", session.agent);
                 }
             }
             if let Some(pid) = session.latest_agent().and_then(|a| a.process_id()) {
-                println!("  PID    {}", pid);
+                println!("  PID:   {}", pid);
             }
             info!(
                 event = "cli.open_completed",
@@ -112,7 +112,7 @@ fn handle_open_all(
 
     // Report successes
     if !opened.is_empty() {
-        println!("Opened {} {}:", opened.len(), plural(opened.len()));
+        println!("Opened {}:", format_count(opened.len()));
         for (branch, agent, runtime_mode) in &opened {
             let mode_label = match runtime_mode {
                 Some(kild_core::RuntimeMode::Daemon) => " [daemon]",
@@ -125,7 +125,7 @@ fn handle_open_all(
 
     // Report failures
     if !errors.is_empty() {
-        eprintln!("{} {} failed to open:", errors.len(), plural(errors.len()));
+        eprintln!("{} failed to open:", format_count(errors.len()));
         for (branch, err) in &errors {
             eprintln!("  {}: {}", branch, err);
         }

@@ -95,6 +95,11 @@ pub fn plural(count: usize) -> &'static str {
     if count == 1 { "kild" } else { "kilds" }
 }
 
+/// Format count with pluralized "kild"/"kilds", e.g. "3 kilds" or "1 kild".
+pub fn format_count(count: usize) -> String {
+    format!("{} {}", count, plural(count))
+}
+
 /// Replace home directory prefix with `~` for display.
 pub fn shorten_home_path(path: &std::path::Path) -> String {
     if let Ok(home) = std::env::var("HOME") {
@@ -300,6 +305,14 @@ mod tests {
     }
 
     #[test]
+    fn test_format_count() {
+        assert_eq!(format_count(0), "0 kilds");
+        assert_eq!(format_count(1), "1 kild");
+        assert_eq!(format_count(2), "2 kilds");
+        assert_eq!(format_count(10), "10 kilds");
+    }
+
+    #[test]
     fn test_shorten_home_path_with_home_prefix() {
         if let Ok(home) = std::env::var("HOME") {
             let path = std::path::PathBuf::from(&home).join(".kild/worktrees/kild/feature-auth");
@@ -313,6 +326,15 @@ mod tests {
         let path = std::path::Path::new("/tmp/some/other/path");
         let shortened = shorten_home_path(path);
         assert_eq!(shortened, "/tmp/some/other/path");
+    }
+
+    #[test]
+    fn test_shorten_home_path_at_home_root() {
+        if let Ok(home) = std::env::var("HOME") {
+            let path = std::path::Path::new(&home);
+            let shortened = shorten_home_path(path);
+            assert_eq!(shortened, "~/");
+        }
     }
 
     #[test]

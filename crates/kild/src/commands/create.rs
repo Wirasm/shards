@@ -62,18 +62,18 @@ pub(crate) fn handle_create_command(
     match session_ops::create_session(request, &config) {
         Ok(session) => {
             println!("Kild created.");
-            println!("  Branch    {}", session.branch);
+            println!("  Branch:   {}", session.branch);
             if session.agent == "shell" {
-                println!("  Agent     (none)");
+                println!("  Agent:    (none)");
             } else {
-                println!("  Agent     {}", session.agent);
+                println!("  Agent:    {}", session.agent);
             }
-            println!("  Worktree  {}", shorten_home_path(&session.worktree_path));
+            println!("  Worktree: {}", shorten_home_path(&session.worktree_path));
             println!(
-                "  Ports     {}-{}",
+                "  Ports:    {}-{}",
                 session.port_range_start, session.port_range_end
             );
-            println!("  Status    {:?}", session.status);
+            println!("  Status:   {:?}", session.status);
 
             info!(
                 event = "cli.create_completed",
