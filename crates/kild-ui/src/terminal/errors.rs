@@ -24,6 +24,9 @@ pub enum TerminalError {
     #[error("PTY resize failed: {message}")]
     PtyResize { message: String },
 
+    #[error("Working directory not accessible '{path}': {message}")]
+    InvalidCwd { path: String, message: String },
+
     #[error("Daemon connection failed: {message}")]
     DaemonConnect { message: String },
 

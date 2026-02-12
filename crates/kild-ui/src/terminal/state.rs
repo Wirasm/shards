@@ -14,8 +14,32 @@ use gpui::Task;
 use kild_protocol::DaemonMessage;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use std::path::PathBuf;
+
 use super::errors::TerminalError;
 use crate::daemon_client::{self, DaemonConnection};
+
+/// Resolve the working directory for a new terminal.
+///
+/// - `Some(path)` that exists → returns `Some(path)`
+/// - `Some(path)` that doesn't exist or is inaccessible → returns `Err(InvalidCwd)`
+/// - `None` → returns home directory (or `None` if home is unavailable)
+fn resolve_working_dir(cwd: Option<PathBuf>) -> Result<Option<PathBuf>, TerminalError> {
+    match cwd {
+        Some(path) => match path.try_exists() {
+            Ok(true) => Ok(Some(path)),
+            Ok(false) => Err(TerminalError::InvalidCwd {
+                path: path.display().to_string(),
+                message: "directory does not exist".to_string(),
+            }),
+            Err(e) => Err(TerminalError::InvalidCwd {
+                path: path.display().to_string(),
+                message: e.to_string(),
+            }),
+        },
+        None => Ok(dirs::home_dir()),
+    }
+}
 
 /// Default PTY dimensions used until the first resize event.
 /// ResizeHandle will update to actual window dimensions on prepaint.
@@ -183,20 +207,7 @@ impl Terminal {
         // Set TERM for proper escape sequence support
         cmd.env("TERM", "xterm-256color");
         // Set working directory
-        let working_dir = cwd
-            .filter(|p| {
-                if p.exists() {
-                    true
-                } else {
-                    tracing::warn!(
-                        event = "ui.terminal.cwd_not_found",
-                        path = %p.display(),
-                        "Requested working directory does not exist, falling back to home"
-                    );
-                    false
-                }
-            })
-            .or_else(dirs::home_dir);
+        let working_dir = resolve_working_dir(cwd)?;
         if let Some(dir) = &working_dir {
             cmd.cwd(dir);
         }
@@ -674,7 +685,16 @@ impl Terminal {
 
     /// Read the current error message, if any critical failure has occurred.
     pub fn error_message(&self) -> Option<String> {
-        self.error_state.lock().ok().and_then(|guard| guard.clone())
+        match self.error_state.lock() {
+            Ok(guard) => guard.clone(),
+            Err(e) => {
+                tracing::error!(
+                    event = "ui.terminal.error_state_lock_poisoned",
+                    error = %e,
+                );
+                Some("Terminal internal error (poisoned lock)".to_string())
+            }
+        }
     }
 
     /// Returns true if the shell has exited and the terminal is no longer active.
@@ -762,24 +782,31 @@ impl ResizeHandle {
                     pixel_width: 0,
                     pixel_height: 0,
                 };
-                if let Err(e) = master.resize(new_size) {
+                master.resize(new_size).map_err(|e| {
                     tracing::warn!(
                         event = "ui.terminal.pty_resize_failed",
                         rows = rows,
                         cols = cols,
                         error = %e,
                     );
-                }
+                    TerminalError::PtyResize {
+                        message: format!("PTY resize failed: {e}"),
+                    }
+                })?;
             }
             ResizeImpl::Daemon(tx) => {
-                if let Err(e) = tx.unbounded_send(DaemonWriteCommand::Resize(rows, cols)) {
-                    tracing::warn!(
-                        event = "ui.terminal.daemon_resize_send_failed",
-                        rows = rows,
-                        cols = cols,
-                        error = %e,
-                    );
-                }
+                tx.unbounded_send(DaemonWriteCommand::Resize(rows, cols))
+                    .map_err(|e| {
+                        tracing::warn!(
+                            event = "ui.terminal.daemon_resize_send_failed",
+                            rows = rows,
+                            cols = cols,
+                            error = %e,
+                        );
+                        TerminalError::PtyResize {
+                            message: format!("daemon resize send failed: {e}"),
+                        }
+                    })?;
             }
         }
 
@@ -821,6 +848,52 @@ impl Drop for Terminal {
                     );
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_cwd_none_returns_home() {
+        let result = resolve_working_dir(None).unwrap();
+        assert_eq!(result, dirs::home_dir());
+    }
+
+    #[test]
+    fn resolve_cwd_existing_dir_returns_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        let result = resolve_working_dir(Some(path.clone())).unwrap();
+        assert_eq!(result, Some(path));
+    }
+
+    #[test]
+    fn resolve_cwd_nonexistent_returns_error() {
+        let path = PathBuf::from("/nonexistent/kild/worktree/path");
+        let err = resolve_working_dir(Some(path)).unwrap_err();
+        assert!(
+            matches!(err, TerminalError::InvalidCwd { .. }),
+            "expected InvalidCwd, got: {err}"
+        );
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn resolve_cwd_error_includes_path() {
+        let path = PathBuf::from("/no/such/directory/ever");
+        let err = resolve_working_dir(Some(path.clone())).unwrap_err();
+        match err {
+            TerminalError::InvalidCwd {
+                path: err_path,
+                message,
+            } => {
+                assert_eq!(err_path, path.display().to_string());
+                assert!(!message.is_empty());
+            }
+            other => panic!("expected InvalidCwd, got: {other}"),
         }
     }
 }

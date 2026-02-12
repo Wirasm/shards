@@ -1186,8 +1186,12 @@ impl MainView {
             return;
         }
 
-        // Escape from terminal → back to dashboard
-        if key_str == "escape" && (self.show_terminal || self.show_daemon_terminal) {
+        // Ctrl+Escape from terminal → back to dashboard
+        // Plain Escape is not used because it breaks vim, less, fzf, etc.
+        if key_str == "escape"
+            && event.keystroke.modifiers.control
+            && (self.show_terminal || self.show_daemon_terminal)
+        {
             self.show_terminal = false;
             self.show_daemon_terminal = false;
             window.focus(&self.focus_handle);
