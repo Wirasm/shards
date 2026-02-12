@@ -11,7 +11,7 @@ use gpui::{
 use crate::theme;
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::InputState;
+use gpui_component::input::{Input, InputState};
 use tracing::{debug, warn};
 
 use std::path::PathBuf;
@@ -1200,7 +1200,9 @@ impl MainView {
             .unwrap_or_default();
 
         let input = cx.new(|cx| InputState::new(window, cx).default_value(current_label));
+        let handle = input.read(cx).focus_handle(cx).clone();
         self.renaming_tab = Some((session_id.to_string(), idx, input));
+        window.focus(&handle);
         cx.notify();
     }
 
@@ -1286,7 +1288,7 @@ impl MainView {
                     .is_some_and(|(s, i, _)| s == session_id && *i == idx);
 
                 if is_renaming {
-                    let input = self
+                    let input_state = self
                         .renaming_tab
                         .as_ref()
                         .map(|(_, _, input)| input.clone())
@@ -1301,7 +1303,7 @@ impl MainView {
                         .border_b_2()
                         .border_color(theme::ice())
                         .text_size(px(theme::TEXT_SM))
-                        .child(input)
+                        .child(Input::new(&input_state).cleanable(false))
                         .on_key_down(cx.listener(move |view, event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if key == "enter" {
