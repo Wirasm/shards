@@ -13,7 +13,17 @@ fn run_kild_list_json() -> std::process::Output {
         .expect("Failed to execute 'kild list --json'")
 }
 
-/// Verify that 'kild list --json' outputs valid JSON array
+/// Parse 'kild list --json' output and extract sessions array
+fn parse_list_sessions(stdout: &str) -> Vec<serde_json::Value> {
+    let value: serde_json::Value =
+        serde_json::from_str(stdout).expect("list output should be valid JSON");
+    value["sessions"]
+        .as_array()
+        .expect("list output should have 'sessions' array")
+        .clone()
+}
+
+/// Verify that 'kild list --json' outputs valid JSON object with sessions and fleet_summary
 #[test]
 fn test_list_json_outputs_valid_json_array() {
     let output = run_kild_list_json();
@@ -27,19 +37,50 @@ fn test_list_json_outputs_valid_json_array() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Verify output is valid JSON
-    let sessions: serde_json::Value =
+    // Verify output is valid JSON object
+    let value: serde_json::Value =
         serde_json::from_str(&stdout).expect("stdout should be valid JSON");
 
-    // Must be an array (even if empty)
     assert!(
-        sessions.is_array(),
-        "JSON output should be an array, got: {}",
+        value.is_object(),
+        "JSON output should be an object, got: {}",
         stdout
+    );
+
+    // Must have sessions array
+    assert!(
+        value.get("sessions").and_then(|v| v.as_array()).is_some(),
+        "JSON output should have 'sessions' array"
+    );
+
+    // Must have fleet_summary object
+    let summary = value
+        .get("fleet_summary")
+        .expect("JSON output should have 'fleet_summary'");
+    assert!(summary.is_object(), "fleet_summary should be an object");
+    assert!(
+        summary.get("total").is_some(),
+        "fleet_summary should have 'total'"
+    );
+    assert!(
+        summary.get("active").is_some(),
+        "fleet_summary should have 'active'"
+    );
+    assert!(
+        summary.get("stopped").is_some(),
+        "fleet_summary should have 'stopped'"
+    );
+    assert!(
+        summary.get("conflicts").is_some(),
+        "fleet_summary should have 'conflicts'"
+    );
+    assert!(
+        summary.get("needs_push").is_some(),
+        "fleet_summary should have 'needs_push'"
     );
 }
 
-/// Verify that empty list returns empty JSON array '[]'
+/// Verify that empty list returns object with empty sessions array
 #[test]
 fn test_list_json_empty_returns_empty_array() {
     let output = run_kild_list_json();
@@ -50,20 +91,18 @@ fn test_list_json_empty_returns_empty_array() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let sessions = parse_list_sessions(&stdout);
 
-    let sessions: serde_json::Value =
-        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
-
-    // If array is empty, verify it's actually [] not null or something else
-    if let Some(arr) = sessions.as_array() {
-        if arr.is_empty() {
-            // Verify the raw output is actually an empty array
-            assert!(
-                stdout.trim() == "[]",
-                "Empty list should output '[]', got: {}",
-                stdout
-            );
-        }
+    // If sessions is empty, verify fleet_summary has zeros
+    if sessions.is_empty() {
+        let value: serde_json::Value =
+            serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+        let summary = value
+            .get("fleet_summary")
+            .expect("should have fleet_summary");
+        assert_eq!(summary["total"], 0, "empty fleet should have total=0");
+        assert_eq!(summary["active"], 0, "empty fleet should have active=0");
+        assert_eq!(summary["stopped"], 0, "empty fleet should have stopped=0");
     }
 }
 
@@ -77,35 +116,31 @@ fn test_list_json_session_fields() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: serde_json::Value =
-        serde_json::from_str(&stdout).expect("stdout should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
-    // If there are sessions, verify the structure has expected fields
-    if let Some(arr) = sessions.as_array() {
-        if let Some(first) = arr.first() {
-            // Core required fields from Session struct
-            assert!(first.get("id").is_some(), "Session should have 'id' field");
-            assert!(
-                first.get("branch").is_some(),
-                "Session should have 'branch' field"
-            );
-            assert!(
-                first.get("status").is_some(),
-                "Session should have 'status' field"
-            );
-            assert!(
-                first.get("worktree_path").is_some(),
-                "Session should have 'worktree_path' field"
-            );
-            assert!(
-                first.get("agent").is_some(),
-                "Session should have 'agent' field"
-            );
-            assert!(
-                first.get("created_at").is_some(),
-                "Session should have 'created_at' field"
-            );
-        }
+    if let Some(first) = sessions.first() {
+        // Core required fields from Session struct
+        assert!(first.get("id").is_some(), "Session should have 'id' field");
+        assert!(
+            first.get("branch").is_some(),
+            "Session should have 'branch' field"
+        );
+        assert!(
+            first.get("status").is_some(),
+            "Session should have 'status' field"
+        );
+        assert!(
+            first.get("worktree_path").is_some(),
+            "Session should have 'worktree_path' field"
+        );
+        assert!(
+            first.get("agent").is_some(),
+            "Session should have 'agent' field"
+        );
+        assert!(
+            first.get("created_at").is_some(),
+            "Session should have 'created_at' field"
+        );
     }
 }
 
@@ -146,8 +181,7 @@ fn test_status_json_outputs_valid_json_object() {
     }
 
     let stdout = String::from_utf8_lossy(&list_output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     // Skip if no sessions exist
     if sessions.is_empty() {
@@ -201,8 +235,7 @@ fn test_status_json_session_fields() {
     }
 
     let stdout = String::from_utf8_lossy(&list_output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if sessions.is_empty() {
         return;
@@ -256,8 +289,7 @@ fn test_status_json_logs_to_stderr_not_stdout() {
     }
 
     let stdout = String::from_utf8_lossy(&list_output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if sessions.is_empty() {
         return;
@@ -295,26 +327,20 @@ fn test_list_json_is_parseable_for_scripting() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let sessions = parse_list_sessions(&stdout);
 
-    // Parse as generic JSON Value first
-    let value: serde_json::Value =
-        serde_json::from_str(&stdout).expect("Should parse as JSON Value");
+    // Simulate: jq '.sessions[] | .branch' - extracting branch from each session
+    for session in &sessions {
+        let _branch = session
+            .get("branch")
+            .and_then(|v| v.as_str())
+            .expect("Each session should have string 'branch' field");
 
-    // Then verify we can iterate through array (common jq pattern)
-    if let Some(arr) = value.as_array() {
-        for session in arr {
-            // Simulate: jq '.[] | .branch' - extracting branch from each session
-            let _branch = session
-                .get("branch")
-                .and_then(|v| v.as_str())
-                .expect("Each session should have string 'branch' field");
-
-            // Simulate: jq '.[] | select(.status == "Active")'
-            let _status = session
-                .get("status")
-                .and_then(|v| v.as_str())
-                .expect("Each session should have string 'status' field");
-        }
+        // Simulate: jq '.sessions[] | select(.status == "Active")'
+        let _status = session
+            .get("status")
+            .and_then(|v| v.as_str())
+            .expect("Each session should have string 'status' field");
     }
 }
 
@@ -328,8 +354,7 @@ fn test_list_json_includes_git_stats() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     // If there are sessions, verify git_stats key exists
     if let Some(first) = sessions.first() {
@@ -385,8 +410,7 @@ fn test_status_json_includes_git_stats() {
     }
 
     let stdout = String::from_utf8_lossy(&list_output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if sessions.is_empty() {
         return;
@@ -426,8 +450,7 @@ fn test_list_json_enriched_field_completeness() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if let Some(first) = sessions.first() {
         // All enriched fields must be present (even if null)
@@ -464,8 +487,7 @@ fn test_list_json_enum_consistency() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     for session in &sessions {
         // SessionStatus must be snake_case
@@ -507,8 +529,7 @@ fn test_list_json_null_consistency() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if let Some(first) = sessions.first() {
         // These fields must always be present in the JSON object (even if value is null)
@@ -543,8 +564,7 @@ fn test_list_json_jq_deep_access() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if let Some(first) = sessions.first() {
         // Deep access: git_stats.worktree_status.unpushed_commit_count
@@ -582,8 +602,7 @@ fn test_status_json_enriched_field_completeness() {
     }
 
     let stdout = String::from_utf8_lossy(&list_output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     if sessions.is_empty() {
         return;
@@ -638,8 +657,7 @@ fn test_list_json_process_status_values() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sessions: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("list output should be valid JSON");
+    let sessions = parse_list_sessions(&stdout);
 
     for session in &sessions {
         let ps = session

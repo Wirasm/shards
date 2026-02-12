@@ -1,5 +1,22 @@
 use serde::Serialize;
 
+/// Fleet-level summary metrics for list output.
+#[derive(Serialize)]
+pub struct FleetSummary {
+    pub total: usize,
+    pub active: usize,
+    pub stopped: usize,
+    pub conflicts: usize,
+    pub needs_push: usize,
+}
+
+/// Top-level list output with fleet summary (JSON only).
+#[derive(Serialize)]
+pub struct ListOutput {
+    pub sessions: Vec<EnrichedSession>,
+    pub fleet_summary: FleetSummary,
+}
+
 /// Enriched session data for JSON output (used by list and status commands).
 #[derive(Serialize)]
 pub struct EnrichedSession {
