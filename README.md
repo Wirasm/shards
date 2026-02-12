@@ -39,9 +39,9 @@ The GUI currently supports:
 - Destroying kilds with confirmation dialog
 - Bulk operations: Open All stopped kilds, Stop All running kilds
 - Quick actions: Copy path to clipboard, open in editor, focus terminal window
-- Live terminal rendering: Press Ctrl+T to toggle between 3-column layout and full-screen terminal view
+- Live terminal rendering with split panes (Cmd+\ vertical, Cmd+Shift+\ horizontal, Cmd+W to close)
 
-See the [PRD](.claude/PRPs/prds/gpui-native-terminal-ui.prd.md) for the development roadmap.
+See the [PRD](.claude/PRPs/prds/phase-2-multiplexer-ux.prd.md) for the development roadmap.
 
 ## Installation
 

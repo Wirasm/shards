@@ -230,11 +230,11 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 - `theme.rs` - Centralized color palette, typography, and spacing constants (Tallinn Night brand system)
 - `theme_bridge.rs` - Maps Tallinn Night colors to gpui-component theme tokens
 - `components/` - Custom UI components (StatusIndicator only; Button, TextInput, Modal from gpui-component library)
-- `state/` - Type-safe state modules with encapsulated AppState facade (app_state.rs, dialog.rs, errors.rs, loading.rs, selection.rs, sessions.rs)
+- `state/` - Type-safe state modules with encapsulated AppState facade (app_state.rs, dialog.rs, errors.rs, loading.rs, selection.rs, sessions.rs, layout.rs, teammates.rs, terminals.rs)
 - `actions.rs` - User actions (create, open, stop, destroy, project management)
-- `views/` - GPUI components (main view with 3-column layout: sidebar, kild list, detail panel)
+- `views/` - Terminal multiplexer layout (rail, kild_sidebar, teammate_tabs, split_pane, pane_header, minimized_bar, status_bar, detail_view, dialogs)
 - `terminal/` - Live terminal rendering with PTY integration (state.rs for PTY lifecycle, terminal_element.rs for GPUI Element, terminal_view.rs for View, colors.rs for ANSI mapping, input.rs for keystroke translation)
-- `watcher.rs` - File system watcher for instant UI updates on session changes
+- `watcher.rs` - File system watcher with SessionWatcher for session changes and ShimWatcher for teammate pane discovery
 - `refresh.rs` - Background refresh logic with hybrid file watching + slow poll fallback
 
 **Key modules in kild-daemon:**
