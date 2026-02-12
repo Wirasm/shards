@@ -1,3 +1,4 @@
+use crate::sessions::types::AgentStatus;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub struct KildHealth {
     pub agent: String,
     pub worktree_path: String,
     pub created_at: String,
+    pub agent_status: Option<AgentStatus>,
+    pub agent_status_updated_at: Option<String>,
     pub metrics: HealthMetrics,
 }
 
