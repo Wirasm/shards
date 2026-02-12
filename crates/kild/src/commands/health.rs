@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::events;
 use kild_core::health;
@@ -60,7 +60,7 @@ fn run_health_watch_loop(
         {
             let snapshot = health::HealthSnapshot::from(&output);
             if let Err(e) = health::save_snapshot(&snapshot) {
-                info!(event = "cli.health_history_save_failed", error = %e);
+                warn!(event = "cli.health_history_save_failed", error = %e);
             }
         }
 
@@ -169,7 +169,10 @@ fn print_health_table(output: &health::HealthOutput) {
             None => "N/A".to_string(),
         };
 
-        let agent_activity = kild.agent_status.as_deref().unwrap_or("-");
+        let agent_activity = kild
+            .agent_status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "-".to_string());
 
         let activity_str = match &kild.metrics.last_activity {
             Some(a) => truncate(a, 19),
@@ -181,7 +184,7 @@ fn print_health_table(output: &health::HealthOutput) {
             status_icon,
             truncate(&kild.branch, 16),
             truncate(&kild.agent, 7),
-            truncate(agent_activity, 8),
+            truncate(&agent_activity, 8),
             truncate(&cpu_str, 8),
             truncate(&mem_str, 8),
             truncate(&format!("{:?}", kild.metrics.status), 8),
@@ -218,7 +221,9 @@ fn print_single_kild_health(kild: &health::KildHealth) {
     println!("│ Agent:       {:<47} │", kild.agent);
     println!(
         "│ Activity:    {:<47} │",
-        kild.agent_status.as_deref().unwrap_or("-")
+        kild.agent_status
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "-".to_string())
     );
     println!(
         "│ Status:      {} {:<44} │",

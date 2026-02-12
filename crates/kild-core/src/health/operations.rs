@@ -1,6 +1,6 @@
 use crate::health::types::{HealthMetrics, HealthOutput, HealthStatus, KildHealth};
 use crate::process::types::ProcessMetrics;
-use crate::sessions::types::Session;
+use crate::sessions::types::{AgentStatus, Session};
 use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -53,7 +53,7 @@ pub fn enrich_session_with_health(
     session: &Session,
     process_metrics: Option<ProcessMetrics>,
     process_running: bool,
-    agent_status: Option<String>,
+    agent_status: Option<AgentStatus>,
     agent_status_updated_at: Option<String>,
 ) -> KildHealth {
     let status = calculate_health_status(
@@ -251,6 +251,92 @@ mod tests {
         assert_eq!(health.agent, session.agent);
         assert_eq!(health.worktree_path, "/tmp/wt");
         assert_eq!(health.created_at, session.created_at);
+    }
+
+    // --- agent status enrichment tests ---
+
+    #[test]
+    fn test_enrich_session_with_agent_status() {
+        let session = Session::new_for_test("test".to_string(), PathBuf::from("/tmp"));
+
+        let health = enrich_session_with_health(
+            &session,
+            None,
+            true,
+            Some(AgentStatus::Working),
+            Some("2026-02-05T12:00:00Z".to_string()),
+        );
+
+        assert_eq!(health.agent_status, Some(AgentStatus::Working));
+        assert_eq!(
+            health.agent_status_updated_at,
+            Some("2026-02-05T12:00:00Z".to_string())
+        );
+    }
+
+    #[test]
+    fn test_enrich_session_without_agent_status() {
+        let session = Session::new_for_test("test".to_string(), PathBuf::from("/tmp"));
+
+        let health = enrich_session_with_health(&session, None, true, None, None);
+
+        assert_eq!(health.agent_status, None);
+        assert_eq!(health.agent_status_updated_at, None);
+    }
+
+    #[test]
+    fn test_enrich_session_all_agent_status_variants() {
+        let session = Session::new_for_test("test".to_string(), PathBuf::from("/tmp"));
+
+        for status in [
+            AgentStatus::Working,
+            AgentStatus::Idle,
+            AgentStatus::Waiting,
+            AgentStatus::Done,
+            AgentStatus::Error,
+        ] {
+            let health = enrich_session_with_health(
+                &session,
+                None,
+                true,
+                Some(status),
+                Some("2026-02-05T12:00:00Z".to_string()),
+            );
+
+            assert_eq!(health.agent_status, Some(status));
+        }
+    }
+
+    #[test]
+    fn test_agent_status_json_serialization() {
+        let session = Session::new_for_test("test".to_string(), PathBuf::from("/tmp"));
+
+        let health = enrich_session_with_health(
+            &session,
+            None,
+            true,
+            Some(AgentStatus::Idle),
+            Some("2026-02-05T12:00:00Z".to_string()),
+        );
+
+        let json = serde_json::to_string(&health).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["agent_status"], "idle");
+        assert_eq!(parsed["agent_status_updated_at"], "2026-02-05T12:00:00Z");
+    }
+
+    #[test]
+    fn test_agent_status_none_json_serialization() {
+        let session = Session::new_for_test("test".to_string(), PathBuf::from("/tmp"));
+
+        let health = enrich_session_with_health(&session, None, true, None, None);
+
+        let json = serde_json::to_string(&health).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed["agent_status"].is_null());
+        assert!(parsed["agent_status_updated_at"].is_null());
     }
 
     // --- aggregate_health_stats tests ---
