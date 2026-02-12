@@ -89,7 +89,7 @@ kild create my-branch --agent claude --no-daemon
 ```bash
 kild list
 
-# Machine-readable JSON output
+# Machine-readable JSON output (object with sessions array and fleet_summary)
 kild list --json
 ```
 

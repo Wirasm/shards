@@ -1,10 +1,12 @@
+use std::collections::HashSet;
+
 use clap::ArgMatches;
 use tracing::{error, info, warn};
 
 use kild_core::events;
 use kild_core::session_ops;
 
-use super::json_types::EnrichedSession;
+use super::json_types::{EnrichedSession, FleetSummary, ListOutput};
 
 pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     let json_output = matches.get_flag("json");
@@ -20,21 +22,35 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
 
             let session_count = sessions.len();
 
+            if sessions.is_empty() && !json_output {
+                println!("No active kilds found.");
+                info!(event = "cli.list_completed", count = session_count);
+                return Ok(());
+            }
+
+            // Shared: load config and compute overlaps for both output paths
+            let config = super::helpers::load_config_with_warning();
+            let base_branch = config.git.base_branch();
+
+            let (overlap_report, overlap_errors) =
+                kild_core::git::collect_file_overlaps(&sessions, base_branch);
+            for (branch, err_msg) in &overlap_errors {
+                warn!(
+                    event = "cli.list.overlap_detection_failed",
+                    branch = branch,
+                    error = err_msg
+                );
+            }
+
+            // Count kilds with conflicts
+            let kilds_with_conflicts: HashSet<&str> = overlap_report
+                .overlapping_files
+                .iter()
+                .flat_map(|fo| fo.branches.iter().map(|s| s.as_str()))
+                .collect();
+            let conflict_count = kilds_with_conflicts.len();
+
             if json_output {
-                let config = super::helpers::load_config_with_warning();
-                let base_branch = config.git.base_branch();
-
-                // Compute overlaps once for all sessions
-                let (overlap_report, overlap_errors) =
-                    kild_core::git::collect_file_overlaps(&sessions, base_branch);
-                for (branch, err_msg) in &overlap_errors {
-                    warn!(
-                        event = "cli.list.overlap_detection_failed",
-                        branch = branch,
-                        error = err_msg
-                    );
-                }
-
                 let enriched: Vec<EnrichedSession> = sessions
                     .into_iter()
                     .map(|session| {
@@ -95,9 +111,9 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                         }
                     })
                     .collect();
-                println!("{}", serde_json::to_string_pretty(&enriched)?);
-            } else if sessions.is_empty() {
-                println!("No active kilds found.");
+
+                let output = ListOutput::new(enriched, &kilds_with_conflicts);
+                println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 println!("Active kilds:");
                 // Read sidecar statuses for table display
@@ -111,6 +127,26 @@ pub(crate) fn handle_list_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                     .collect();
                 let formatter = crate::table::TableFormatter::new(&sessions, &statuses, &pr_infos);
                 formatter.print_table(&sessions, &statuses, &pr_infos);
+
+                // Collect git stats once for fleet summary
+                let git_stats: Vec<Option<kild_core::GitStats>> = sessions
+                    .iter()
+                    .map(|s| {
+                        kild_core::git::collect_git_stats(&s.worktree_path, &s.branch, base_branch)
+                    })
+                    .collect();
+
+                let summary = FleetSummary::from_sessions(&sessions, &git_stats, conflict_count);
+
+                println!();
+                println!(
+                    "{} kilds: {} active, {} stopped | {} conflicts | {} needs push",
+                    summary.total,
+                    summary.active,
+                    summary.stopped,
+                    summary.conflicts,
+                    summary.needs_push,
+                );
             }
 
             info!(event = "cli.list_completed", count = session_count);
