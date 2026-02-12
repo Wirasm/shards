@@ -255,7 +255,7 @@ pub fn create_session(
 
             // Pre-emptive cleanup: remove stale daemon session if previous destroy failed.
             // Daemon-not-running and session-not-found are expected (normal case).
-            match crate::daemon::client::destroy_daemon_session(&session_id, true) {
+            match crate::daemon::client::destroy_daemon_session(&spawn_id, true) {
                 Ok(()) => {
                     debug!(
                         event = "core.session.preemptive_cleanup_completed",
@@ -280,7 +280,7 @@ pub fn create_session(
 
             let daemon_request = crate::daemon::client::DaemonCreateRequest {
                 request_id: &spawn_id,
-                session_id: &session_id,
+                session_id: &spawn_id,
                 working_directory: &worktree.path,
                 command: &cmd,
                 args: &cmd_args,
