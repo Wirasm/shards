@@ -127,6 +127,7 @@ pub fn destroy_kild(branch: String, force: bool) -> Result<Vec<Event>, String> {
 /// Unlike relaunch, this does NOT close existing terminals - multiple agents can run in the same kild.
 /// Takes owned parameters so this function can be called from background threads.
 /// Dispatches through `CoreStore` and returns the resulting events on success.
+#[allow(dead_code)]
 pub fn open_kild(branch: String, agent: Option<String>) -> Result<Vec<Event>, String> {
     tracing::info!(event = "ui.open_kild.started", branch = %branch, agent = ?agent);
 
@@ -151,6 +152,7 @@ pub fn open_kild(branch: String, agent: Option<String>) -> Result<Vec<Event>, St
 /// Takes owned parameters so this function can be called from background threads.
 /// Dispatches through `CoreStore` to route to kild-core's `stop_session`.
 /// The worktree and session file are preserved. The kild can be reopened with open_kild().
+#[allow(dead_code)]
 pub fn stop_kild(branch: String) -> Result<Vec<Event>, String> {
     tracing::info!(event = "ui.stop_kild.started", branch = %branch);
 
@@ -165,6 +167,7 @@ pub fn stop_kild(branch: String) -> Result<Vec<Event>, String> {
 /// Events from individual dispatches are intentionally discarded. The caller
 /// does a single `refresh_sessions()` after all operations complete, which is
 /// more efficient than applying N individual events (each would trigger its own refresh).
+#[allow(dead_code)]
 pub fn open_all_stopped(displays: &[SessionInfo]) -> (usize, Vec<OperationError>) {
     execute_bulk_operation(
         displays,
@@ -193,6 +196,7 @@ pub fn open_all_stopped(displays: &[SessionInfo]) -> (usize, Vec<OperationError>
 /// Events from individual dispatches are intentionally discarded. The caller
 /// does a single `refresh_sessions()` after all operations complete, which is
 /// more efficient than applying N individual events (each would trigger its own refresh).
+#[allow(dead_code)]
 pub fn stop_all_running(displays: &[SessionInfo]) -> (usize, Vec<OperationError>) {
     execute_bulk_operation(
         displays,
@@ -211,6 +215,7 @@ pub fn stop_all_running(displays: &[SessionInfo]) -> (usize, Vec<OperationError>
 }
 
 /// Execute a bulk operation on kilds with a specific status.
+#[allow(dead_code)]
 fn execute_bulk_operation(
     displays: &[SessionInfo],
     target_status: ProcessStatus,
@@ -282,6 +287,7 @@ pub fn dispatch_add_project(path: PathBuf, name: Option<String>) -> Result<Vec<E
 }
 
 /// Remove a project via Store dispatch.
+#[allow(dead_code)]
 pub fn dispatch_remove_project(path: PathBuf) -> Result<Vec<Event>, String> {
     tracing::info!(
         event = "ui.dispatch_remove_project.started",
@@ -614,6 +620,7 @@ mod tests {
 ///
 /// Returns `Ok(())` on successful spawn, or an error message if the editor
 /// failed to launch (e.g., editor not found, permission denied).
+#[allow(dead_code)]
 pub fn open_in_editor(worktree_path: &std::path::Path) -> Result<(), String> {
     let editor = select_editor();
 
@@ -655,6 +662,7 @@ pub fn open_in_editor(worktree_path: &std::path::Path) -> Result<(), String> {
 /// Priority:
 /// 1. $EDITOR environment variable
 /// 2. Default: "code" (VS Code)
+#[allow(dead_code)]
 fn select_editor() -> String {
     std::env::var("EDITOR").unwrap_or_else(|_| "code".to_string())
 }

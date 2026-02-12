@@ -119,6 +119,113 @@ impl SessionWatcher {
     }
 }
 
+/// Watches the shim pane registry directory (`~/.kild/shim/`) for teammate changes.
+///
+/// Detects modifications to `panes.json` files to trigger teammate refresh.
+pub struct ShimWatcher {
+    _watcher: RecommendedWatcher,
+    receiver: Receiver<Result<Event, notify::Error>>,
+}
+
+impl ShimWatcher {
+    /// Create a new watcher for the shim directory.
+    ///
+    /// Returns `None` if the directory doesn't exist or the watcher can't be created.
+    pub fn new() -> Option<Self> {
+        let home = dirs::home_dir()?;
+
+        let shim_dir = home.join(".kild").join("shim");
+        if !shim_dir.exists() {
+            tracing::debug!(
+                event = "ui.shim_watcher.dir_missing",
+                path = %shim_dir.display(),
+                "Shim directory doesn't exist yet"
+            );
+            return None;
+        }
+
+        let (tx, rx) = mpsc::channel();
+
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!(
+                    event = "ui.shim_watcher.create_failed",
+                    error = %e,
+                );
+                return None;
+            }
+        };
+
+        // Watch recursively — panes.json files are in subdirectories
+        if let Err(e) = watcher.watch(&shim_dir, RecursiveMode::Recursive) {
+            tracing::warn!(
+                event = "ui.shim_watcher.watch_failed",
+                path = %shim_dir.display(),
+                error = %e,
+            );
+            return None;
+        }
+
+        tracing::info!(
+            event = "ui.shim_watcher.started",
+            path = %shim_dir.display()
+        );
+
+        Some(Self {
+            _watcher: watcher,
+            receiver: rx,
+        })
+    }
+
+    /// Check for pending shim events and return session IDs that changed.
+    ///
+    /// Extracts the session ID from the path: `~/.kild/shim/<session_id>/panes.json`
+    pub fn drain_changed_sessions(&self) -> Vec<String> {
+        let mut changed = Vec::new();
+
+        loop {
+            match self.receiver.try_recv() {
+                Ok(Ok(event)) => {
+                    if !matches!(
+                        event.kind,
+                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                    ) {
+                        continue;
+                    }
+
+                    for path in &event.paths {
+                        if path
+                            .file_name()
+                            .and_then(|f| f.to_str())
+                            .is_some_and(|f| f == "panes.json")
+                            && let Some(session_id) = path
+                                .parent()
+                                .and_then(|p| p.file_name())
+                                .and_then(|f| f.to_str())
+                            && !changed.contains(&session_id.to_string())
+                        {
+                            changed.push(session_id.to_string());
+                        }
+                    }
+                }
+                Ok(Err(_)) => continue,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+
+        if !changed.is_empty() {
+            tracing::debug!(
+                event = "ui.shim_watcher.sessions_changed",
+                count = changed.len(),
+                sessions = ?changed,
+            );
+        }
+
+        changed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

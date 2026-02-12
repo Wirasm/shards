@@ -10,6 +10,7 @@ pub struct OperationError {
 /// Consolidates per-branch errors (open, stop, editor, focus) and bulk operation
 /// errors into a single struct with a consistent API.
 #[derive(Clone, Debug, Default)]
+#[allow(dead_code)]
 pub struct OperationErrors {
     /// Per-branch errors (keyed by branch name).
     by_branch: std::collections::HashMap<String, OperationError>,
@@ -17,6 +18,7 @@ pub struct OperationErrors {
     bulk: Vec<OperationError>,
 }
 
+#[allow(dead_code)]
 impl OperationErrors {
     /// Create a new empty error collection.
     pub fn new() -> Self {

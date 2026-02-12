@@ -7,9 +7,12 @@
 pub mod app_state;
 pub mod dialog;
 pub mod errors;
+pub mod layout;
 pub mod loading;
 pub mod selection;
 pub mod sessions;
+pub mod teammates;
+pub mod terminals;
 
 // Re-export all public types at module level so consumers use `crate::state::*`
 pub use app_state::AppState;

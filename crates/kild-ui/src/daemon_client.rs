@@ -18,6 +18,21 @@ use smol::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
+/// Connection lifecycle state for daemon IPC.
+///
+/// Tracked per terminal connection to surface disconnection gracefully
+/// instead of panicking when the daemon stops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum DaemonConnectionState {
+    /// Connected and streaming PTY output.
+    Connected,
+    /// Connection lost — daemon may have stopped or socket closed.
+    Disconnected { reason: String },
+    /// Connection attempt in progress.
+    Connecting,
+}
+
 /// Monotonic counter for generating unique request IDs within this process.
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -55,6 +70,7 @@ pub enum DaemonClientError {
     #[error("daemon error ({code}): {message}")]
     DaemonError { code: String, message: String },
 
+    #[allow(dead_code)]
     #[error("no running daemon session found")]
     SessionNotFound,
 
@@ -189,6 +205,7 @@ pub async fn ping_daemon_async() -> Result<bool, DaemonClientError> {
 }
 
 /// List all daemon sessions.
+#[allow(dead_code)]
 pub async fn list_sessions_async() -> Result<Vec<SessionInfo>, DaemonClientError> {
     debug!(event = "ui.daemon.list_sessions_started");
 
@@ -222,6 +239,7 @@ pub async fn list_sessions_async() -> Result<Vec<SessionInfo>, DaemonClientError
 ///
 /// Temporary convenience for the Ctrl+D toggle flow. Phase 3 (layout shell)
 /// replaces this with explicit sidebar-driven session selection.
+#[allow(dead_code)]
 pub async fn find_first_running_session() -> Result<SessionInfo, DaemonClientError> {
     let sessions = list_sessions_async().await?;
     sessions

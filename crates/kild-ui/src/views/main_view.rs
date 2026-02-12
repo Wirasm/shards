@@ -9,7 +9,6 @@ use gpui::{
 };
 
 use crate::theme;
-use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::InputState;
 use tracing::{debug, warn};
@@ -19,9 +18,10 @@ use std::path::PathBuf;
 use crate::actions;
 use crate::state::AppState;
 use crate::views::{
-    add_project_dialog, confirm_dialog, create_dialog, detail_panel, kild_list, sidebar,
+    add_project_dialog, confirm_dialog, create_dialog, kild_sidebar, minimized_bar, rail,
+    status_bar, teammate_tabs,
 };
-use crate::watcher::SessionWatcher;
+use crate::watcher::{SessionWatcher, ShimWatcher};
 
 /// Normalize user-entered path for project addition.
 ///
@@ -121,9 +121,10 @@ fn canonicalize_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-/// Main application view that composes the kild list, header, and create dialog.
+/// Main application view — terminal multiplexer layout.
 ///
-/// Owns application state and handles keyboard input for the create dialog.
+/// Composes: rail | sidebar | main terminal area + minimized bars + status bar.
+/// Owns application state, terminal connections, and handles keyboard routing.
 pub struct MainView {
     state: AppState,
     focus_handle: FocusHandle,
@@ -139,16 +140,8 @@ pub struct MainView {
     path_input: Option<gpui::Entity<InputState>>,
     /// Input state for add project dialog name field.
     name_input: Option<gpui::Entity<InputState>>,
-    /// Terminal view entity (lazily created on first Ctrl+T).
-    terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
-    /// Whether the terminal pane is currently shown (full-area, replacing 3-column layout).
-    show_terminal: bool,
-    /// Daemon terminal view entity (lazily created on first Ctrl+D).
-    daemon_terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
-    /// Whether the daemon terminal pane is currently shown.
-    show_daemon_terminal: bool,
-    /// Guard against concurrent daemon terminal creation from rapid Ctrl+D presses.
-    daemon_terminal_creating: bool,
+    /// Guard against concurrent daemon terminal creation from rapid sidebar clicks.
+    attaching_kild: Option<String>,
 }
 
 impl MainView {
@@ -169,8 +162,9 @@ impl MainView {
             );
         }
 
-        // Try to create file watcher
+        // Try to create file watchers
         let watcher = SessionWatcher::new(&sessions_dir);
+        let shim_watcher = ShimWatcher::new();
         let has_watcher = watcher.is_some();
 
         // Determine poll interval based on watcher availability
@@ -207,10 +201,10 @@ impl MainView {
 
         // File watcher task (checks for events frequently, cheap when no events)
         let watcher_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let Some(watcher) = watcher else {
-                tracing::debug!(event = "ui.watcher_task.skipped", reason = "no watcher");
+            if watcher.is_none() && shim_watcher.is_none() {
+                tracing::debug!(event = "ui.watcher_task.skipped", reason = "no watchers");
                 return;
-            };
+            }
 
             tracing::debug!(event = "ui.watcher_task.started");
             let mut last_refresh = std::time::Instant::now();
@@ -224,12 +218,25 @@ impl MainView {
                     .await;
 
                 if let Err(e) = this.update(cx, |view, cx| {
-                    // Check for new events (this drains the queue)
-                    if watcher.has_pending_events() {
+                    // Check for session file events
+                    if let Some(ref w) = watcher
+                        && w.has_pending_events()
+                    {
                         pending_refresh = true;
                     }
 
-                    // Refresh if we have pending events AND debounce period has passed
+                    // Check for shim pane registry events (teammate changes)
+                    if let Some(ref sw) = shim_watcher {
+                        let changed = sw.drain_changed_sessions();
+                        if !changed.is_empty() {
+                            for session_id in &changed {
+                                view.state.refresh_teammates(session_id);
+                            }
+                            cx.notify();
+                        }
+                    }
+
+                    // Refresh sessions if we have pending events AND debounce period has passed
                     if pending_refresh && last_refresh.elapsed() > crate::refresh::DEBOUNCE_INTERVAL
                     {
                         tracing::info!(event = "ui.watcher.refresh_triggered");
@@ -288,11 +295,7 @@ impl MainView {
             note_input: None,
             path_input: None,
             name_input: None,
-            terminal_view: None,
-            show_terminal: false,
-            daemon_terminal_view: None,
-            show_daemon_terminal: false,
-            daemon_terminal_creating: false,
+            attaching_kild: None,
         }
     }
 
@@ -315,6 +318,7 @@ impl MainView {
     }
 
     /// Handle click on the Create button in header.
+    #[allow(dead_code)]
     fn on_create_button_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.create_dialog.opened");
         self.state.open_create_dialog();
@@ -447,12 +451,14 @@ impl MainView {
     }
 
     /// Handle click on the Refresh button in header.
+    #[allow(dead_code)]
     fn on_refresh_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.refresh_clicked");
         self.mutate_state(cx, |s| s.refresh_sessions());
     }
 
     /// Handle click on the destroy button [×] in a kild row.
+    #[allow(dead_code)]
     pub fn on_destroy_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.destroy_dialog.opened", branch = branch);
         let branch = branch.to_string();
@@ -522,15 +528,23 @@ impl MainView {
     }
 
     /// Handle kild row click - select for detail panel.
+    #[allow(dead_code)]
     pub fn on_kild_select(&mut self, session_id: &str, cx: &mut Context<Self>) {
         tracing::debug!(event = "ui.kild.selected", session_id = session_id);
         let id = session_id.to_string();
         self.mutate_state(cx, |s| s.select_kild(id));
     }
 
+    /// Handle "back to list" / clear selection action.
+    pub fn on_clear_selection(&mut self, cx: &mut Context<Self>) {
+        tracing::debug!(event = "ui.kild.selection_cleared");
+        self.mutate_state(cx, |s| s.clear_selection());
+    }
+
     /// Handle click on the Open button [▶] in a kild row.
     ///
     /// Spawns the blocking open_kild operation on the background executor.
+    #[allow(dead_code)]
     pub fn on_open_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         if self.state.is_loading(branch) {
             return;
@@ -579,6 +593,7 @@ impl MainView {
     /// Handle click on the Stop button [⏹] in a kild row.
     ///
     /// Spawns the blocking stop_kild operation on the background executor.
+    #[allow(dead_code)]
     pub fn on_stop_click(&mut self, branch: &str, cx: &mut Context<Self>) {
         if self.state.is_loading(branch) {
             return;
@@ -628,6 +643,7 @@ impl MainView {
     ///
     /// Shared pattern for open-all and stop-all. Clears existing errors,
     /// runs the operation in the background, then updates state with results.
+    #[allow(dead_code)]
     fn execute_bulk_operation_async<F>(
         &mut self,
         cx: &mut Context<Self>,
@@ -678,6 +694,7 @@ impl MainView {
     }
 
     /// Handle click on the Open All button.
+    #[allow(dead_code)]
     fn on_open_all_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.open_all_clicked");
         self.execute_bulk_operation_async(
@@ -688,6 +705,7 @@ impl MainView {
     }
 
     /// Handle click on the Stop All button.
+    #[allow(dead_code)]
     fn on_stop_all_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.stop_all_clicked");
         self.execute_bulk_operation_async(
@@ -700,6 +718,7 @@ impl MainView {
     /// Handle click on the Copy Path button in a kild row.
     ///
     /// Copies the worktree path to the system clipboard.
+    #[allow(dead_code)]
     pub fn on_copy_path_click(&mut self, worktree_path: &std::path::Path, cx: &mut Context<Self>) {
         tracing::info!(
             event = "ui.copy_path_clicked",
@@ -713,6 +732,7 @@ impl MainView {
     ///
     /// Opens the worktree in the user's preferred editor ($EDITOR or zed).
     /// Surfaces any errors inline in the kild row.
+    #[allow(dead_code)]
     pub fn on_open_editor_click(
         &mut self,
         worktree_path: &std::path::Path,
@@ -749,6 +769,7 @@ impl MainView {
     /// surfaces an error to the user explaining the limitation.
     ///
     /// Also surfaces any errors from the underlying `focus_terminal` operation.
+    #[allow(dead_code)]
     pub fn on_focus_terminal_click(
         &mut self,
         terminal_type: Option<&kild_core::terminal::types::TerminalType>,
@@ -783,6 +804,7 @@ impl MainView {
     }
 
     /// Record an operation error for a branch and notify the UI.
+    #[allow(dead_code)]
     fn record_error(&mut self, branch: &str, message: &str, cx: &mut Context<Self>) {
         tracing::warn!(
             event = "ui.operation.error_displayed",
@@ -916,6 +938,7 @@ impl MainView {
     }
 
     /// Handle "All Projects" selection from sidebar.
+    #[allow(dead_code)]
     pub fn on_project_select_all(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.project_selected_all");
 
@@ -931,6 +954,7 @@ impl MainView {
     }
 
     /// Handle remove project from list.
+    #[allow(dead_code)]
     pub fn on_remove_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         tracing::info!(
             event = "ui.remove_project.started",
@@ -948,211 +972,224 @@ impl MainView {
         cx.notify();
     }
 
-    /// Handle keyboard shortcuts for dialogs and terminal toggling.
-    ///
-    /// Text input is handled by gpui-component's Input widget internally.
-    /// This handler manages Escape (close), Enter (submit), and Tab (agent cycling).
-    ///
-    /// When a terminal view is shown, all non-reserved keys are propagated to the
-    /// child TerminalView. Reserved keys (Ctrl+T, Ctrl+D) are consumed here for
-    /// terminal toggling.
-    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::state::DialogState;
+    // --- Terminal multiplexer handlers ---
 
-        let key_str = event.keystroke.key.to_string();
-
-        // Ctrl+T: toggle terminal view
-        if key_str == "t" && event.keystroke.modifiers.control {
-            if self.show_terminal {
-                self.show_terminal = false;
-                tracing::info!(event = "ui.terminal.toggle_off");
-                // Return focus to main view
-                window.focus(&self.focus_handle);
-            } else {
-                // Drop dead terminal so a fresh one gets created
-                if let Some(view) = &self.terminal_view
-                    && view.read(cx).terminal().has_exited()
-                {
-                    tracing::info!(event = "ui.terminal.recycled");
-                    self.terminal_view = None;
-                }
-                // Lazy-create terminal on first toggle (or after shell exit)
-                if self.terminal_view.is_none() {
-                    tracing::info!(event = "ui.terminal.create_started");
-                    match crate::terminal::state::Terminal::new(cx) {
-                        Ok(terminal) => {
-                            let view = cx.new(|cx| {
-                                crate::terminal::TerminalView::from_terminal(terminal, window, cx)
-                            });
-                            self.terminal_view = Some(view);
-                        }
-                        Err(e) => {
-                            tracing::error!(event = "ui.terminal.create_failed", error = %e);
-                            self.show_terminal = false;
-                            self.state
-                                .push_error(format!("Terminal creation failed: {}", e));
-                            cx.notify();
-                            return;
-                        }
-                    }
-                }
-                self.show_terminal = true;
-                self.show_daemon_terminal = false;
-                tracing::info!(event = "ui.terminal.toggle_on");
-                // Focus the terminal view
-                if let Some(view) = &self.terminal_view {
-                    let handle = view.read(cx).focus_handle(cx).clone();
-                    window.focus(&handle);
-                }
-            }
+    /// Attach to a daemon session's terminal for a specific kild.
+    ///
+    /// Creates a daemon-backed terminal connection and stores it in the TerminalStore.
+    /// Uses `cx.spawn_in(window, ...)` to get AsyncWindowContext for TerminalView creation.
+    pub fn attach_to_kild(
+        &mut self,
+        kild_id: String,
+        daemon_session_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Guard: already attached or currently attaching
+        if self.state.has_terminal_for(&kild_id) {
+            self.state.set_terminal_focus(&kild_id);
             cx.notify();
             return;
         }
+        if self.attaching_kild.as_deref() == Some(kild_id.as_str()) {
+            return;
+        }
 
-        // Ctrl+D: toggle daemon terminal view
-        if key_str == "d" && event.keystroke.modifiers.control {
-            if self.show_daemon_terminal {
-                self.show_daemon_terminal = false;
-                tracing::info!(event = "ui.terminal.daemon_toggle_off");
-                window.focus(&self.focus_handle);
-            } else {
-                // Drop dead daemon terminal so a fresh one gets created
-                if let Some(view) = &self.daemon_terminal_view
-                    && view.read(cx).terminal().has_exited()
-                {
-                    tracing::info!(event = "ui.terminal.daemon_recycled");
-                    self.daemon_terminal_view = None;
-                }
-                // Lazy-create daemon terminal on first toggle (or after session end)
-                if self.daemon_terminal_view.is_none() {
-                    // Guard against concurrent creation from rapid Ctrl+D presses
-                    if self.daemon_terminal_creating {
-                        cx.notify();
+        self.attaching_kild = Some(kild_id.clone());
+        tracing::info!(
+            event = "ui.terminal.attach_to_kild_started",
+            kild_id = %kild_id,
+            daemon_session_id = %daemon_session_id,
+        );
+
+        let kild_id_for_task = kild_id.clone();
+        let daemon_sid = daemon_session_id.clone();
+
+        cx.spawn_in(
+            window,
+            async move |this, cx: &mut gpui::AsyncWindowContext| {
+                // 1. Connect and attach to daemon session
+                let conn = cx
+                    .background_executor()
+                    .spawn(async move {
+                        crate::daemon_client::connect_for_attach(&daemon_sid, 24, 80).await
+                    })
+                    .await;
+                let conn = match conn {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let Some(this) = this.upgrade() else { return };
+                        let kid = kild_id_for_task.clone();
+                        if let Err(update_err) =
+                            cx.update_entity(&this, |view: &mut MainView, cx| {
+                                view.attaching_kild = None;
+                                view.state.push_error(format!("Daemon attach failed: {e}"));
+                                cx.notify();
+                            })
+                        {
+                            tracing::error!(
+                                event = "ui.terminal.attach_error_display_failed",
+                                kild_id = %kid,
+                                error = %update_err,
+                            );
+                        }
                         return;
                     }
-                    self.daemon_terminal_creating = true;
-                    tracing::info!(event = "ui.terminal.daemon_create_started");
-                    // spawn_in gives AsyncWindowContext (Window + App access)
-                    cx.spawn_in(
-                        window,
-                        async move |this, cx: &mut gpui::AsyncWindowContext| {
-                            // 1. Find first running daemon session
-                            let session = cx
-                                .background_executor()
-                                .spawn(async {
-                                    crate::daemon_client::find_first_running_session().await
-                                })
-                                .await;
-                            let session = match session {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    let Some(this) = this.upgrade() else { return };
-                                    if let Err(update_err) =
-                                        cx.update_entity(&this, |view: &mut MainView, cx| {
-                                            view.daemon_terminal_creating = false;
-                                            view.state
-                                                .push_error(format!("No daemon session: {e}"));
-                                            cx.notify();
-                                        })
-                                    {
-                                        tracing::error!(
-                                            event = "ui.terminal.error_display_failed",
-                                            error = %update_err,
-                                        );
-                                    }
-                                    return;
+                };
+
+                // 2. Create terminal and TerminalView
+                let Some(this) = this.upgrade() else { return };
+                let kid = kild_id_for_task.clone();
+                let dsid = daemon_session_id.clone();
+                if let Err(update_err) =
+                    cx.update_window_entity(&this, |view: &mut MainView, window, cx| {
+                        view.attaching_kild = None;
+                        let sid = conn.session_id().to_string();
+                        match crate::terminal::state::Terminal::from_daemon(sid, conn, cx) {
+                            Ok(terminal) => {
+                                let term_view = cx.new(|cx| {
+                                    crate::terminal::TerminalView::from_terminal(
+                                        terminal, window, cx,
+                                    )
+                                });
+                                view.state.attach_terminal(kid.clone(), dsid, term_view);
+                                view.state.set_terminal_focus(&kid);
+                                // Focus the terminal
+                                if let Some(v) = view.state.focused_terminal() {
+                                    let h = v.read(cx).focus_handle(cx).clone();
+                                    window.focus(&h);
                                 }
-                            };
-                            // 2. Connect and attach
-                            let session_id = session.id.clone();
-                            let conn = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    crate::daemon_client::connect_for_attach(&session_id, 24, 80)
-                                        .await
-                                })
-                                .await;
-                            let conn = match conn {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    let Some(this) = this.upgrade() else { return };
-                                    if let Err(update_err) =
-                                        cx.update_entity(&this, |view: &mut MainView, cx| {
-                                            view.daemon_terminal_creating = false;
-                                            view.state
-                                                .push_error(format!("Daemon attach failed: {e}"));
-                                            cx.notify();
-                                        })
-                                    {
-                                        tracing::error!(
-                                            event = "ui.terminal.error_display_failed",
-                                            error = %update_err,
-                                        );
-                                    }
-                                    return;
-                                }
-                            };
-                            // 3. Create terminal — update_window_entity gives
-                            //    (&mut MainView, &mut Window, &mut Context<MainView>)
-                            let Some(this) = this.upgrade() else { return };
-                            if let Err(update_err) =
-                                cx.update_window_entity(&this, |view: &mut MainView, window, cx| {
-                                    view.daemon_terminal_creating = false;
-                                    let sid = conn.session_id().to_string();
-                                    match crate::terminal::state::Terminal::from_daemon(
-                                        sid, conn, cx,
-                                    ) {
-                                        Ok(terminal) => {
-                                            let term_view = cx.new(|cx| {
-                                                crate::terminal::TerminalView::from_terminal(
-                                                    terminal, window, cx,
-                                                )
-                                            });
-                                            view.daemon_terminal_view = Some(term_view);
-                                            view.show_daemon_terminal = true;
-                                            view.show_terminal = false;
-                                            // Focus the daemon terminal
-                                            if let Some(v) = &view.daemon_terminal_view {
-                                                let h = v.read(cx).focus_handle(cx).clone();
-                                                window.focus(&h);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            view.state
-                                                .push_error(format!("Daemon terminal failed: {e}"));
-                                        }
-                                    }
-                                    cx.notify();
-                                })
-                            {
-                                tracing::error!(
-                                    event = "ui.terminal.error_display_failed",
-                                    error = %update_err,
-                                );
                             }
-                        },
-                    )
-                    .detach();
-                    cx.notify();
-                    return;
+                            Err(e) => {
+                                view.state
+                                    .push_error(format!("Daemon terminal failed: {e}"));
+                            }
+                        }
+                        cx.notify();
+                    })
+                {
+                    tracing::error!(
+                        event = "ui.terminal.attach_view_update_failed",
+                        kild_id = %kid,
+                        error = %update_err,
+                    );
                 }
-                // Already created, just show
-                self.show_daemon_terminal = true;
-                self.show_terminal = false;
-                tracing::info!(event = "ui.terminal.daemon_toggle_on");
-                if let Some(view) = &self.daemon_terminal_view {
-                    let handle = view.read(cx).focus_handle(cx).clone();
-                    window.focus(&handle);
-                }
+            },
+        )
+        .detach();
+
+        cx.notify();
+    }
+
+    /// Handle kild click in sidebar — select and auto-attach if daemon + running.
+    pub fn on_kild_sidebar_click(
+        &mut self,
+        session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::debug!(event = "ui.kild.sidebar_clicked", session_id = session_id);
+        let id = session_id.to_string();
+        self.state.select_kild(id.clone());
+        self.state.set_terminal_focus(&id);
+
+        // Refresh teammate data for this kild
+        self.state.refresh_teammates(&id);
+
+        // Auto-attach if daemon + running + not already attached
+        if !self.state.has_terminal_for(&id)
+            && let Some(display) = self.state.selected_kild()
+        {
+            let is_daemon = display
+                .session
+                .runtime_mode
+                .as_ref()
+                .map(|m| matches!(m, kild_core::RuntimeMode::Daemon))
+                .unwrap_or(false);
+            let is_running = display.process_status == kild_core::ProcessStatus::Running;
+
+            if is_daemon
+                && is_running
+                && let Some(agent) = display.session.latest_agent()
+                && let Some(dsid) = agent.daemon_session_id()
+            {
+                let dsid = dsid.to_string();
+                self.attach_to_kild(id, dsid, window, cx);
+                return;
             }
+        }
+
+        cx.notify();
+    }
+
+    /// Handle teammate tab click — attach to the teammate's daemon session.
+    pub fn on_teammate_tab_click(
+        &mut self,
+        daemon_session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        tracing::debug!(
+            event = "ui.teammate_tab.clicked",
+            daemon_session_id = daemon_session_id,
+        );
+
+        // Use the daemon_session_id as a virtual kild ID for the terminal store
+        // (teammate terminals are keyed by their daemon session ID)
+        let virtual_id = format!("teammate:{}", daemon_session_id);
+        let dsid = daemon_session_id.to_string();
+
+        if self.state.has_terminal_for(&virtual_id) {
+            self.state.set_terminal_focus(&virtual_id);
+            cx.notify();
+        } else {
+            self.attach_to_kild(virtual_id, dsid, window, cx);
+        }
+    }
+
+    /// Handle keyboard shortcuts.
+    ///
+    /// Text input is handled by gpui-component's Input widget internally.
+    /// This handler manages: Escape (close dialog), Enter (submit), Tab (cycle),
+    /// Cmd+J/K (navigate kilds), and terminal key propagation.
+    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        use crate::state::DialogState;
+        use crate::views::split_pane::SplitDirection;
+
+        let key_str = event.keystroke.key.to_string();
+        let cmd = event.keystroke.modifiers.platform;
+        let shift = event.keystroke.modifiers.shift;
+
+        // Cmd+J: select next kild in sidebar (wraps)
+        if cmd && key_str == "j" {
+            self.navigate_kild(1, cx);
+            return;
+        }
+        // Cmd+K: select previous kild in sidebar (wraps)
+        if cmd && key_str == "k" {
+            self.navigate_kild(-1, cx);
+            return;
+        }
+
+        // Cmd+\: split vertical (side-by-side)
+        if cmd && !shift && key_str == "\\" {
+            self.on_split(SplitDirection::Vertical, cx);
+            return;
+        }
+        // Cmd+Shift+\: split horizontal (top-bottom)
+        if cmd && shift && key_str == "\\" {
+            self.on_split(SplitDirection::Horizontal, cx);
+            return;
+        }
+        // Cmd+W: close split pane
+        if cmd && key_str == "w" && self.state.layout_is_split() {
+            self.state.layout_unsplit();
             cx.notify();
             return;
         }
 
-        // When a terminal pane is visible, propagate all non-reserved keys to the
-        // child TerminalView so it can send them to the PTY. Without this, keys
-        // would be silently consumed by the DialogState::None branch below.
-        if self.show_terminal || self.show_daemon_terminal {
+        // When a terminal has focus, propagate all non-reserved keys to TerminalView
+        if self.state.focused_terminal().is_some() {
             cx.propagate();
             return;
         }
@@ -1177,6 +1214,66 @@ impl MainView {
             },
         }
     }
+
+    /// Handle split command — split the main area with a second pane.
+    fn on_split(
+        &mut self,
+        direction: crate::views::split_pane::SplitDirection,
+        cx: &mut Context<Self>,
+    ) {
+        // Need a focused kild to split from
+        let Some(focused_id) = self.state.focused_kild_id().map(|s| s.to_string()) else {
+            return;
+        };
+
+        // Already split — toggle direction or unsplit
+        if self.state.layout_is_split() {
+            self.state.layout_unsplit();
+            cx.notify();
+            return;
+        }
+
+        // Find the next running kild to show in the second pane
+        let displays = self.state.filtered_displays();
+        let next_kild = displays
+            .iter()
+            .filter(|d| {
+                d.process_status == kild_core::ProcessStatus::Running && d.session.id != focused_id
+            })
+            .map(|d| d.session.id.clone())
+            .next();
+
+        if let Some(second_id) = next_kild {
+            self.state.layout_split_with(direction, second_id);
+            cx.notify();
+        }
+    }
+
+    /// Navigate to next/previous kild in the filtered display list.
+    fn navigate_kild(&mut self, direction: i32, cx: &mut Context<Self>) {
+        let displays = self.state.filtered_displays();
+        if displays.is_empty() {
+            return;
+        }
+
+        let current_id = self.state.selected_id().map(|s| s.to_string());
+        let current_idx = current_id
+            .as_deref()
+            .and_then(|id| displays.iter().position(|d| d.session.id == id));
+
+        let next_idx = match current_idx {
+            Some(idx) => {
+                let len = displays.len() as i32;
+                ((idx as i32 + direction).rem_euclid(len)) as usize
+            }
+            None => 0,
+        };
+
+        let next_id = displays[next_idx].session.id.clone();
+        self.state.select_kild(next_id.clone());
+        self.state.set_terminal_focus(&next_id);
+        cx.notify();
+    }
 }
 
 impl Focusable for MainView {
@@ -1187,77 +1284,13 @@ impl Focusable for MainView {
 
 impl Render for MainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let stopped_count = self.state.stopped_count();
-        let running_count = self.state.running_count();
-
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
             .size_full()
-            .flex()
             .flex_col()
             .bg(theme::void())
-            // Header with title and action buttons
-            .child(
-                div()
-                    .px(px(theme::SPACE_4))
-                    .py(px(theme::SPACE_3))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_XL))
-                            .text_color(theme::text_white())
-                            .font_weight(FontWeight::BOLD)
-                            .child("KILD"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(theme::SPACE_2))
-                            // Open All button - Success variant
-                            .child(
-                                Button::new("open-all-btn")
-                                    .label(format!("Open All ({})", stopped_count))
-                                    .success()
-                                    .disabled(stopped_count == 0 || self.state.is_bulk_loading())
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.on_open_all_click(cx);
-                                    })),
-                            )
-                            // Stop All button - Warning variant
-                            .child(
-                                Button::new("stop-all-btn")
-                                    .label(format!("Stop All ({})", running_count))
-                                    .warning()
-                                    .disabled(running_count == 0 || self.state.is_bulk_loading())
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.on_stop_all_click(cx);
-                                    })),
-                            )
-                            // Refresh button - Ghost variant
-                            .child(
-                                Button::new("refresh-btn")
-                                    .label("Refresh")
-                                    .ghost()
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.on_refresh_click(cx);
-                                    })),
-                            )
-                            // Create button - Primary variant
-                            .child(
-                                Button::new("create-header-btn")
-                                    .label("+ Create")
-                                    .primary()
-                                    .on_click(cx.listener(|view, _, window, cx| {
-                                        view.on_create_button_click(window, cx);
-                                    })),
-                            ),
-                    ),
-            )
-            // Error banner (shown for startup failures, project errors, state desync recovery)
+            // Error banners (startup failures, bulk operation errors)
             .when(self.state.has_banner_errors(), |this| {
                 let errors = self.state.banner_errors();
                 let error_count = errors.len();
@@ -1272,7 +1305,6 @@ impl Render for MainView {
                         .flex()
                         .flex_col()
                         .gap(px(theme::SPACE_1))
-                        // Header with dismiss button
                         .child(
                             div()
                                 .flex()
@@ -1293,7 +1325,6 @@ impl Render for MainView {
                                     }),
                                 )),
                         )
-                        // Error list
                         .children(errors.iter().map(|e| {
                             div()
                                 .text_size(px(theme::TEXT_SM))
@@ -1302,7 +1333,6 @@ impl Render for MainView {
                         })),
                 )
             })
-            // Bulk operation errors banner (dismissible)
             .when(self.state.has_bulk_errors(), |this| {
                 let bulk_errors = self.state.bulk_errors();
                 let error_count = bulk_errors.len();
@@ -1317,7 +1347,6 @@ impl Render for MainView {
                         .flex()
                         .flex_col()
                         .gap(px(theme::SPACE_1))
-                        // Header with dismiss button
                         .child(
                             div()
                                 .flex()
@@ -1342,7 +1371,6 @@ impl Render for MainView {
                                         })),
                                 ),
                         )
-                        // Error list
                         .children(bulk_errors.iter().map(|e| {
                             div()
                                 .text_size(px(theme::TEXT_SM))
@@ -1351,48 +1379,33 @@ impl Render for MainView {
                         })),
                 )
             })
-            // Main content: terminal (full-area) or daemon terminal or 3-column layout
-            .when(self.show_terminal, |this| {
-                if let Some(terminal_view) = &self.terminal_view {
-                    this.child(
+            // Main content: rail | sidebar | terminal main area
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .overflow_hidden()
+                    // Project rail (48px)
+                    .child(rail::render_rail(&self.state, cx))
+                    // Kild sidebar (220px)
+                    .child(kild_sidebar::render_kild_sidebar(&self.state, cx))
+                    // Main terminal area
+                    .child(
                         div()
                             .flex_1()
+                            .flex_col()
                             .overflow_hidden()
-                            .child(terminal_view.clone()),
-                    )
-                } else {
-                    this
-                }
-            })
-            .when(self.show_daemon_terminal && !self.show_terminal, |this| {
-                if let Some(daemon_view) = &self.daemon_terminal_view {
-                    this.child(div().flex_1().overflow_hidden().child(daemon_view.clone()))
-                } else {
-                    this
-                }
-            })
-            .when(!self.show_terminal && !self.show_daemon_terminal, |this| {
-                this.child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .overflow_hidden()
-                        // Sidebar (200px fixed)
-                        .child(sidebar::render_sidebar(&self.state, cx))
-                        // Kild list (flex:1)
-                        .child(
-                            div()
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(kild_list::render_kild_list(&self.state, cx)),
-                        )
-                        // Detail panel (320px, conditional)
-                        .when(self.state.has_selection(), |this| {
-                            this.child(detail_panel::render_detail_panel(&self.state, cx))
-                        }),
-                )
-            })
-            // Dialog rendering (based on current dialog state)
+                            // Teammate tabs
+                            .child(teammate_tabs::render_teammate_tabs(&self.state, cx))
+                            // Terminal pane (focused kild's terminal or empty state)
+                            .child(self.render_terminal_area(cx))
+                            // Minimized session bars
+                            .child(minimized_bar::render_minimized_bars(&self.state, cx)),
+                    ),
+            )
+            // Status bar (bottom)
+            .child(status_bar::render_status_bar(&self.state, cx))
+            // Dialog overlays
             .when(self.state.dialog().is_create(), |this| {
                 this.child(create_dialog::render_create_dialog(
                     self.state.dialog(),
@@ -1417,6 +1430,51 @@ impl Render for MainView {
                     cx,
                 ))
             })
+    }
+}
+
+impl MainView {
+    /// Render the main terminal area: split panes, single terminal, or empty state.
+    fn render_terminal_area(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::views::split_pane::{PaneContent, SplitPane, render_split};
+
+        // Check for split mode
+        if let Some(split_config) = self.state.layout_split() {
+            let first = self
+                .state
+                .focused_terminal()
+                .map(|e| PaneContent::Terminal(e.clone()))
+                .unwrap_or(PaneContent::Empty);
+            let second = self
+                .state
+                .get_terminal(&split_config.second_id)
+                .map(|e| PaneContent::Terminal(e.clone()))
+                .unwrap_or(PaneContent::Empty);
+
+            let split = SplitPane {
+                direction: split_config.direction,
+                first,
+                second,
+                ratio: split_config.ratio,
+            };
+
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .child(render_split(&split, cx))
+        } else if let Some(terminal_entity) = self.state.focused_terminal() {
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .child(terminal_entity.clone())
+        } else {
+            div().flex_1().flex().items_center().justify_center().child(
+                div()
+                    .text_color(theme::text_muted())
+                    .text_size(px(theme::TEXT_BASE))
+                    .child("Select a kild from the sidebar"),
+            )
+        }
     }
 }
 

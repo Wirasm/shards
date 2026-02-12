@@ -11,11 +11,13 @@ pub enum DialogState {
     #[default]
     None,
     /// Create kild dialog is open.
+    #[allow(dead_code)]
     Create {
         form: CreateFormState,
         error: Option<String>,
     },
     /// Confirm destroy dialog is open.
+    #[allow(dead_code)]
     Confirm {
         /// Branch being destroyed.
         branch: String,
@@ -45,6 +47,7 @@ impl DialogState {
     }
 
     /// Open the create dialog with default form state.
+    #[allow(dead_code)]
     pub fn open_create() -> Self {
         DialogState::Create {
             form: CreateFormState::default(),
@@ -53,6 +56,7 @@ impl DialogState {
     }
 
     /// Open the confirm dialog for destroying a branch.
+    #[allow(dead_code)]
     pub fn open_confirm(branch: String, safety_info: Option<DestroySafetyInfo>) -> Self {
         DialogState::Confirm {
             branch,

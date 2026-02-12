@@ -94,6 +94,7 @@ impl TerminalView {
     }
 
     /// Access the underlying terminal state (e.g. to check `has_exited()`).
+    #[allow(dead_code)]
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
     }
