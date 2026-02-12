@@ -147,6 +147,8 @@ pub struct MainView {
     daemon_terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
     /// Whether the daemon terminal pane is currently shown.
     show_daemon_terminal: bool,
+    /// Guard against concurrent daemon terminal creation from rapid Ctrl+D presses.
+    daemon_terminal_creating: bool,
 }
 
 impl MainView {
@@ -290,6 +292,7 @@ impl MainView {
             show_terminal: false,
             daemon_terminal_view: None,
             show_daemon_terminal: false,
+            daemon_terminal_creating: false,
         }
     }
 
@@ -1022,6 +1025,12 @@ impl MainView {
                 }
                 // Lazy-create daemon terminal on first toggle (or after session end)
                 if self.daemon_terminal_view.is_none() {
+                    // Guard against concurrent creation from rapid Ctrl+D presses
+                    if self.daemon_terminal_creating {
+                        cx.notify();
+                        return;
+                    }
+                    self.daemon_terminal_creating = true;
                     tracing::info!(event = "ui.terminal.daemon_create_started");
                     // spawn_in gives AsyncWindowContext (Window + App access)
                     cx.spawn_in(
@@ -1038,11 +1047,19 @@ impl MainView {
                                 Ok(s) => s,
                                 Err(e) => {
                                     let Some(this) = this.upgrade() else { return };
-                                    cx.update_entity(&this, |view: &mut MainView, cx| {
-                                        view.state.push_error(format!("No daemon session: {e}"));
-                                        cx.notify();
-                                    })
-                                    .ok();
+                                    if let Err(update_err) =
+                                        cx.update_entity(&this, |view: &mut MainView, cx| {
+                                            view.daemon_terminal_creating = false;
+                                            view.state
+                                                .push_error(format!("No daemon session: {e}"));
+                                            cx.notify();
+                                        })
+                                    {
+                                        tracing::error!(
+                                            event = "ui.terminal.error_display_failed",
+                                            error = %update_err,
+                                        );
+                                    }
                                     return;
                                 }
                             };
@@ -1059,43 +1076,60 @@ impl MainView {
                                 Ok(c) => c,
                                 Err(e) => {
                                     let Some(this) = this.upgrade() else { return };
-                                    cx.update_entity(&this, |view: &mut MainView, cx| {
-                                        view.state.push_error(format!("Daemon attach failed: {e}"));
-                                        cx.notify();
-                                    })
-                                    .ok();
+                                    if let Err(update_err) =
+                                        cx.update_entity(&this, |view: &mut MainView, cx| {
+                                            view.daemon_terminal_creating = false;
+                                            view.state
+                                                .push_error(format!("Daemon attach failed: {e}"));
+                                            cx.notify();
+                                        })
+                                    {
+                                        tracing::error!(
+                                            event = "ui.terminal.error_display_failed",
+                                            error = %update_err,
+                                        );
+                                    }
                                     return;
                                 }
                             };
                             // 3. Create terminal — update_window_entity gives
                             //    (&mut MainView, &mut Window, &mut Context<MainView>)
                             let Some(this) = this.upgrade() else { return };
-                            cx.update_window_entity(&this, |view: &mut MainView, window, cx| {
-                                let sid = conn.session_id.clone();
-                                match crate::terminal::state::Terminal::from_daemon(sid, conn, cx) {
-                                    Ok(terminal) => {
-                                        let term_view = cx.new(|cx| {
-                                            crate::terminal::TerminalView::from_terminal(
-                                                terminal, window, cx,
-                                            )
-                                        });
-                                        view.daemon_terminal_view = Some(term_view);
-                                        view.show_daemon_terminal = true;
-                                        view.show_terminal = false;
-                                        // Focus the daemon terminal
-                                        if let Some(v) = &view.daemon_terminal_view {
-                                            let h = v.read(cx).focus_handle(cx).clone();
-                                            window.focus(&h);
+                            if let Err(update_err) =
+                                cx.update_window_entity(&this, |view: &mut MainView, window, cx| {
+                                    view.daemon_terminal_creating = false;
+                                    let sid = conn.session_id().to_string();
+                                    match crate::terminal::state::Terminal::from_daemon(
+                                        sid, conn, cx,
+                                    ) {
+                                        Ok(terminal) => {
+                                            let term_view = cx.new(|cx| {
+                                                crate::terminal::TerminalView::from_terminal(
+                                                    terminal, window, cx,
+                                                )
+                                            });
+                                            view.daemon_terminal_view = Some(term_view);
+                                            view.show_daemon_terminal = true;
+                                            view.show_terminal = false;
+                                            // Focus the daemon terminal
+                                            if let Some(v) = &view.daemon_terminal_view {
+                                                let h = v.read(cx).focus_handle(cx).clone();
+                                                window.focus(&h);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            view.state
+                                                .push_error(format!("Daemon terminal failed: {e}"));
                                         }
                                     }
-                                    Err(e) => {
-                                        view.state
-                                            .push_error(format!("Daemon terminal failed: {e}"));
-                                    }
-                                }
-                                cx.notify();
-                            })
-                            .ok();
+                                    cx.notify();
+                                })
+                            {
+                                tracing::error!(
+                                    event = "ui.terminal.error_display_failed",
+                                    error = %update_err,
+                                );
+                            }
                         },
                     )
                     .detach();

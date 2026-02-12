@@ -187,7 +187,7 @@ impl TerminalView {
         let cmd = event.keystroke.modifiers.platform;
 
         tracing::debug!(
-            event = "ui.terminal.key_received",
+            event = "ui.terminal.key_down_started",
             key = key,
             ctrl = event.keystroke.modifiers.control,
             alt = event.keystroke.modifiers.alt,

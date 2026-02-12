@@ -17,6 +17,11 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use super::errors::TerminalError;
 use crate::daemon_client::{self, DaemonConnection};
 
+/// Default PTY dimensions used until the first resize event.
+/// ResizeHandle will update to actual window dimensions on prepaint.
+const DEFAULT_ROWS: u16 = 24;
+const DEFAULT_COLS: u16 = 80;
+
 /// Simple size implementation satisfying alacritty_terminal's Dimensions trait.
 struct TermDimensions {
     cols: usize,
@@ -73,6 +78,7 @@ impl Write for DaemonPtyWriter {
                 tracing::error!(
                     event = "ui.terminal.daemon_pty_write_failed",
                     error = %e,
+                    bytes_lost = buf.len(),
                 );
                 std::io::Error::new(std::io::ErrorKind::BrokenPipe, "daemon writer task dropped")
             })?;
@@ -84,12 +90,23 @@ impl Write for DaemonPtyWriter {
     }
 }
 
-/// Target for resize operations — local PTY or daemon IPC.
-enum ResizeTarget {
-    /// Local PTY resize (sends SIGWINCH via portable-pty).
-    Local(Arc<Mutex<Box<dyn MasterPty + Send>>>),
-    /// Daemon resize (sends command to writer task).
-    Daemon(futures::channel::mpsc::UnboundedSender<DaemonWriteCommand>),
+/// Terminal mode — determines PTY backend and lifecycle behavior.
+///
+/// Encodes mode-specific resources as enum variants, making illegal states
+/// unrepresentable. A Local terminal cannot have a daemon writer task,
+/// and a Daemon terminal cannot have a child process.
+enum TerminalMode {
+    /// Local PTY with shell child process.
+    Local {
+        child: Box<dyn Child + Send + Sync>,
+        pty_master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    },
+    /// Daemon-backed PTY via IPC.
+    Daemon {
+        /// Stored to prevent cancellation (dropping the Task cancels it).
+        _writer_task: Task<()>,
+        cmd_tx: futures::channel::mpsc::UnboundedSender<DaemonWriteCommand>,
+    },
 }
 
 /// Core terminal state wrapping alacritty_terminal's Term with PTY lifecycle.
@@ -109,12 +126,8 @@ pub struct Terminal {
     pty_writer: Arc<Mutex<Box<dyn Write + Send>>>,
     /// Background PTY reader task. Stored to prevent cancellation.
     _pty_reader_task: Task<()>,
-    /// Child process handle. Stored for shutdown. None in daemon mode.
-    _child: Option<Box<dyn Child + Send + Sync>>,
-    /// Background IPC writer task for daemon mode. Stored to prevent cancellation.
-    _writer_task: Option<Task<()>>,
-    /// Detach sender for daemon mode cleanup on drop.
-    _detach_sender: Option<futures::channel::mpsc::UnboundedSender<DaemonWriteCommand>>,
+    /// Mode-specific resources (local child process or daemon IPC handles).
+    mode: TerminalMode,
     /// Pending channels for event batching. Taken once by TerminalView.
     pending_byte_rx: Option<UnboundedReceiver<Vec<u8>>>,
     pending_event_rx: Option<UnboundedReceiver<AlacEvent>>,
@@ -122,14 +135,8 @@ pub struct Terminal {
     error_state: Arc<Mutex<Option<String>>>,
     /// Set to true when the batch loop exits (shell exited or PTY closed).
     exited: Arc<AtomicBool>,
-    /// PTY master handle, kept alive to prevent PTY closure.
-    /// Resize now goes through `resize_target`. None in daemon mode.
-    #[allow(dead_code)]
-    pty_master: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
     /// Current PTY dimensions (rows, cols). Compared in prepaint to detect changes.
     current_size: Arc<Mutex<(u16, u16)>>,
-    /// Resize target for TerminalElement. Determined by mode (local vs daemon).
-    resize_target: ResizeTarget,
 }
 
 impl Terminal {
@@ -138,8 +145,8 @@ impl Terminal {
     /// Spawns the user's default shell, starts a background reader task
     /// for PTY output, and sets up 4ms event batching.
     pub fn new(cx: &mut gpui::App) -> Result<Self, TerminalError> {
-        let rows: u16 = 24;
-        let cols: u16 = 80;
+        let rows = DEFAULT_ROWS;
+        let cols = DEFAULT_COLS;
 
         // Create event channel for alacritty_terminal events
         let (event_tx, event_rx) = futures::channel::mpsc::unbounded();
@@ -260,22 +267,16 @@ impl Terminal {
 
         tracing::info!(event = "ui.terminal.create_completed");
 
-        let resize_target = ResizeTarget::Local(pty_master.clone());
-
         Ok(Self {
             term,
             pty_writer,
             _pty_reader_task: pty_reader_task,
-            _child: Some(child),
-            _writer_task: None,
-            _detach_sender: None,
+            mode: TerminalMode::Local { child, pty_master },
             pending_byte_rx: Some(byte_rx),
             pending_event_rx: Some(event_rx),
             error_state: Arc::new(Mutex::new(None)),
             exited: Arc::new(AtomicBool::new(false)),
-            pty_master: Some(pty_master),
             current_size,
-            resize_target,
         })
     }
 
@@ -290,8 +291,8 @@ impl Terminal {
         conn: DaemonConnection,
         cx: &mut gpui::App,
     ) -> Result<Self, TerminalError> {
-        let rows: u16 = 24;
-        let cols: u16 = 80;
+        let rows = DEFAULT_ROWS;
+        let cols = DEFAULT_COLS;
 
         // Create event channel for alacritty_terminal events
         let (event_tx, event_rx) = futures::channel::mpsc::unbounded();
@@ -320,10 +321,13 @@ impl Terminal {
         let exited = Arc::new(AtomicBool::new(false));
         let error_state: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
+        // Destructure connection into reader/writer halves
+        let (reader, writer, _conn_session_id) = conn.into_parts();
+
         // Spawn IPC reader task: reads JSONL from daemon, base64 decodes, feeds byte channel
         let reader_exited = exited.clone();
         let reader_error = error_state.clone();
-        let mut reader = conn.reader;
+        let mut reader = reader;
         let reader_session_id = session_id.clone();
         let pty_reader_task = cx.background_executor().spawn(async move {
             tracing::info!(
@@ -357,8 +361,16 @@ impl Terminal {
                                     Err(e) => {
                                         tracing::error!(
                                             event = "ui.terminal.daemon_base64_decode_failed",
-                                            error = %e
+                                            error = %e,
                                         );
+                                        if let Ok(mut err) = reader_error.lock()
+                                            && err.is_none()
+                                        {
+                                            *err = Some(format!(
+                                                "Terminal data corrupted (base64 decode): {e}"
+                                            ));
+                                        }
+                                        break;
                                     }
                                 }
                             }
@@ -384,11 +396,17 @@ impl Terminal {
                                 );
                             }
                             Err(e) => {
-                                tracing::warn!(
+                                tracing::error!(
                                     event = "ui.terminal.daemon_parse_failed",
                                     error = %e,
                                     line = trimmed
                                 );
+                                if let Ok(mut err) = reader_error.lock()
+                                    && err.is_none()
+                                {
+                                    *err = Some(format!("Daemon protocol error: {e}"));
+                                }
+                                break;
                             }
                         }
                     }
@@ -411,8 +429,9 @@ impl Terminal {
         });
 
         // Spawn IPC writer task: reads DaemonWriteCommand, sends to daemon via IPC
-        let mut writer = conn.writer;
+        let mut writer = writer;
         let writer_session_id = session_id.clone();
+        let writer_error = error_state.clone();
         let writer_task = cx.background_executor().spawn(async move {
             use futures::StreamExt;
             tracing::info!(
@@ -428,8 +447,14 @@ impl Terminal {
                         {
                             tracing::error!(
                                 event = "ui.terminal.daemon_write_failed",
-                                error = %e
+                                error = %e,
+                                bytes_lost = data.len(),
                             );
+                            if let Ok(mut err) = writer_error.lock()
+                                && err.is_none()
+                            {
+                                *err = Some(format!("Daemon write failed: {e}"));
+                            }
                             break;
                         }
                     }
@@ -439,7 +464,9 @@ impl Terminal {
                         {
                             tracing::warn!(
                                 event = "ui.terminal.daemon_resize_failed",
-                                error = %e
+                                error = %e,
+                                rows = r,
+                                cols = c,
                             );
                         }
                     }
@@ -467,22 +494,19 @@ impl Terminal {
             session_id = session_id
         );
 
-        let resize_target = ResizeTarget::Daemon(cmd_tx.clone());
-
         Ok(Self {
             term,
             pty_writer,
             _pty_reader_task: pty_reader_task,
-            _child: None,
-            _writer_task: Some(writer_task),
-            _detach_sender: Some(cmd_tx),
+            mode: TerminalMode::Daemon {
+                _writer_task: writer_task,
+                cmd_tx,
+            },
             pending_byte_rx: Some(byte_rx),
             pending_event_rx: Some(event_rx),
             error_state,
             exited,
-            pty_master: None,
             current_size,
-            resize_target,
         })
     }
 
@@ -646,9 +670,9 @@ impl Terminal {
 
     /// Get a resize handle for use by TerminalElement.
     pub(crate) fn resize_handle(&self) -> ResizeHandle {
-        let resize_impl = match &self.resize_target {
-            ResizeTarget::Local(master) => ResizeImpl::Local(master.clone()),
-            ResizeTarget::Daemon(tx) => ResizeImpl::Daemon(tx.clone()),
+        let resize_impl = match &self.mode {
+            TerminalMode::Local { pty_master, .. } => ResizeImpl::Local(pty_master.clone()),
+            TerminalMode::Daemon { cmd_tx, .. } => ResizeImpl::Daemon(cmd_tx.clone()),
         };
         ResizeHandle {
             terminal_term: self.term.clone(),
@@ -658,7 +682,7 @@ impl Terminal {
     }
 }
 
-/// Internal resize implementation, matching the terminal's mode.
+/// Resize implementation, determined by terminal mode (local PTY or daemon IPC).
 pub(crate) enum ResizeImpl {
     Local(Arc<Mutex<Box<dyn MasterPty + Send>>>),
     Daemon(futures::channel::mpsc::UnboundedSender<DaemonWriteCommand>),
@@ -761,15 +785,23 @@ impl ResizeHandle {
 impl Drop for Terminal {
     fn drop(&mut self) {
         tracing::info!(event = "ui.terminal.cleanup_started");
-        if let Some(ref mut child) = self._child {
-            // Local mode: child gets SIGHUP from PTY closure, but explicit kill is safer
-            if let Err(e) = child.kill() {
-                tracing::warn!(event = "ui.terminal.kill_failed", error = %e);
+        match &mut self.mode {
+            TerminalMode::Local { child, .. } => {
+                // Local mode: child gets SIGHUP from PTY closure, but explicit kill is safer
+                if let Err(e) = child.kill() {
+                    tracing::warn!(event = "ui.terminal.kill_failed", error = %e);
+                }
             }
-        }
-        if let Some(ref tx) = self._detach_sender {
-            // Daemon mode: send Detach command (best-effort)
-            let _ = tx.unbounded_send(DaemonWriteCommand::Detach);
+            TerminalMode::Daemon { cmd_tx, .. } => {
+                // Daemon mode: send Detach command (best-effort — writer task may have exited)
+                if let Err(e) = cmd_tx.unbounded_send(DaemonWriteCommand::Detach) {
+                    tracing::warn!(
+                        event = "ui.terminal.cleanup_detach_send_failed",
+                        error = %e,
+                        reason = "writer task likely already exited"
+                    );
+                }
+            }
         }
     }
 }

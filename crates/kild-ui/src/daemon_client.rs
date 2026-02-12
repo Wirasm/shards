@@ -229,17 +229,24 @@ pub async fn find_first_running_session() -> Result<SessionInfo, DaemonClientErr
 ///
 /// - `reader`: receives streaming PtyOutput messages after Attach
 /// - `writer`: sends WriteStdin, ResizePty, Detach commands
+///
+/// Fields are private to enforce invariants established during construction
+/// (reader is attached, session_id matches the attached session).
 pub struct DaemonConnection {
-    pub reader: BufReader<Async<UnixStream>>,
-    pub writer: Async<UnixStream>,
-    pub session_id: String,
+    reader: BufReader<Async<UnixStream>>,
+    writer: Async<UnixStream>,
+    session_id: String,
 }
 
 impl DaemonConnection {
-    /// Read the next JSONL message from the streaming reader connection.
-    #[allow(dead_code)]
-    pub async fn read_next_message(&mut self) -> Result<DaemonMessage, DaemonClientError> {
-        read_response(&mut self.reader).await
+    /// Get the session ID for this connection.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Consume the connection, returning its parts for use in reader/writer tasks.
+    pub fn into_parts(self) -> (BufReader<Async<UnixStream>>, Async<UnixStream>, String) {
+        (self.reader, self.writer, self.session_id)
     }
 }
 
