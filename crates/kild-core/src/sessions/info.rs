@@ -130,7 +130,9 @@ pub fn determine_process_status(session: &Session) -> ProcessStatus {
         // Fallback to daemon-based detection
         if let Some(daemon_sid) = agent_proc.daemon_session_id() {
             match crate::daemon::client::get_session_status(daemon_sid) {
-                Ok(Some(kild_protocol::SessionStatus::Running)) => {
+                Ok(Some(
+                    kild_protocol::SessionStatus::Running | kild_protocol::SessionStatus::Creating,
+                )) => {
                     any_running = true;
                     continue;
                 }

@@ -74,10 +74,34 @@ fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth
         (get_metrics_for_pid(pid, &session.branch), true)
     } else {
         // Check daemon-managed agents if no PID-based process is running
-        let daemon_running = session.agents().iter().any(|a| {
-            a.daemon_session_id()
-                .is_some_and(is_daemon_session_running)
-        });
+        let mut daemon_running = false;
+        for agent in session.agents() {
+            if let Some(daemon_sid) = agent.daemon_session_id() {
+                match crate::daemon::client::get_session_status(daemon_sid) {
+                    Ok(Some(
+                        kild_protocol::SessionStatus::Running
+                        | kild_protocol::SessionStatus::Creating,
+                    )) => {
+                        daemon_running = true;
+                        break;
+                    }
+                    Ok(_) => continue,
+                    Err(e) => {
+                        warn!(
+                            event = "core.health.daemon_status_check_failed",
+                            daemon_session_id = daemon_sid,
+                            agent = agent.agent(),
+                            branch = &session.branch,
+                            error = %e,
+                        );
+                        // Treat unexpected errors as running to avoid false Crashed
+                        // status — we can't confirm the session actually exited.
+                        daemon_running = true;
+                        break;
+                    }
+                }
+            }
+        }
         (None, daemon_running)
     };
 
@@ -92,22 +116,6 @@ fn enrich_session_with_metrics(session: &sessions::types::Session) -> KildHealth
         agent_status,
         agent_status_updated_at,
     )
-}
-
-/// Check if a daemon-managed session is still running via IPC.
-fn is_daemon_session_running(daemon_session_id: &str) -> bool {
-    match crate::daemon::client::get_session_status(daemon_session_id) {
-        Ok(Some(kild_protocol::SessionStatus::Running)) => true,
-        Ok(_) => false,
-        Err(e) => {
-            warn!(
-                event = "core.health.daemon_status_check_failed",
-                daemon_session_id = daemon_session_id,
-                error = %e,
-            );
-            false
-        }
-    }
 }
 
 fn get_metrics_for_pid(pid: u32, branch: &str) -> Option<ProcessMetrics> {
