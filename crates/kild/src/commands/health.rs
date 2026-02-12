@@ -1,6 +1,7 @@
 use clap::ArgMatches;
 use tracing::{error, info, warn};
 
+use kild_core::errors::KildError;
 use kild_core::events;
 use kild_core::health;
 
@@ -82,6 +83,12 @@ fn run_health_once(
     if let Some(branch_name) = branch {
         // Validate branch name
         if !is_valid_branch_name(branch_name) {
+            if json_output {
+                let err_msg = format!("Invalid branch name: {}", branch_name);
+                let boxed = super::helpers::print_json_error(&err_msg, "INVALID_BRANCH_NAME");
+                error!(event = "cli.health_invalid_branch", branch = branch_name);
+                return Err(boxed);
+            }
             eprintln!("❌ Invalid branch name: {}", branch_name);
             error!(event = "cli.health_invalid_branch", branch = branch_name);
             return Err("Invalid branch name".into());
@@ -100,9 +107,13 @@ fn run_health_once(
                 Ok(None) // Single branch doesn't return HealthOutput
             }
             Err(e) => {
-                eprintln!("❌ Failed to get health for kild '{}': {}", branch_name, e);
                 error!(event = "cli.health_failed", branch = branch_name, error = %e);
                 events::log_app_error(&e);
+
+                if json_output {
+                    return Err(super::helpers::print_json_error(&e, e.error_code()));
+                }
+                eprintln!("❌ Failed to get health for kild '{}': {}", branch_name, e);
                 Err(e.into())
             }
         }
@@ -124,9 +135,13 @@ fn run_health_once(
                 Ok(Some(health_output)) // Return for potential snapshot
             }
             Err(e) => {
-                eprintln!("❌ Failed to get health status: {}", e);
                 error!(event = "cli.health_failed", error = %e);
                 events::log_app_error(&e);
+
+                if json_output {
+                    return Err(super::helpers::print_json_error(&e, e.error_code()));
+                }
+                eprintln!("❌ Failed to get health status: {}", e);
                 Err(e.into())
             }
         }
