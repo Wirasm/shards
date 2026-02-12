@@ -243,6 +243,36 @@ impl MainView {
             }
         });
 
+        // Spike 1: Validate smol::Async<UnixStream> on GPUI's BackgroundExecutor
+        let spike_task = cx.spawn(async move |_this, cx: &mut gpui::AsyncApp| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::daemon_client::ping_daemon_async().await })
+                .await;
+            match result {
+                Ok(true) => {
+                    tracing::info!(
+                        event = "ui.daemon.spike_success",
+                        "smol async IO works on GPUI executor"
+                    );
+                }
+                Ok(false) => {
+                    tracing::warn!(
+                        event = "ui.daemon.spike_daemon_not_running",
+                        "Daemon not running - spike inconclusive. Start daemon and retry."
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        event = "ui.daemon.spike_failed",
+                        error = %e,
+                        "smol async IO FAILED on GPUI executor - need fallback to dedicated thread"
+                    );
+                }
+            }
+        });
+        spike_task.detach();
+
         Self {
             state: AppState::new(),
             focus_handle: cx.focus_handle(),
