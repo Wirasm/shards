@@ -93,6 +93,56 @@ impl TerminalView {
         }
     }
 
+    /// Create a TerminalView without initial focus.
+    ///
+    /// Used when creating terminals from async contexts (daemon attach) where
+    /// `&mut Window` is not available. Focus is applied later by the caller
+    /// via `focus_active_terminal()`.
+    pub fn from_terminal_unfocused(mut terminal: Terminal, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        let (byte_rx, event_rx) = terminal.take_channels().expect(
+            "take_channels failed: channels already taken — this is a logic bug in TerminalView",
+        );
+        let term = terminal.term().clone();
+        let pty_writer = terminal.pty_writer().clone();
+        let error_state = terminal.error_state().clone();
+        let exited = terminal.exited_flag().clone();
+        let executor = cx.background_executor().clone();
+
+        let event_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            Terminal::run_batch_loop(
+                term,
+                pty_writer,
+                error_state,
+                exited,
+                byte_rx,
+                event_rx,
+                executor,
+                || {
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                },
+            )
+            .await;
+        });
+
+        let blink_epoch: usize = 0;
+        let blink_task = Self::spawn_blink_timer(cx, blink_epoch);
+
+        Self {
+            terminal,
+            focus_handle,
+            _event_task: event_task,
+            cursor_visible: true,
+            blink_epoch,
+            _blink_task: blink_task,
+            mouse_state: MouseState {
+                position: None,
+                cmd_held: false,
+            },
+        }
+    }
+
     /// Access the underlying terminal state (e.g. to check `has_exited()`).
     pub fn terminal(&self) -> &Terminal {
         &self.terminal
@@ -147,8 +197,9 @@ impl TerminalView {
     }
 
     fn set_error(&self, msg: String) {
-        if let Ok(mut err) = self.terminal.error_state().lock() {
-            *err = Some(msg);
+        match self.terminal.error_state().lock() {
+            Ok(mut err) => *err = Some(msg),
+            Err(e) => tracing::error!(event = "ui.terminal.set_error_lock_poisoned", error = %e),
         }
     }
 
@@ -185,6 +236,11 @@ impl TerminalView {
 
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform;
+
+        if event.keystroke.modifiers.control && key == "tab" {
+            cx.propagate();
+            return;
+        }
 
         tracing::debug!(
             event = "ui.terminal.key_down_started",
@@ -236,6 +292,8 @@ impl TerminalView {
             Some(bytes) => {
                 if let Err(e) = self.terminal.write_to_pty(&bytes) {
                     tracing::error!(event = "ui.terminal.key_write_failed", error = %e);
+                    self.set_error(format!("Failed to send input: {e}"));
+                    cx.notify();
                 }
             }
             None => {
@@ -276,7 +334,7 @@ impl Render for TerminalView {
                     .bg(theme::ember())
                     .text_color(theme::text_white())
                     .text_size(px(theme::TEXT_SM))
-                    .child(format!("Terminal error: {msg}. Press Ctrl+T to close.")),
+                    .child(format!("Terminal error: {msg}. Ctrl+Esc to return.")),
             );
         }
 

@@ -11,7 +11,7 @@ use gpui::{
 use crate::theme;
 use gpui_component::Disableable;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::InputState;
+use gpui_component::input::{Input, InputState};
 use tracing::{debug, warn};
 
 use std::path::PathBuf;
@@ -121,6 +121,164 @@ fn canonicalize_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+fn adjust_active_after_close(active: usize, closed: usize, new_len: usize) -> usize {
+    if new_len == 0 {
+        0
+    } else if active >= new_len {
+        new_len - 1
+    } else if active > closed {
+        active - 1
+    } else {
+        active
+    }
+}
+
+enum TerminalBackend {
+    Local,
+    Daemon { daemon_session_id: String },
+}
+
+struct TabEntry {
+    view: gpui::Entity<crate::terminal::TerminalView>,
+    label: String,
+    backend: TerminalBackend,
+}
+
+struct TerminalTabs {
+    tabs: Vec<TabEntry>,
+    active: usize,
+    next_id: usize,
+}
+
+impl TerminalTabs {
+    fn new() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active: 0,
+            next_id: 1,
+        }
+    }
+
+    fn active_view(&self) -> Option<&gpui::Entity<crate::terminal::TerminalView>> {
+        self.tabs.get(self.active).map(|e| &e.view)
+    }
+
+    fn push(
+        &mut self,
+        view: gpui::Entity<crate::terminal::TerminalView>,
+        backend: TerminalBackend,
+    ) {
+        let base = format!("Shell {}", self.next_id);
+        let label = match &backend {
+            TerminalBackend::Local => base,
+            TerminalBackend::Daemon { .. } => format!("D • {}", base),
+        };
+        tracing::debug!(
+            event = "ui.terminal_tabs.push",
+            label = label,
+            new_len = self.tabs.len() + 1
+        );
+        self.tabs.push(TabEntry {
+            view,
+            label,
+            backend,
+        });
+        self.active = self.tabs.len() - 1;
+        self.next_id += 1;
+    }
+
+    /// Close a tab at `idx`. Returns the daemon session ID if the closed tab
+    /// was daemon-backed (so the caller can stop it asynchronously).
+    fn close(&mut self, idx: usize) -> Option<String> {
+        if idx >= self.tabs.len() {
+            tracing::warn!(
+                event = "ui.terminal_tabs.close_oob",
+                idx = idx,
+                len = self.tabs.len()
+            );
+            return None;
+        }
+        let entry = &self.tabs[idx];
+        let daemon_id = match &entry.backend {
+            TerminalBackend::Local => {
+                tracing::debug!(
+                    event = "ui.terminal_tabs.close",
+                    idx = idx,
+                    backend = "local",
+                    remaining = self.tabs.len() - 1
+                );
+                None
+            }
+            TerminalBackend::Daemon { daemon_session_id } => {
+                tracing::debug!(
+                    event = "ui.terminal_tabs.close",
+                    idx = idx,
+                    backend = "daemon",
+                    daemon_session_id = daemon_session_id,
+                    remaining = self.tabs.len() - 1
+                );
+                Some(daemon_session_id.clone())
+            }
+        };
+        self.tabs.remove(idx);
+        self.active = adjust_active_after_close(self.active, idx, self.tabs.len());
+        daemon_id
+    }
+
+    fn cycle_next(&mut self) {
+        debug_assert!(
+            self.tabs.is_empty() || self.active < self.tabs.len(),
+            "invariant violated: active={}, len={}",
+            self.active,
+            self.tabs.len()
+        );
+        if self.tabs.len() > 1 {
+            self.active = (self.active + 1) % self.tabs.len();
+            tracing::debug!(event = "ui.terminal_tabs.cycle_next", active = self.active);
+        }
+    }
+
+    fn cycle_prev(&mut self) {
+        debug_assert!(
+            self.tabs.is_empty() || self.active < self.tabs.len(),
+            "invariant violated: active={}, len={}",
+            self.active,
+            self.tabs.len()
+        );
+        if self.tabs.len() > 1 {
+            self.active = self.active.checked_sub(1).unwrap_or(self.tabs.len() - 1);
+            tracing::debug!(event = "ui.terminal_tabs.cycle_prev", active = self.active);
+        }
+    }
+
+    fn rename(&mut self, idx: usize, name: String) {
+        if let Some(entry) = self.tabs.get_mut(idx) {
+            tracing::debug!(
+                event = "ui.terminal_tabs.rename",
+                idx = idx,
+                old = entry.label,
+                new = name
+            );
+            entry.label = name;
+        } else {
+            tracing::warn!(
+                event = "ui.terminal_tabs.rename_oob",
+                idx = idx,
+                len = self.tabs.len()
+            );
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    fn has_exited_active(&self, cx: &gpui::App) -> bool {
+        self.active_view()
+            .is_some_and(|v| v.read(cx).terminal().has_exited())
+    }
+}
+
 /// Main application view that composes the kild list, header, and create dialog.
 ///
 /// Owns application state and handles keyboard input for the create dialog.
@@ -139,16 +297,20 @@ pub struct MainView {
     path_input: Option<gpui::Entity<InputState>>,
     /// Input state for add project dialog name field.
     name_input: Option<gpui::Entity<InputState>>,
-    /// Terminal view entity (lazily created on first Ctrl+T).
-    terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
-    /// Whether the terminal pane is currently shown (full-area, replacing 3-column layout).
-    show_terminal: bool,
-    /// Daemon terminal view entity (lazily created on first Ctrl+D).
-    daemon_terminal_view: Option<gpui::Entity<crate::terminal::TerminalView>>,
-    /// Whether the daemon terminal pane is currently shown.
-    show_daemon_terminal: bool,
-    /// Guard against concurrent daemon terminal creation from rapid Ctrl+D presses.
-    daemon_terminal_creating: bool,
+    /// Cached terminal tabs keyed by session ID. Each kild has its own set of tabs.
+    terminal_tabs: std::collections::HashMap<String, TerminalTabs>,
+    /// Session ID of the currently visible terminal, or None for dashboard view.
+    active_terminal_id: Option<String>,
+    /// Active tab rename: (session_id, tab_index, input entity). Set when user clicks the active tab.
+    renaming_tab: Option<(String, usize, gpui::Entity<InputState>)>,
+    /// Whether the daemon is available. None = unknown/not checked.
+    daemon_available: Option<bool>,
+    /// Whether the "+" terminal create menu is open.
+    show_add_menu: bool,
+    /// Whether a daemon start operation is in progress.
+    daemon_starting: bool,
+    /// Counter for generating unique daemon session IDs within this UI instance.
+    daemon_session_counter: u64,
 }
 
 impl MainView {
@@ -193,6 +355,7 @@ impl MainView {
                 if let Err(e) = this.update(cx, |view, cx| {
                     tracing::debug!(event = "ui.auto_refresh.tick");
                     view.state.update_statuses_only();
+                    view.prune_terminal_cache();
                     cx.notify();
                 }) {
                     tracing::debug!(
@@ -233,7 +396,7 @@ impl MainView {
                     if pending_refresh && last_refresh.elapsed() > crate::refresh::DEBOUNCE_INTERVAL
                     {
                         tracing::info!(event = "ui.watcher.refresh_triggered");
-                        view.state.refresh_sessions();
+                        view.refresh_and_prune();
                         last_refresh = std::time::Instant::now();
                         pending_refresh = false;
                         cx.notify();
@@ -279,7 +442,7 @@ impl MainView {
         });
         spike_task.detach();
 
-        Self {
+        let mut view = Self {
             state: AppState::new(),
             focus_handle: cx.focus_handle(),
             _refresh_task: refresh_task,
@@ -288,12 +451,16 @@ impl MainView {
             note_input: None,
             path_input: None,
             name_input: None,
-            terminal_view: None,
-            show_terminal: false,
-            daemon_terminal_view: None,
-            show_daemon_terminal: false,
-            daemon_terminal_creating: false,
-        }
+            terminal_tabs: std::collections::HashMap::new(),
+            active_terminal_id: None,
+            renaming_tab: None,
+            daemon_available: None,
+            show_add_menu: false,
+            daemon_starting: false,
+            daemon_session_counter: 1,
+        };
+        view.refresh_daemon_available(cx);
+        view
     }
 
     /// Apply a state mutation and notify GPUI to re-render.
@@ -312,6 +479,38 @@ impl MainView {
         self.note_input = None;
         self.path_input = None;
         self.name_input = None;
+    }
+
+    fn active_terminal_view(&self) -> Option<&gpui::Entity<crate::terminal::TerminalView>> {
+        self.active_terminal_id
+            .as_ref()
+            .and_then(|id| self.terminal_tabs.get(id))
+            .and_then(|tabs| tabs.active_view())
+    }
+
+    fn prune_terminal_cache(&mut self) {
+        let live_ids: std::collections::HashSet<&str> = self
+            .state
+            .displays()
+            .iter()
+            .map(|d| d.session.id.as_str())
+            .collect();
+
+        self.terminal_tabs
+            .retain(|id, _| live_ids.contains(id.as_str()));
+
+        if self
+            .active_terminal_id
+            .as_deref()
+            .is_some_and(|id| !live_ids.contains(id))
+        {
+            self.active_terminal_id = None;
+        }
+    }
+
+    fn refresh_and_prune(&mut self) {
+        self.state.refresh_sessions();
+        self.prune_terminal_cache();
     }
 
     /// Handle click on the Create button in header.
@@ -405,7 +604,10 @@ impl MainView {
             if let Err(e) = this.update(cx, |view, cx| {
                 view.state.clear_dialog_loading();
                 match result {
-                    Ok(events) => view.state.apply_events(&events),
+                    Ok(events) => {
+                        view.state.apply_events(&events);
+                        view.prune_terminal_cache();
+                    }
                     Err(e) => {
                         tracing::warn!(event = "ui.dialog_submit.error_displayed", error = %e);
                         view.state.set_dialog_error(e);
@@ -449,7 +651,8 @@ impl MainView {
     /// Handle click on the Refresh button in header.
     fn on_refresh_click(&mut self, cx: &mut Context<Self>) {
         tracing::info!(event = "ui.refresh_clicked");
-        self.mutate_state(cx, |s| s.refresh_sessions());
+        self.refresh_and_prune();
+        cx.notify();
     }
 
     /// Handle click on the destroy button [×] in a kild row.
@@ -498,7 +701,10 @@ impl MainView {
             if let Err(e) = this.update(cx, |view, cx| {
                 view.state.clear_dialog_loading();
                 match result {
-                    Ok(events) => view.state.apply_events(&events),
+                    Ok(events) => {
+                        view.state.apply_events(&events);
+                        view.prune_terminal_cache();
+                    }
                     Err(e) => {
                         tracing::warn!(event = "ui.confirm_destroy.error_displayed", error = %e);
                         view.state.set_dialog_error(e);
@@ -521,11 +727,336 @@ impl MainView {
         self.mutate_state(cx, |s| s.close_dialog());
     }
 
-    /// Handle kild row click - select for detail panel.
-    pub fn on_kild_select(&mut self, session_id: &str, cx: &mut Context<Self>) {
+    fn add_terminal_tab(
+        &mut self,
+        session_id: &str,
+        worktree: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match crate::terminal::state::Terminal::new(Some(worktree), cx) {
+            Ok(terminal) => {
+                let view =
+                    cx.new(|cx| crate::terminal::TerminalView::from_terminal(terminal, window, cx));
+                let tabs = self
+                    .terminal_tabs
+                    .entry(session_id.to_string())
+                    .or_insert_with(TerminalTabs::new);
+                tabs.push(view, TerminalBackend::Local);
+                true
+            }
+            Err(e) => {
+                tracing::error!(event = "ui.terminal.create_failed", error = %e);
+                self.state
+                    .push_error(format!("Terminal creation failed: {}", e));
+                false
+            }
+        }
+    }
+
+    fn focus_active_terminal(&self, window: &mut Window, cx: &gpui::App) {
+        if let Some(view) = self.active_terminal_view() {
+            let h = view.read(cx).focus_handle(cx).clone();
+            window.focus(&h);
+        }
+    }
+
+    fn refresh_daemon_available(&mut self, cx: &mut Context<Self>) {
+        self.daemon_available = None;
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let available = match cx
+                .background_executor()
+                .spawn(async { crate::daemon_client::ping_daemon_async().await })
+                .await
+            {
+                Ok(true) => true,
+                Ok(false) => false,
+                Err(e) => {
+                    tracing::warn!(event = "ui.daemon.ping_failed", error = %e);
+                    false
+                }
+            };
+            if let Err(e) = this.update(cx, |view, cx| {
+                view.daemon_available = Some(available);
+                tracing::debug!(
+                    event = "ui.daemon.availability_checked",
+                    available = available
+                );
+                cx.notify();
+            }) {
+                tracing::debug!(event = "ui.refresh_daemon_available.view_dropped", error = ?e);
+            }
+        })
+        .detach();
+    }
+
+    fn add_daemon_terminal_tab(
+        &mut self,
+        kild_session_id: &str,
+        daemon_session_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let kild_id = kild_session_id.to_string();
+        let daemon_id = daemon_session_id.to_string();
+
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let conn = match cx
+                .background_executor()
+                .spawn({
+                    let daemon_id = daemon_id.clone();
+                    async move {
+                        crate::daemon_client::connect_for_attach(&daemon_id, 24, 80).await
+                    }
+                })
+                .await
+            {
+                Ok(conn) => conn,
+                Err(e) => {
+                    tracing::error!(
+                        event = "ui.terminal.daemon_attach_failed",
+                        daemon_session_id = daemon_id,
+                        error = %e,
+                    );
+                    if let Err(e) = this.update(cx, |view, cx| {
+                        view.state.push_error(format!("Daemon attach failed: {e}"));
+                        cx.notify();
+                    }) {
+                        tracing::debug!(event = "ui.add_daemon_terminal_tab.error_view_dropped", error = ?e);
+                    }
+                    return;
+                }
+            };
+
+            if let Err(e) = this.update(cx, |view, cx| {
+                let daemon_id_clone = daemon_id.clone();
+                match crate::terminal::state::Terminal::from_daemon(daemon_id.clone(), conn, cx) {
+                    Ok(terminal) => {
+                        let entity = cx.new(|cx| {
+                            crate::terminal::TerminalView::from_terminal_unfocused(terminal, cx)
+                        });
+                        let tabs = view
+                            .terminal_tabs
+                            .entry(kild_id.clone())
+                            .or_insert_with(TerminalTabs::new);
+                        tabs.push(
+                            entity,
+                            TerminalBackend::Daemon {
+                                daemon_session_id: daemon_id_clone,
+                            },
+                        );
+                        view.active_terminal_id = Some(kild_id);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            event = "ui.terminal.daemon_create_failed",
+                            error = %e,
+                        );
+                        view.state
+                            .push_error(format!("Daemon terminal failed: {e}"));
+                    }
+                }
+                cx.notify();
+            }) {
+                tracing::debug!(event = "ui.add_daemon_terminal_tab.view_dropped", error = ?e);
+            }
+        })
+        .detach();
+    }
+
+    /// Stop a daemon session in the background (best-effort cleanup).
+    fn stop_daemon_session_async(daemon_session_id: String, cx: &mut Context<MainView>) {
+        cx.spawn(async move |_this, cx: &mut gpui::AsyncApp| {
+            let dsid = daemon_session_id.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::daemon_client::stop_session_async(&dsid).await })
+                .await;
+            if let Err(e) = result {
+                tracing::warn!(
+                    event = "ui.terminal.daemon_session_stop_failed",
+                    daemon_session_id = daemon_session_id,
+                    error = %e,
+                    "Best-effort daemon session cleanup failed"
+                );
+            }
+        })
+        .detach();
+    }
+
+    fn on_add_local_tab(&mut self, session_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(display) = self
+            .state
+            .displays()
+            .iter()
+            .find(|d| d.session.id == session_id)
+        else {
+            return;
+        };
+        let worktree = display.session.worktree_path.clone();
+        self.add_terminal_tab(session_id, worktree, window, cx);
+        self.focus_active_terminal(window, cx);
+        self.show_add_menu = false;
+        cx.notify();
+    }
+
+    fn on_add_daemon_tab(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let Some(display) = self
+            .state
+            .displays()
+            .iter()
+            .find(|d| d.session.id == session_id)
+        else {
+            return;
+        };
+        let daemon_session_id = display
+            .session
+            .agents()
+            .iter()
+            .find_map(|a| a.daemon_session_id().map(|s| s.to_string()));
+        let worktree = display.session.worktree_path.clone();
+        let kild_id = session_id.to_string();
+
+        self.show_add_menu = false;
+
+        if let Some(dsid) = daemon_session_id {
+            self.add_daemon_terminal_tab(session_id, &dsid, cx);
+        } else {
+            // No existing daemon session — create one on the fly
+            let worktree_str = worktree.display().to_string();
+            let counter = self.daemon_session_counter;
+            self.daemon_session_counter += 1;
+            let daemon_session_id = format!("{}_ui_shell_{}", kild_id, counter);
+            let kild_id_for_tab = kild_id.clone();
+
+            cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+                let result = cx
+                    .background_executor()
+                    .spawn({
+                        let dsid = daemon_session_id.clone();
+                        let wd = worktree_str.clone();
+                        async move { crate::daemon_client::create_session_async(&dsid, &wd).await }
+                    })
+                    .await;
+
+                match result {
+                    Ok(created_dsid) => {
+                        if let Err(e) = this.update(cx, |view, cx| {
+                            view.add_daemon_terminal_tab(&kild_id_for_tab, &created_dsid, cx);
+                        }) {
+                            tracing::debug!(event = "ui.on_add_daemon_tab.ok_view_dropped", error = ?e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            event = "ui.terminal.daemon_create_session_failed",
+                            error = %e,
+                        );
+                        if let Err(e) = this.update(cx, |view, cx| {
+                            view.state
+                                .push_error(format!("Failed to create daemon session: {e}"));
+                            cx.notify();
+                        }) {
+                            tracing::debug!(event = "ui.on_add_daemon_tab.err_view_dropped", error = ?e);
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    fn on_start_daemon(&mut self, cx: &mut Context<Self>) {
+        if self.daemon_starting || self.daemon_available == Some(true) {
+            return;
+        }
+        tracing::info!(event = "ui.daemon.start_requested");
+        self.daemon_starting = true;
+        self.daemon_available = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let result = cx
+                .background_executor()
+                .spawn(async {
+                    let config =
+                        kild_core::config::KildConfig::load_hierarchy().unwrap_or_default();
+                    kild_core::daemon::autostart::ensure_daemon_running(&config)
+                })
+                .await;
+
+            if let Err(e) = this.update(cx, |view, cx| {
+                view.daemon_starting = false;
+                match result {
+                    Ok(()) => {
+                        tracing::info!(event = "ui.daemon.start_completed");
+                        view.daemon_available = Some(true);
+                    }
+                    Err(e) => {
+                        tracing::error!(event = "ui.daemon.start_failed", error = %e);
+                        view.daemon_available = Some(false);
+                        view.state
+                            .push_error(format!("Failed to start daemon: {e}"));
+                    }
+                }
+                cx.notify();
+            }) {
+                tracing::debug!(event = "ui.on_start_daemon.view_dropped", error = ?e);
+            }
+        })
+        .detach();
+    }
+
+    /// Handle kild row click - select for detail panel and open its terminal.
+    pub fn on_kild_select(
+        &mut self,
+        session_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         tracing::debug!(event = "ui.kild.selected", session_id = session_id);
         let id = session_id.to_string();
-        self.mutate_state(cx, |s| s.select_kild(id));
+        self.state.select_kild(id.clone());
+
+        let Some(display) = self.state.selected_kild() else {
+            cx.notify();
+            return;
+        };
+        let worktree = display.session.worktree_path.clone();
+        let runtime_mode = display.session.runtime_mode.clone();
+        let daemon_session_id = display
+            .session
+            .agents()
+            .iter()
+            .find_map(|a| a.daemon_session_id().map(|s| s.to_string()));
+
+        if let Some(tabs) = self.terminal_tabs.get_mut(&id)
+            && tabs.has_exited_active(cx)
+            && let Some(daemon_id) = tabs.close(tabs.active)
+        {
+            Self::stop_daemon_session_async(daemon_id, cx);
+        }
+
+        if self.terminal_tabs.get(&id).is_none_or(|t| t.is_empty()) {
+            if matches!(
+                runtime_mode,
+                Some(kild_core::state::types::RuntimeMode::Daemon)
+            ) && let Some(ref dsid) = daemon_session_id
+            {
+                self.active_terminal_id = Some(id.clone());
+                self.add_daemon_terminal_tab(&id, dsid, cx);
+                cx.notify();
+                return;
+            }
+            if !self.add_terminal_tab(&id, worktree, window, cx) {
+                cx.notify();
+                return;
+            }
+        }
+
+        self.active_terminal_id = Some(id);
+        self.focus_active_terminal(window, cx);
+        cx.notify();
     }
 
     /// Handle click on the Open button [▶] in a kild row.
@@ -553,6 +1084,7 @@ impl MainView {
                 match result {
                     Ok(events) => {
                         view.state.apply_events(&events);
+                        view.prune_terminal_cache();
                     }
                     Err(e) => {
                         tracing::warn!(event = "ui.open_click.error_displayed", branch = %branch, error = %e);
@@ -601,6 +1133,7 @@ impl MainView {
                 match result {
                     Ok(events) => {
                         view.state.apply_events(&events);
+                        view.prune_terminal_cache();
                     }
                     Err(e) => {
                         tracing::warn!(event = "ui.stop_click.error_displayed", branch = %branch, error = %e);
@@ -664,7 +1197,7 @@ impl MainView {
                 }
                 view.state.set_bulk_errors(errors);
                 if count > 0 || view.state.has_bulk_errors() {
-                    view.state.refresh_sessions();
+                    view.refresh_and_prune();
                 }
                 cx.notify();
             }) {
@@ -884,6 +1417,7 @@ impl MainView {
         match actions::dispatch_add_project(path.clone(), name) {
             Ok(events) => {
                 self.state.apply_events(&events);
+                self.prune_terminal_cache();
             }
             Err(e) => {
                 tracing::warn!(
@@ -905,7 +1439,10 @@ impl MainView {
         );
 
         match actions::dispatch_set_active_project(Some(path)) {
-            Ok(events) => self.state.apply_events(&events),
+            Ok(events) => {
+                self.state.apply_events(&events);
+                self.prune_terminal_cache();
+            }
             Err(e) => {
                 tracing::error!(event = "ui.project_select.failed", error = %e);
                 self.state
@@ -920,7 +1457,10 @@ impl MainView {
         tracing::info!(event = "ui.project_selected_all");
 
         match actions::dispatch_set_active_project(None) {
-            Ok(events) => self.state.apply_events(&events),
+            Ok(events) => {
+                self.state.apply_events(&events);
+                self.prune_terminal_cache();
+            }
             Err(e) => {
                 tracing::error!(event = "ui.project_select_all.failed", error = %e);
                 self.state
@@ -938,7 +1478,10 @@ impl MainView {
         );
 
         match actions::dispatch_remove_project(path) {
-            Ok(events) => self.state.apply_events(&events),
+            Ok(events) => {
+                self.state.apply_events(&events);
+                self.prune_terminal_cache();
+            }
             Err(e) => {
                 tracing::error!(event = "ui.remove_project.failed", error = %e);
                 self.state
@@ -948,211 +1491,349 @@ impl MainView {
         cx.notify();
     }
 
-    /// Handle keyboard shortcuts for dialogs and terminal toggling.
-    ///
-    /// Text input is handled by gpui-component's Input widget internally.
-    /// This handler manages Escape (close), Enter (submit), and Tab (agent cycling).
-    ///
-    /// When a terminal view is shown, all non-reserved keys are propagated to the
-    /// child TerminalView. Reserved keys (Ctrl+T, Ctrl+D) are consumed here for
-    /// terminal toggling.
+    fn on_select_tab(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_add_menu = false;
+        let is_already_active = self
+            .terminal_tabs
+            .get(session_id)
+            .is_some_and(|tabs| tabs.active == idx);
+
+        if is_already_active {
+            self.start_rename(session_id, idx, window, cx);
+            return;
+        }
+
+        if let Some(tabs) = self.terminal_tabs.get_mut(session_id)
+            && idx < tabs.tabs.len()
+        {
+            tabs.active = idx;
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn start_rename(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_label = self
+            .terminal_tabs
+            .get(session_id)
+            .and_then(|tabs| tabs.tabs.get(idx))
+            .map(|e| e.label.clone())
+            .unwrap_or_default();
+
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(current_label));
+        let handle = input.read(cx).focus_handle(cx).clone();
+        self.renaming_tab = Some((session_id.to_string(), idx, input));
+        window.focus(&handle);
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((session_id, idx, input)) = self.renaming_tab.take() {
+            let new_name = input.read(cx).value().to_string();
+            let new_name = new_name.trim();
+            if !new_name.is_empty()
+                && let Some(tabs) = self.terminal_tabs.get_mut(&session_id)
+            {
+                tabs.rename(idx, new_name.to_string());
+            }
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming_tab = None;
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn on_close_tab(
+        &mut self,
+        session_id: &str,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_add_menu = false;
+        if let Some(tabs) = self.terminal_tabs.get_mut(session_id) {
+            if let Some(daemon_id) = tabs.close(idx) {
+                Self::stop_daemon_session_async(daemon_id, cx);
+            }
+            if tabs.is_empty() {
+                self.active_terminal_id = None;
+                window.focus(&self.focus_handle);
+                cx.notify();
+                return;
+            }
+        }
+        self.focus_active_terminal(window, cx);
+        cx.notify();
+    }
+
+    fn render_tab_bar(&self, session_id: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(tabs) = self.terminal_tabs.get(session_id) else {
+            return div().into_any_element();
+        };
+
+        let session_id_owned = session_id.to_string();
+
+        div()
+            .flex()
+            .items_center()
+            .px(px(theme::SPACE_2))
+            .py(px(theme::SPACE_1))
+            .bg(theme::surface())
+            .border_b_1()
+            .border_color(theme::border_subtle())
+            .gap(px(theme::SPACE_1))
+            .children(tabs.tabs.iter().enumerate().map(|(idx, entry)| {
+                let is_active = idx == tabs.active;
+                let close_sid = session_id_owned.clone();
+                let select_sid = session_id_owned.clone();
+
+                let is_renaming = self
+                    .renaming_tab
+                    .as_ref()
+                    .is_some_and(|(s, i, _)| s == session_id && *i == idx);
+
+                if is_renaming {
+                    let input_state = self
+                        .renaming_tab
+                        .as_ref()
+                        .map(|(_, _, input)| input.clone())
+                        .unwrap();
+                    return div()
+                        .flex()
+                        .items_center()
+                        .px(px(theme::SPACE_2))
+                        .py(px(2.0))
+                        .rounded(px(theme::RADIUS_SM))
+                        .bg(theme::elevated())
+                        .border_b_2()
+                        .border_color(theme::ice())
+                        .text_size(px(theme::TEXT_SM))
+                        .child(Input::new(&input_state).cleanable(false))
+                        .into_any_element();
+                }
+
+                let label = entry.label.clone();
+
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::SPACE_1))
+                    .px(px(theme::SPACE_2))
+                    .py(px(2.0))
+                    .rounded(px(theme::RADIUS_SM))
+                    .cursor_pointer()
+                    .when(is_active, |d| {
+                        d.bg(theme::elevated())
+                            .text_color(theme::text_bright())
+                            .border_b_2()
+                            .border_color(theme::ice())
+                    })
+                    .when(!is_active, |d| {
+                        d.text_color(theme::text_muted())
+                            .hover(|d| d.text_color(theme::text()))
+                    })
+                    .text_size(px(theme::TEXT_SM))
+                    .child(label)
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_XS))
+                            .text_color(theme::text_muted())
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(theme::ember()))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |view, _, window, cx| {
+                                    view.on_close_tab(&close_sid, idx, window, cx);
+                                }),
+                            )
+                            .child("×"),
+                    )
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |view, _, window, cx| {
+                            view.on_select_tab(&select_sid, idx, window, cx);
+                        }),
+                    )
+                    .into_any_element()
+            }))
+            .child({
+                let sid = session_id_owned.clone();
+                let sid2 = session_id_owned.clone();
+                let daemon_enabled = self.daemon_available.unwrap_or(false);
+
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::SPACE_1))
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_SM))
+                            .text_color(theme::text_muted())
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(theme::ice()))
+                            .px(px(theme::SPACE_2))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |view, _, _, cx| {
+                                    view.show_add_menu = !view.show_add_menu;
+                                    if view.show_add_menu {
+                                        view.refresh_daemon_available(cx);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child("+"),
+                    )
+                    .when(self.show_add_menu, |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(theme::SPACE_1))
+                                .px(px(theme::SPACE_2))
+                                .py(px(2.0))
+                                .rounded(px(theme::RADIUS_SM))
+                                .bg(theme::elevated())
+                                .child(
+                                    Button::new("add-local-tab")
+                                        .label("Local")
+                                        .ghost()
+                                        .on_click(cx.listener(move |view, _, window, cx| {
+                                            view.on_add_local_tab(&sid, window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("add-daemon-tab")
+                                        .label("Daemon")
+                                        .ghost()
+                                        .disabled(!daemon_enabled)
+                                        .on_click(cx.listener(move |view, _, _, cx| {
+                                            view.on_add_daemon_tab(&sid2, cx);
+                                        })),
+                                )
+                                .when(!daemon_enabled, |this| {
+                                    this.child(
+                                        Button::new("start-daemon-menu")
+                                            .label(if self.daemon_starting {
+                                                "Starting…"
+                                            } else {
+                                                "Start Daemon"
+                                            })
+                                            .ghost()
+                                            .disabled(self.daemon_starting)
+                                            .on_click(cx.listener(move |view, _, _, cx| {
+                                                view.on_start_daemon(cx);
+                                            })),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .text_size(px(theme::TEXT_XS))
+                                        .text_color(theme::text_muted())
+                                        .cursor_pointer()
+                                        .hover(|d| d.text_color(theme::ember()))
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(move |view, _, _, cx| {
+                                                view.show_add_menu = false;
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child("×"),
+                                ),
+                        )
+                    })
+            })
+            .into_any_element()
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         use crate::state::DialogState;
 
         let key_str = event.keystroke.key.to_string();
 
-        // Ctrl+T: toggle terminal view
+        // Tab rename mode: Enter commits, Escape cancels, all other keys go to Input
+        if self.renaming_tab.is_some() {
+            if key_str == "enter" {
+                self.commit_rename(window, cx);
+            } else if key_str == "escape" {
+                self.cancel_rename(window, cx);
+            }
+            return;
+        }
+
+        // Ctrl+Escape from terminal → back to dashboard
+        if key_str == "escape"
+            && event.keystroke.modifiers.control
+            && self.active_terminal_view().is_some()
+        {
+            self.active_terminal_id = None;
+            self.show_add_menu = false;
+            window.focus(&self.focus_handle);
+            cx.notify();
+            return;
+        }
+
+        // Ctrl+Tab / Ctrl+Shift+Tab: cycle terminal tabs
+        if key_str == "tab" && event.keystroke.modifiers.control {
+            let should_focus = if let Some(id) = &self.active_terminal_id {
+                if let Some(tabs) = self.terminal_tabs.get_mut(id) {
+                    if tabs.tabs.len() > 1 {
+                        if event.keystroke.modifiers.shift {
+                            tabs.cycle_prev();
+                        } else {
+                            tabs.cycle_next();
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if should_focus {
+                self.focus_active_terminal(window, cx);
+                cx.notify();
+            }
+            return;
+        }
+
+        // Ctrl+T: toggle between dashboard and selected kild's terminal
         if key_str == "t" && event.keystroke.modifiers.control {
-            if self.show_terminal {
-                self.show_terminal = false;
-                tracing::info!(event = "ui.terminal.toggle_off");
-                // Return focus to main view
+            if self.active_terminal_view().is_some() {
+                self.active_terminal_id = None;
                 window.focus(&self.focus_handle);
-            } else {
-                // Drop dead terminal so a fresh one gets created
-                if let Some(view) = &self.terminal_view
-                    && view.read(cx).terminal().has_exited()
-                {
-                    tracing::info!(event = "ui.terminal.recycled");
-                    self.terminal_view = None;
-                }
-                // Lazy-create terminal on first toggle (or after shell exit)
-                if self.terminal_view.is_none() {
-                    tracing::info!(event = "ui.terminal.create_started");
-                    match crate::terminal::state::Terminal::new(cx) {
-                        Ok(terminal) => {
-                            let view = cx.new(|cx| {
-                                crate::terminal::TerminalView::from_terminal(terminal, window, cx)
-                            });
-                            self.terminal_view = Some(view);
-                        }
-                        Err(e) => {
-                            tracing::error!(event = "ui.terminal.create_failed", error = %e);
-                            self.show_terminal = false;
-                            self.state
-                                .push_error(format!("Terminal creation failed: {}", e));
-                            cx.notify();
-                            return;
-                        }
-                    }
-                }
-                self.show_terminal = true;
-                self.show_daemon_terminal = false;
-                tracing::info!(event = "ui.terminal.toggle_on");
-                // Focus the terminal view
-                if let Some(view) = &self.terminal_view {
-                    let handle = view.read(cx).focus_handle(cx).clone();
-                    window.focus(&handle);
-                }
+            } else if let Some(id) = self.state.selected_id().map(|s| s.to_string()) {
+                self.on_kild_select(&id, window, cx);
+                return;
             }
             cx.notify();
             return;
         }
 
-        // Ctrl+D: toggle daemon terminal view
-        if key_str == "d" && event.keystroke.modifiers.control {
-            if self.show_daemon_terminal {
-                self.show_daemon_terminal = false;
-                tracing::info!(event = "ui.terminal.daemon_toggle_off");
-                window.focus(&self.focus_handle);
-            } else {
-                // Drop dead daemon terminal so a fresh one gets created
-                if let Some(view) = &self.daemon_terminal_view
-                    && view.read(cx).terminal().has_exited()
-                {
-                    tracing::info!(event = "ui.terminal.daemon_recycled");
-                    self.daemon_terminal_view = None;
-                }
-                // Lazy-create daemon terminal on first toggle (or after session end)
-                if self.daemon_terminal_view.is_none() {
-                    // Guard against concurrent creation from rapid Ctrl+D presses
-                    if self.daemon_terminal_creating {
-                        cx.notify();
-                        return;
-                    }
-                    self.daemon_terminal_creating = true;
-                    tracing::info!(event = "ui.terminal.daemon_create_started");
-                    // spawn_in gives AsyncWindowContext (Window + App access)
-                    cx.spawn_in(
-                        window,
-                        async move |this, cx: &mut gpui::AsyncWindowContext| {
-                            // 1. Find first running daemon session
-                            let session = cx
-                                .background_executor()
-                                .spawn(async {
-                                    crate::daemon_client::find_first_running_session().await
-                                })
-                                .await;
-                            let session = match session {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    let Some(this) = this.upgrade() else { return };
-                                    if let Err(update_err) =
-                                        cx.update_entity(&this, |view: &mut MainView, cx| {
-                                            view.daemon_terminal_creating = false;
-                                            view.state
-                                                .push_error(format!("No daemon session: {e}"));
-                                            cx.notify();
-                                        })
-                                    {
-                                        tracing::error!(
-                                            event = "ui.terminal.error_display_failed",
-                                            error = %update_err,
-                                        );
-                                    }
-                                    return;
-                                }
-                            };
-                            // 2. Connect and attach
-                            let session_id = session.id.clone();
-                            let conn = cx
-                                .background_executor()
-                                .spawn(async move {
-                                    crate::daemon_client::connect_for_attach(&session_id, 24, 80)
-                                        .await
-                                })
-                                .await;
-                            let conn = match conn {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    let Some(this) = this.upgrade() else { return };
-                                    if let Err(update_err) =
-                                        cx.update_entity(&this, |view: &mut MainView, cx| {
-                                            view.daemon_terminal_creating = false;
-                                            view.state
-                                                .push_error(format!("Daemon attach failed: {e}"));
-                                            cx.notify();
-                                        })
-                                    {
-                                        tracing::error!(
-                                            event = "ui.terminal.error_display_failed",
-                                            error = %update_err,
-                                        );
-                                    }
-                                    return;
-                                }
-                            };
-                            // 3. Create terminal — update_window_entity gives
-                            //    (&mut MainView, &mut Window, &mut Context<MainView>)
-                            let Some(this) = this.upgrade() else { return };
-                            if let Err(update_err) =
-                                cx.update_window_entity(&this, |view: &mut MainView, window, cx| {
-                                    view.daemon_terminal_creating = false;
-                                    let sid = conn.session_id().to_string();
-                                    match crate::terminal::state::Terminal::from_daemon(
-                                        sid, conn, cx,
-                                    ) {
-                                        Ok(terminal) => {
-                                            let term_view = cx.new(|cx| {
-                                                crate::terminal::TerminalView::from_terminal(
-                                                    terminal, window, cx,
-                                                )
-                                            });
-                                            view.daemon_terminal_view = Some(term_view);
-                                            view.show_daemon_terminal = true;
-                                            view.show_terminal = false;
-                                            // Focus the daemon terminal
-                                            if let Some(v) = &view.daemon_terminal_view {
-                                                let h = v.read(cx).focus_handle(cx).clone();
-                                                window.focus(&h);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            view.state
-                                                .push_error(format!("Daemon terminal failed: {e}"));
-                                        }
-                                    }
-                                    cx.notify();
-                                })
-                            {
-                                tracing::error!(
-                                    event = "ui.terminal.error_display_failed",
-                                    error = %update_err,
-                                );
-                            }
-                        },
-                    )
-                    .detach();
-                    cx.notify();
-                    return;
-                }
-                // Already created, just show
-                self.show_daemon_terminal = true;
-                self.show_terminal = false;
-                tracing::info!(event = "ui.terminal.daemon_toggle_on");
-                if let Some(view) = &self.daemon_terminal_view {
-                    let handle = view.read(cx).focus_handle(cx).clone();
-                    window.focus(&handle);
-                }
-            }
-            cx.notify();
-            return;
-        }
-
-        // When a terminal pane is visible, propagate all non-reserved keys to the
-        // child TerminalView so it can send them to the PTY. Without this, keys
-        // would be silently consumed by the DialogState::None branch below.
-        if self.show_terminal || self.show_daemon_terminal {
+        // When a terminal pane is actually visible, propagate all non-reserved keys
+        // to the child TerminalView. Use active_terminal_view() to guard against
+        // stale active_terminal_id pointing to a pruned cache entry.
+        if self.active_terminal_view().is_some() {
             cx.propagate();
             return;
         }
@@ -1237,6 +1918,22 @@ impl Render for MainView {
                                         view.on_stop_all_click(cx);
                                     })),
                             )
+                            // Start Daemon button - shown when daemon is not running
+                            .when(self.daemon_available != Some(true), |this| {
+                                this.child(
+                                    Button::new("start-daemon-btn")
+                                        .label(if self.daemon_starting {
+                                            "Starting…"
+                                        } else {
+                                            "Start Daemon"
+                                        })
+                                        .ghost()
+                                        .disabled(self.daemon_starting)
+                                        .on_click(cx.listener(|view, _, _, cx| {
+                                            view.on_start_daemon(cx);
+                                        })),
+                                )
+                            })
                             // Refresh button - Ghost variant
                             .child(
                                 Button::new("refresh-btn")
@@ -1351,42 +2048,35 @@ impl Render for MainView {
                         })),
                 )
             })
-            // Main content: terminal (full-area) or daemon terminal or 3-column layout
-            .when(self.show_terminal, |this| {
-                if let Some(terminal_view) = &self.terminal_view {
-                    this.child(
+            // Main content: terminal with tab bar (full-area) or 3-column dashboard
+            .map(|this| {
+                if let Some(id) = &self.active_terminal_id
+                    && let Some(tabs) = self.terminal_tabs.get(id)
+                    && let Some(active_view) = tabs.active_view()
+                {
+                    let id = id.clone();
+                    return this.child(
                         div()
                             .flex_1()
+                            .flex()
+                            .flex_col()
                             .overflow_hidden()
-                            .child(terminal_view.clone()),
-                    )
-                } else {
-                    this
+                            .child(self.render_tab_bar(&id, cx))
+                            .child(div().flex_1().overflow_hidden().child(active_view.clone())),
+                    );
                 }
-            })
-            .when(self.show_daemon_terminal && !self.show_terminal, |this| {
-                if let Some(daemon_view) = &self.daemon_terminal_view {
-                    this.child(div().flex_1().overflow_hidden().child(daemon_view.clone()))
-                } else {
-                    this
-                }
-            })
-            .when(!self.show_terminal && !self.show_daemon_terminal, |this| {
                 this.child(
                     div()
                         .flex_1()
                         .flex()
                         .overflow_hidden()
-                        // Sidebar (200px fixed)
                         .child(sidebar::render_sidebar(&self.state, cx))
-                        // Kild list (flex:1)
                         .child(
                             div()
                                 .flex_1()
                                 .overflow_hidden()
                                 .child(kild_list::render_kild_list(&self.state, cx)),
                         )
-                        // Detail panel (320px, conditional)
                         .when(self.state.has_selection(), |this| {
                             this.child(detail_panel::render_detail_panel(&self.state, cx))
                         }),
@@ -1557,5 +2247,48 @@ mod tests {
             result, symlink_path,
             "Result should differ from symlink path"
         );
+    }
+
+    // --- TerminalTabs index adjustment tests ---
+
+    #[test]
+    fn test_adjust_active_close_only_tab() {
+        assert_eq!(adjust_active_after_close(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_active_in_middle() {
+        // [A, B, C], active=1, close=1 → active stays 1 (now pointing to former C)
+        assert_eq!(adjust_active_after_close(1, 1, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_before_active() {
+        // [A, B, C], active=2, close=0 → active becomes 1
+        assert_eq!(adjust_active_after_close(2, 0, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_after_active() {
+        // [A, B, C], active=0, close=2 → active stays 0
+        assert_eq!(adjust_active_after_close(0, 2, 2), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_last_when_active_is_last() {
+        // [A, B, C], active=2, close=2 → active becomes 1 (new last)
+        assert_eq!(adjust_active_after_close(2, 2, 2), 1);
+    }
+
+    #[test]
+    fn test_adjust_active_close_first_of_two() {
+        // [A, B], active=0, close=0 → active stays 0
+        assert_eq!(adjust_active_after_close(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn test_adjust_active_close_second_of_two_when_active() {
+        // [A, B], active=1, close=1 → active becomes 0
+        assert_eq!(adjust_active_after_close(1, 1, 1), 0);
     }
 }
