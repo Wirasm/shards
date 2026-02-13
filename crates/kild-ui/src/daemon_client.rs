@@ -317,6 +317,53 @@ pub async fn stop_session_async(session_id: &str) -> Result<(), DaemonClientErro
     }
 }
 
+/// Create a new daemon session with a login shell in the given directory.
+///
+/// Returns the daemon session ID on success.
+pub async fn create_session_async(
+    session_id: &str,
+    working_directory: &str,
+) -> Result<String, DaemonClientError> {
+    info!(
+        event = "ui.daemon.create_session_started",
+        session_id = session_id,
+        working_directory = working_directory
+    );
+
+    let mut stream = connect_to_daemon().await?;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let request = ClientMessage::CreateSession {
+        id: next_request_id(),
+        session_id: session_id.to_string(),
+        working_directory: working_directory.to_string(),
+        command: shell,
+        args: vec![],
+        env_vars: std::collections::HashMap::new(),
+        rows: 24,
+        cols: 80,
+        use_login_shell: true,
+    };
+    send_message(&mut stream, &request).await?;
+
+    let mut reader = BufReader::new(stream);
+    let response = read_response(&mut reader).await?;
+
+    match response {
+        DaemonMessage::SessionCreated { session, .. } => {
+            info!(
+                event = "ui.daemon.create_session_completed",
+                daemon_session_id = session.id
+            );
+            Ok(session.id)
+        }
+        DaemonMessage::Error { code, message, .. } => Err(DaemonClientError::DaemonError {
+            code: code.to_string(),
+            message,
+        }),
+        other => Err(DaemonClientError::UnexpectedResponse(other)),
+    }
+}
+
 /// Two-connection handle for attached daemon session.
 ///
 /// - `reader`: receives streaming PtyOutput messages after Attach

@@ -844,17 +844,50 @@ impl MainView {
             .agents()
             .iter()
             .find_map(|a| a.daemon_session_id().map(|s| s.to_string()));
+        let worktree = display.session.worktree_path.clone();
+        let kild_id = session_id.to_string();
 
-        let Some(dsid) = daemon_session_id else {
-            self.state
-                .push_error("No daemon session ID found for this kild".to_string());
-            self.show_add_menu = false;
-            cx.notify();
-            return;
-        };
-
-        self.add_daemon_terminal_tab(session_id, &dsid, cx);
         self.show_add_menu = false;
+
+        if let Some(dsid) = daemon_session_id {
+            self.add_daemon_terminal_tab(session_id, &dsid, cx);
+        } else {
+            // No existing daemon session — create one on the fly
+            let worktree_str = worktree.display().to_string();
+            let daemon_session_id = format!("{}_ui_shell", kild_id);
+            let kild_id_for_tab = kild_id.clone();
+
+            cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+                let result = cx
+                    .background_executor()
+                    .spawn({
+                        let dsid = daemon_session_id.clone();
+                        let wd = worktree_str.clone();
+                        async move { crate::daemon_client::create_session_async(&dsid, &wd).await }
+                    })
+                    .await;
+
+                match result {
+                    Ok(created_dsid) => {
+                        let _ = this.update(cx, |view, cx| {
+                            view.add_daemon_terminal_tab(&kild_id_for_tab, &created_dsid, cx);
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            event = "ui.terminal.daemon_create_session_failed",
+                            error = %e,
+                        );
+                        let _ = this.update(cx, |view, cx| {
+                            view.state
+                                .push_error(format!("Failed to create daemon session: {e}"));
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+            .detach();
+        }
         cx.notify();
     }
 
