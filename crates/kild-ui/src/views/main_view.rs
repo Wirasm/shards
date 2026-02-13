@@ -1002,7 +1002,7 @@ impl MainView {
     }
 
     /// Handle click on a terminal name nested under a kild in the sidebar.
-    /// Places the terminal in the pane grid and focuses it.
+    /// Toggles: if already in pane grid, remove it; otherwise place it.
     pub fn on_sidebar_terminal_click(
         &mut self,
         session_id: &str,
@@ -1012,11 +1012,35 @@ impl MainView {
     ) {
         self.state.select_kild(session_id.to_string());
         self.active_view = ActiveView::Control;
+
+        // Toggle: if already in grid, remove it
+        if let Some(slot_idx) = self.pane_grid.find_slot(session_id, tab_idx) {
+            self.pane_grid.remove(slot_idx);
+
+            // Move focus to next occupied pane or unfocus
+            if let Some(next) = self.pane_grid.next_occupied_slot() {
+                self.pane_grid.set_focus(next);
+                if let super::pane_grid::PaneSlot::Occupied {
+                    session_id: next_sid,
+                    ..
+                } = self.pane_grid.slot(next)
+                {
+                    self.active_terminal_id = Some(next_sid.clone());
+                }
+            } else {
+                self.active_terminal_id = None;
+                self.focus_region = FocusRegion::Dashboard;
+                window.focus(&self.focus_handle);
+            }
+            cx.notify();
+            return;
+        }
+
+        // Not in grid — place it
         if let Some(tabs) = self.terminal_tabs.get_mut(session_id) {
             tabs.set_active(tab_idx);
         }
 
-        // Get branch and status for pane grid
         let (branch, status) = self
             .state
             .displays()
