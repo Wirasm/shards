@@ -31,6 +31,10 @@ impl TabEntry {
     pub fn label(&self) -> &str {
         &self.label
     }
+
+    pub fn backend(&self) -> &TerminalBackend {
+        &self.backend
+    }
 }
 
 /// Per-kild collection of terminal tabs with cycling and close logic.
