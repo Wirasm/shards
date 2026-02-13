@@ -93,6 +93,56 @@ impl TerminalView {
         }
     }
 
+    /// Create a TerminalView without initial focus.
+    ///
+    /// Used when creating terminals from async contexts (daemon attach) where
+    /// `&mut Window` is not available. Focus is applied later by the caller
+    /// via `focus_active_terminal()`.
+    pub fn from_terminal_unfocused(mut terminal: Terminal, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        let (byte_rx, event_rx) = terminal.take_channels().expect(
+            "take_channels failed: channels already taken — this is a logic bug in TerminalView",
+        );
+        let term = terminal.term().clone();
+        let pty_writer = terminal.pty_writer().clone();
+        let error_state = terminal.error_state().clone();
+        let exited = terminal.exited_flag().clone();
+        let executor = cx.background_executor().clone();
+
+        let event_task = cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            Terminal::run_batch_loop(
+                term,
+                pty_writer,
+                error_state,
+                exited,
+                byte_rx,
+                event_rx,
+                executor,
+                || {
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                },
+            )
+            .await;
+        });
+
+        let blink_epoch: usize = 0;
+        let blink_task = Self::spawn_blink_timer(cx, blink_epoch);
+
+        Self {
+            terminal,
+            focus_handle,
+            _event_task: event_task,
+            cursor_visible: true,
+            blink_epoch,
+            _blink_task: blink_task,
+            mouse_state: MouseState {
+                position: None,
+                cmd_held: false,
+            },
+        }
+    }
+
     /// Access the underlying terminal state (e.g. to check `has_exited()`).
     pub fn terminal(&self) -> &Terminal {
         &self.terminal

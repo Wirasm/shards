@@ -319,7 +319,6 @@ impl Terminal {
     /// Spawns IPC reader/writer tasks for streaming PTY output and sending
     /// keystrokes. The rendering pipeline (batch loop, alacritty_terminal,
     /// TerminalElement) is completely unchanged — only the byte source differs.
-    #[allow(dead_code)]
     pub fn from_daemon(
         session_id: String,
         conn: DaemonConnection,
