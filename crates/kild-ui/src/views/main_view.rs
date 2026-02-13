@@ -162,7 +162,8 @@ pub struct MainView {
     name_input: Option<gpui::Entity<InputState>>,
     /// Cached terminal tabs keyed by session ID. Each kild has its own set of tabs.
     terminal_tabs: std::collections::HashMap<String, TerminalTabs>,
-    /// Session ID of the currently visible terminal, or None for dashboard view.
+    /// Session ID of the kild whose terminal tabs are loaded. May be set while
+    /// Dashboard view is active (terminal stays in memory but isn't visible).
     active_terminal_id: Option<String>,
     /// Active tab rename: (session_id, tab_index, input entity). Set when user clicks the active tab.
     renaming_tab: Option<(String, usize, gpui::Entity<InputState>)>,

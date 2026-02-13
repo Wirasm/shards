@@ -121,7 +121,10 @@ pub fn render_sidebar(
                                         let is_active_tab = tab_idx == tabs.active_index();
                                         let sid = sid.clone();
                                         div()
-                                            .id(("sidebar-tab", ix * 100 + tab_idx))
+                                            .id(gpui::SharedString::from(format!(
+                                                "sidebar-tab-{}-{}",
+                                                sid, tab_idx
+                                            )))
                                             .pl(px(theme::SPACE_6 + theme::SPACE_2))
                                             .pr(px(theme::SPACE_2))
                                             .py(px(2.0))
