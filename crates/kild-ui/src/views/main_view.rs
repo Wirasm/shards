@@ -1754,37 +1754,6 @@ impl MainView {
             )
             // Spacer
             .child(div().flex_1())
-            // + terminal ghost button
-            .child(
-                div()
-                    .id("view-tab-add-terminal")
-                    .px(px(theme::SPACE_2))
-                    .py(px(theme::SPACE_1))
-                    .my(px(theme::SPACE_1))
-                    .cursor_pointer()
-                    .text_size(px(theme::TEXT_XS))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme::text_muted())
-                    .border_1()
-                    .border_color(theme::border())
-                    .rounded(px(theme::RADIUS_SM))
-                    .hover(|d| {
-                        d.text_color(theme::text_subtle())
-                            .border_color(theme::border_strong())
-                            .bg(theme::surface())
-                    })
-                    .on_mouse_up(
-                        gpui::MouseButton::Left,
-                        cx.listener(|view, _, window, cx| {
-                            if let Some(session_id) =
-                                view.state.selected_id().map(|s| s.to_string())
-                            {
-                                view.on_add_local_tab(&session_id, window, cx);
-                            }
-                        }),
-                    )
-                    .child("+ terminal"),
-            )
     }
 
     /// Render the main content area based on active view.
