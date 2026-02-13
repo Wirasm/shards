@@ -1,7 +1,7 @@
 //! Kild navigation sidebar.
 //!
 //! Fixed left sidebar (200px) showing kilds grouped by Active/Stopped status
-//! with nested terminal tab names.
+//! with nested terminal tab names. Hover actions appear on kild rows.
 
 use gpui::{Context, FontWeight, IntoElement, ParentElement, Styled, div, prelude::*, px};
 use std::collections::HashMap;
@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use crate::components::{Status, StatusIndicator};
 use crate::state::AppState;
 use crate::theme;
+use crate::views::helpers::format_relative_time;
 use crate::views::main_view::MainView;
 use crate::views::terminal_tabs::TerminalTabs;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui::Rgba;
 use kild_core::ProcessStatus;
 
 /// Width of the sidebar in pixels.
@@ -46,6 +47,10 @@ pub fn render_sidebar(
         }
     }
 
+    let active_count = active_kilds.len();
+    let stopped_count = stopped_kilds.len();
+    let total_count = active_count + stopped_count;
+
     div()
         .w(px(SIDEBAR_WIDTH))
         .h_full()
@@ -54,19 +59,36 @@ pub fn render_sidebar(
         .border_color(theme::border_subtle())
         .flex()
         .flex_col()
-        // Header: active project name
+        // Header: project name + kild count
         .child(
             div()
-                .px(px(theme::SPACE_4))
-                .py(px(theme::SPACE_3))
+                .px(px(theme::SPACE_3))
+                .py(px(theme::SPACE_2))
                 .border_b_1()
                 .border_color(theme::border_subtle())
-                .text_size(px(theme::TEXT_XS))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme::text_muted())
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(active_project_name.to_uppercase()),
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(px(theme::TEXT_SM))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme::text_bright())
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(active_project_name),
+                )
+                .child(
+                    div()
+                        .text_size(px(theme::TEXT_XS))
+                        .text_color(theme::text_muted())
+                        .flex_shrink_0()
+                        .child(format!(
+                            "{} kild{}",
+                            total_count,
+                            if total_count == 1 { "" } else { "s" }
+                        )),
+                ),
         )
         // Scrollable kild list
         .child(
@@ -76,124 +98,109 @@ pub fn render_sidebar(
                 .overflow_y_scroll()
                 // Active section
                 .when(!active_kilds.is_empty(), |this| {
-                    this.child(render_section_header("ACTIVE")).children(
-                        active_kilds.iter().enumerate().map(|(ix, display)| {
-                            let session_id = display.session.id.clone();
-                            let branch = display.session.branch.clone();
-                            let is_selected = selected_id.as_deref() == Some(&session_id);
-                            let worktree = display.session.worktree_path.clone();
-                            let branch_for_edit = branch.clone();
-                            let branch_for_stop = branch.clone();
-                            let session_id_for_click = session_id.clone();
+                    let mut active_elements = Vec::new();
+                    for (ix, display) in active_kilds.iter().enumerate() {
+                        let session_id = display.session.id.clone();
+                        let branch = display.session.branch.clone();
+                        let is_selected = selected_id.as_deref() == Some(&session_id);
+                        let session_id_for_click = session_id.clone();
+                        let time_meta = format_relative_time(&display.session.created_at);
 
-                            let tabs_for_session = terminal_tabs.get(&session_id);
+                        let tabs_for_session = terminal_tabs.get(&session_id);
+                        let tab_items = render_terminal_items(
+                            &session_id,
+                            tabs_for_session,
+                            pane_grid,
+                            theme::aurora(),
+                            cx,
+                        );
 
+                        let sid_for_add = session_id.clone();
+                        active_elements.push(
                             div()
                                 .flex()
                                 .flex_col()
-                                // Kild row
                                 .child(render_kild_row(
                                     ("active-kild", ix),
                                     &branch,
                                     Status::Active,
                                     is_selected,
+                                    &time_meta,
                                     cx.listener(move |view, _, window, cx| {
                                         view.on_kild_select(&session_id_for_click, window, cx);
                                     }),
                                 ))
-                                // Inline actions (editor + stop) - shown when selected
-                                .when(is_selected, |this| {
-                                    this.child(render_actions_running(
-                                        ix,
-                                        worktree,
-                                        branch_for_edit,
-                                        branch_for_stop,
-                                        cx,
-                                    ))
-                                })
-                                // Nested terminal tabs
-                                .when_some(tabs_for_session, |this, tabs| {
-                                    let sid = session_id.clone();
-                                    this.children((0..tabs.len()).map(|tab_idx| {
-                                        let tab_label = tabs
-                                            .get(tab_idx)
-                                            .map(|e| e.label().to_string())
-                                            .unwrap_or_default();
-                                        let in_grid = pane_grid.find_slot(&sid, tab_idx).is_some();
-                                        let sid = sid.clone();
-                                        div()
-                                            .id(gpui::SharedString::from(format!(
-                                                "sidebar-tab-{}-{}",
-                                                sid, tab_idx
-                                            )))
-                                            .pl(px(theme::SPACE_6 + theme::SPACE_2))
-                                            .pr(px(theme::SPACE_2))
-                                            .py(px(2.0))
-                                            .cursor_pointer()
-                                            .text_size(px(theme::TEXT_XS))
-                                            .text_color(if in_grid {
-                                                theme::ice_dim()
-                                            } else {
-                                                theme::text_muted()
-                                            })
-                                            .hover(|s| s.text_color(theme::text()))
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .on_mouse_up(
-                                                gpui::MouseButton::Left,
-                                                cx.listener(move |view, _, window, cx| {
-                                                    view.on_sidebar_terminal_click(
-                                                        &sid, tab_idx, window, cx,
-                                                    );
-                                                }),
-                                            )
-                                            .child(format!("\u{2514} {}", tab_label))
-                                    }))
-                                })
-                        }),
-                    )
+                                .children(tab_items)
+                                .child(render_add_terminal_button(
+                                    &format!("sidebar-add-terminal-{}", sid_for_add),
+                                    sid_for_add,
+                                    cx,
+                                )),
+                        );
+                    }
+
+                    this.child(render_section_header(
+                        "Active",
+                        active_count,
+                        theme::aurora(),
+                    ))
+                    .children(active_elements)
                 })
                 // Stopped section
                 .when(!stopped_kilds.is_empty(), |this| {
-                    this.child(render_section_header("STOPPED")).children(
-                        stopped_kilds.iter().enumerate().map(|(ix, display)| {
+                    this.child(render_section_header(
+                        "Stopped",
+                        stopped_count,
+                        theme::copper(),
+                    ))
+                    .children({
+                        let mut stopped_elements = Vec::new();
+                        for (ix, display) in stopped_kilds.iter().enumerate() {
                             let session_id = display.session.id.clone();
                             let branch = display.session.branch.clone();
                             let is_selected = selected_id.as_deref() == Some(&session_id);
-                            let worktree = display.session.worktree_path.clone();
-                            let branch_for_edit = branch.clone();
-                            let branch_for_open = branch.clone();
                             let session_id_for_click = session_id.clone();
+                            let time_meta = format_relative_time(&display.session.created_at);
+
+                            let tabs_for_session = terminal_tabs.get(&session_id);
+                            let tab_items = render_terminal_items(
+                                &session_id,
+                                tabs_for_session,
+                                pane_grid,
+                                theme::text_muted(),
+                                cx,
+                            );
 
                             let status = match display.process_status {
                                 ProcessStatus::Stopped => Status::Stopped,
                                 _ => Status::Crashed,
                             };
 
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(render_kild_row(
-                                    ("stopped-kild", ix),
-                                    &branch,
-                                    status,
-                                    is_selected,
-                                    cx.listener(move |view, _, window, cx| {
-                                        view.on_kild_select(&session_id_for_click, window, cx);
-                                    }),
-                                ))
-                                // Inline actions (editor + open) - shown when selected
-                                .when(is_selected, |this| {
-                                    this.child(render_actions_stopped(
-                                        ix,
-                                        worktree,
-                                        branch_for_edit,
-                                        branch_for_open,
-                                        cx,
+                            let sid_for_add = session_id.clone();
+                            stopped_elements.push(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(render_kild_row(
+                                        ("stopped-kild", ix),
+                                        &branch,
+                                        status,
+                                        is_selected,
+                                        &time_meta,
+                                        cx.listener(move |view, _, window, cx| {
+                                            view.on_kild_select(&session_id_for_click, window, cx);
+                                        }),
                                     ))
-                                })
-                        }),
-                    )
+                                    .children(tab_items)
+                                    .child(render_add_terminal_button(
+                                        &format!("sidebar-add-terminal-stopped-{}", sid_for_add),
+                                        sid_for_add,
+                                        cx,
+                                    )),
+                            );
+                        }
+                        stopped_elements
+                    })
                 })
                 // Empty state
                 .when(
@@ -210,39 +217,62 @@ pub fn render_sidebar(
                     },
                 ),
         )
-        // Footer: Add Project button
+        // Footer: + Create kild
         .child(
             div()
-                .px(px(theme::SPACE_4))
-                .py(px(theme::SPACE_3))
+                .px(px(theme::SPACE_3))
+                .py(px(theme::SPACE_2))
                 .border_t_1()
                 .border_color(theme::border_subtle())
                 .child(
-                    Button::new("sidebar-add-project")
-                        .label("+ Add Project")
-                        .ghost()
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.on_add_project_click(window, cx);
-                        })),
+                    div()
+                        .id("sidebar-create-kild")
+                        .py(px(theme::SPACE_HALF))
+                        .cursor_pointer()
+                        .text_size(px(theme::TEXT_XS))
+                        .text_color(theme::text_muted())
+                        .hover(|s| s.text_color(theme::text_subtle()))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(|view, _, window, cx| {
+                                view.on_create_button_click(window, cx);
+                            }),
+                        )
+                        .child("+ Create kild"),
                 ),
         )
 }
 
-fn render_section_header(title: &str) -> impl IntoElement {
+fn render_section_header(title: &str, count: usize, count_color: Rgba) -> impl IntoElement {
     div()
-        .px(px(theme::SPACE_4))
-        .py(px(theme::SPACE_2))
-        .text_size(px(theme::TEXT_XS))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme::text_muted())
-        .child(title.to_string())
+        .px(px(theme::SPACE_3))
+        .py(px(theme::SPACE_1))
+        .mt(px(theme::SPACE_2))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .text_size(px(theme::TEXT_XXS))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme::text_muted())
+                .child(title.to_uppercase()),
+        )
+        .child(
+            div()
+                .text_size(px(theme::TEXT_XXS))
+                .text_color(count_color)
+                .child(count.to_string()),
+        )
 }
 
+/// Render a clean kild row with status dot, branch name, and time meta.
 fn render_kild_row(
     id: impl Into<gpui::ElementId>,
     branch: &str,
     status: Status,
     is_selected: bool,
+    time_meta: &str,
     on_click: impl Fn(&gpui::MouseUpEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -251,91 +281,198 @@ fn render_kild_row(
         .flex()
         .items_center()
         .gap(px(theme::SPACE_2))
-        .px(px(theme::SPACE_4))
-        .py(px(theme::SPACE_2))
+        .px(px(theme::SPACE_3))
+        .py(px(3.0))
         .cursor_pointer()
+        .border_l_2()
         .hover(|style| style.bg(theme::surface()))
         .when(is_selected, |row| {
-            row.border_l_2()
-                .border_color(theme::ice())
+            row.border_color(theme::ice())
                 .bg(theme::surface())
-                .pl(px(theme::SPACE_4 - SELECTED_PADDING_ADJUSTMENT))
+                .pl(px(theme::SPACE_3 - SELECTED_PADDING_ADJUSTMENT))
         })
+        .when(!is_selected, |row| row.border_color(theme::transparent()))
         .on_mouse_up(gpui::MouseButton::Left, on_click)
         .child(StatusIndicator::dot(status))
         .child(
             div()
                 .flex_1()
                 .text_size(px(theme::TEXT_SM))
-                .text_color(theme::text())
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(if is_selected {
+                    theme::text_bright()
+                } else {
+                    theme::text()
+                })
                 .overflow_hidden()
                 .text_ellipsis()
+                .min_w(px(0.0))
                 .child(branch.to_string()),
+        )
+        // Time meta
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(theme::TEXT_XXS))
+                .text_color(theme::text_muted())
+                .child(time_meta.to_string()),
         )
 }
 
-fn render_actions_running(
-    ix: usize,
-    worktree: std::path::PathBuf,
-    branch_for_edit: String,
-    branch_for_stop: String,
+/// Collect terminal item elements for a kild's tabs.
+fn render_terminal_items(
+    session_id: &str,
+    tabs: Option<&TerminalTabs>,
+    pane_grid: &super::pane_grid::PaneGrid,
+    dot_color: Rgba,
     cx: &mut Context<MainView>,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .gap(px(theme::SPACE_1))
-        .pl(px(theme::SPACE_6))
-        .pb(px(theme::SPACE_1))
-        .child({
-            let wt = worktree;
-            let br = branch_for_edit;
-            Button::new(("sidebar-edit-active", ix))
-                .label("Edit")
-                .ghost()
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.on_open_editor_click(&wt, &br, cx);
-                }))
-        })
-        .child({
-            let br = branch_for_stop;
-            Button::new(("sidebar-stop", ix))
-                .label("\u{23F9}")
-                .warning()
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.on_stop_click(&br, cx);
-                }))
-        })
+) -> Vec<gpui::AnyElement> {
+    let Some(tabs) = tabs else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    for tab_idx in 0..tabs.len() {
+        items.push(
+            render_terminal_item(session_id, tab_idx, tabs, pane_grid, dot_color, cx)
+                .into_any_element(),
+        );
+    }
+    items
 }
 
-fn render_actions_stopped(
-    ix: usize,
-    worktree: std::path::PathBuf,
-    branch_for_edit: String,
-    branch_for_open: String,
+/// Render a single terminal item row with hover-revealed × (close) button.
+fn render_terminal_item(
+    session_id: &str,
+    tab_idx: usize,
+    tabs: &TerminalTabs,
+    pane_grid: &super::pane_grid::PaneGrid,
+    dot_color: Rgba,
+    cx: &mut Context<MainView>,
+) -> impl IntoElement {
+    let tab_label = tabs
+        .get(tab_idx)
+        .map(|e| e.label().to_string())
+        .unwrap_or_default();
+    let mode_label = tabs
+        .get(tab_idx)
+        .map(|e| match e.backend() {
+            crate::views::terminal_tabs::TerminalBackend::Local => "local",
+            crate::views::terminal_tabs::TerminalBackend::Daemon { .. } => "daemon",
+        })
+        .unwrap_or("local");
+    let in_grid = pane_grid.find_slot(session_id, tab_idx).is_some();
+    let sid: gpui::SharedString = format!("sidebar-tab-{}-{}", session_id, tab_idx).into();
+    let sid_close: gpui::SharedString =
+        format!("sidebar-tab-close-{}-{}", session_id, tab_idx).into();
+    let sid_for_click = session_id.to_string();
+    let sid_for_close = session_id.to_string();
+
+    div()
+        .id(sid)
+        .group("terminal-row")
+        .relative()
+        .pl(px(theme::SPACE_4))
+        .pr(px(theme::SPACE_2))
+        .py(px(theme::SPACE_HALF))
+        .flex()
+        .items_center()
+        .gap(px(theme::SPACE_1_HALF))
+        .cursor_pointer()
+        .rounded(px(theme::RADIUS_SM))
+        .hover(|s| s.bg(theme::surface()))
+        .overflow_hidden()
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(move |view, _, window, cx| {
+                view.on_sidebar_terminal_click(&sid_for_click, tab_idx, window, cx);
+            }),
+        )
+        // Status dot
+        .child(
+            div()
+                .size(px(theme::TERMINAL_DOT_SIZE))
+                .rounded_full()
+                .flex_shrink_0()
+                .bg(dot_color),
+        )
+        // Terminal name
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(theme::TEXT_XXS))
+                .text_color(if in_grid {
+                    theme::text()
+                } else {
+                    theme::text_muted()
+                })
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(tab_label),
+        )
+        // Mode badge — hidden on hover to make room for buttons
+        .child(
+            div()
+                .text_size(px(theme::TEXT_BADGE))
+                .text_color(theme::text_muted())
+                .opacity(0.5)
+                .flex_shrink_0()
+                .group_hover("terminal-row", |s| s.opacity(0.0))
+                .child(mode_label),
+        )
+        // Hover action: × (close/destroy terminal)
+        .child(
+            div()
+                .absolute()
+                .right(px(theme::SPACE_1))
+                .top_0()
+                .bottom_0()
+                .flex()
+                .items_center()
+                .bg(theme::surface())
+                .opacity(0.0)
+                .group_hover("terminal-row", |s| s.opacity(1.0))
+                .child(
+                    div()
+                        .id(sid_close)
+                        .px(px(3.0))
+                        .cursor_pointer()
+                        .text_size(px(theme::TEXT_XXS))
+                        .text_color(theme::text_muted())
+                        .rounded(px(theme::SPACE_HALF))
+                        .hover(|s| s.text_color(theme::ember()).bg(theme::elevated()))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |view, _, window, cx| {
+                                view.on_close_tab(&sid_for_close, tab_idx, window, cx);
+                            }),
+                        )
+                        .child("\u{00d7}"), // ×
+                ),
+        )
+}
+
+/// Render the "+ terminal" button used under each kild's terminal list.
+fn render_add_terminal_button(
+    id: &str,
+    session_id: String,
     cx: &mut Context<MainView>,
 ) -> impl IntoElement {
     div()
-        .flex()
-        .gap(px(theme::SPACE_1))
-        .pl(px(theme::SPACE_6))
-        .pb(px(theme::SPACE_1))
-        .child({
-            let wt = worktree;
-            let br = branch_for_edit;
-            Button::new(("sidebar-edit-stopped", ix))
-                .label("Edit")
-                .ghost()
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.on_open_editor_click(&wt, &br, cx);
-                }))
-        })
-        .child({
-            let br = branch_for_open;
-            Button::new(("sidebar-open", ix))
-                .label("\u{25B6}")
-                .success()
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    view.on_open_click(&br, cx);
-                }))
-        })
+        .id(gpui::SharedString::from(id.to_string()))
+        .pl(px(theme::SPACE_4))
+        .py(px(theme::SPACE_HALF))
+        .cursor_pointer()
+        .text_size(px(theme::TEXT_XXS))
+        .text_color(theme::text_muted())
+        .opacity(0.4)
+        .rounded(px(theme::RADIUS_SM))
+        .hover(|s| s.opacity(1.0).bg(theme::surface()))
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(move |view, _, window, cx| {
+                view.on_kild_select(&session_id, window, cx);
+                view.on_add_local_tab(&session_id, window, cx);
+            }),
+        )
+        .child("+ terminal")
 }

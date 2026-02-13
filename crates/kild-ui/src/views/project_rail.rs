@@ -34,12 +34,12 @@ pub fn render_project_rail(state: &AppState, cx: &mut Context<MainView>) -> impl
     div()
         .w(px(theme::RAIL_WIDTH))
         .h_full()
-        .bg(theme::void())
+        .bg(theme::obsidian())
         .border_r_1()
         .border_color(theme::border_subtle())
         .flex()
         .flex_col()
-        // Top: project icons
+        // Top: project icons + add project button
         .child(
             div()
                 .flex_1()
@@ -71,16 +71,8 @@ pub fn render_project_rail(state: &AppState, cx: &mut Context<MainView>) -> impl
                             }),
                         )
                     },
-                )),
-        )
-        // Bottom: add project button
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .py(px(theme::SPACE_2))
-                .gap(px(theme::SPACE_2))
+                ))
+                // + Add project button (inline after project icons)
                 .child(
                     div()
                         .id("rail-add-project")
@@ -101,6 +93,30 @@ pub fn render_project_rail(state: &AppState, cx: &mut Context<MainView>) -> impl
                             }),
                         )
                         .child("+"),
+                ),
+        )
+        // Bottom: settings gear
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .py(px(theme::SPACE_2))
+                .border_t_1()
+                .border_color(theme::border_subtle())
+                .child(
+                    div()
+                        .id("rail-settings")
+                        .size(px(32.0))
+                        .rounded(px(theme::RADIUS_MD))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::surface()))
+                        .text_size(px(theme::TEXT_LG))
+                        .text_color(theme::text_muted())
+                        .child("\u{2699}"),
                 ),
         )
 }

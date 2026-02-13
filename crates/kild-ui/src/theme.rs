@@ -163,6 +163,7 @@ pub fn transparent() -> Rgba {
 // TYPOGRAPHY SCALE
 // =============================================================================
 
+pub const TEXT_XXS: f32 = 10.0;
 pub const TEXT_XS: f32 = 11.0;
 pub const TEXT_SM: f32 = 12.0;
 pub const TEXT_BASE: f32 = 13.0;
@@ -178,7 +179,9 @@ pub const FONT_MONO: &str = "JetBrains Mono";
 // SPACING SCALE
 // =============================================================================
 
+pub const SPACE_HALF: f32 = 2.0;
 pub const SPACE_1: f32 = 4.0;
+pub const SPACE_1_HALF: f32 = 6.0;
 pub const SPACE_2: f32 = 8.0;
 pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
@@ -208,6 +211,12 @@ pub const STATUS_GLOW_SIZE: f32 = 16.0;
 
 /// Status indicator badge dot size (smaller dot inside badge).
 pub const STATUS_BADGE_DOT_SIZE: f32 = 6.0;
+
+/// Terminal item dot size (nested terminal indicators in sidebar).
+pub const TERMINAL_DOT_SIZE: f32 = 5.0;
+
+/// Mode badge text size (daemon/local label on terminal items).
+pub const TEXT_BADGE: f32 = 9.0;
 
 // =============================================================================
 // OVERLAY

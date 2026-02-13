@@ -38,7 +38,6 @@ The GUI currently supports:
 - Opening new agents in existing kilds
 - Stopping agents without destroying kilds
 - Destroying kilds with confirmation dialog
-- Bulk operations: Open All stopped kilds, Stop All running kilds
 - Quick actions: Copy path to clipboard, open in editor, focus terminal window
 - Live terminal rendering with multiple tabs per kild
 - Keyboard navigation: Cmd+J (next kild), Cmd+K (prev kild), Cmd+D (toggle Control/Dashboard view), Ctrl+Escape (move focus from terminal to sidebar)
