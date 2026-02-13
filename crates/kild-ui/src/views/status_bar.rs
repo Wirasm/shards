@@ -270,7 +270,6 @@ mod tests {
         errors.insert(
             "branch-1".to_string(),
             crate::state::errors::OperationError {
-                branch: "branch-1".to_string(),
                 message: "open failed".to_string(),
             },
         );

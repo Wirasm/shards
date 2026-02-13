@@ -733,9 +733,9 @@ impl MainView {
         .detach();
     }
 
-    /// Stop a daemon session in the background (best-effort cleanup).
+    /// Stop a daemon session in the background.
     fn stop_daemon_session_async(daemon_session_id: String, cx: &mut Context<MainView>) {
-        cx.spawn(async move |_this, cx: &mut gpui::AsyncApp| {
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let dsid = daemon_session_id.clone();
             let result = cx
                 .background_executor()
@@ -746,8 +746,12 @@ impl MainView {
                     event = "ui.terminal.daemon_session_stop_failed",
                     daemon_session_id = daemon_session_id,
                     error = %e,
-                    "Best-effort daemon session cleanup failed"
                 );
+                let _ = this.update(cx, |view, cx| {
+                    view.state
+                        .push_error(format!("Failed to clean up daemon session: {e}"));
+                    cx.notify();
+                });
             }
         })
         .detach();
@@ -1029,6 +1033,7 @@ impl MainView {
                 }
             } else {
                 self.active_terminal_id = None;
+                self.active_view = ActiveView::Dashboard;
                 self.focus_region = FocusRegion::Dashboard;
                 window.focus(&self.focus_handle);
             }
@@ -1135,6 +1140,10 @@ impl MainView {
                 session_id = session_id,
                 lru_slot = lru,
             );
+            self.state.push_error(
+                "Failed to place terminal in pane grid — this is a bug, please report it."
+                    .to_string(),
+            );
         }
     }
 
@@ -1233,10 +1242,7 @@ impl MainView {
                         tracing::warn!(event = "ui.open_click.error_displayed", branch = %branch, error = %e);
                         view.state.set_error(
                             &branch,
-                            crate::state::OperationError {
-                                branch: branch.clone(),
-                                message: e,
-                            },
+                            crate::state::OperationError { message: e },
                         );
                     }
                 }
@@ -1282,10 +1288,7 @@ impl MainView {
                         tracing::warn!(event = "ui.stop_click.error_displayed", branch = %branch, error = %e);
                         view.state.set_error(
                             &branch,
-                            crate::state::OperationError {
-                                branch: branch.clone(),
-                                message: e,
-                            },
+                            crate::state::OperationError { message: e },
                         );
                     }
                 }
@@ -1335,13 +1338,8 @@ impl MainView {
                 branch = branch,
                 error = %e
             );
-            self.state.set_error(
-                branch,
-                crate::state::OperationError {
-                    branch: branch.to_string(),
-                    message: e,
-                },
-            );
+            self.state
+                .set_error(branch, crate::state::OperationError { message: e });
         }
         cx.notify();
     }
@@ -1398,7 +1396,6 @@ impl MainView {
         self.state.set_error(
             branch,
             crate::state::OperationError {
-                branch: branch.to_string(),
                 message: message.to_string(),
             },
         );

@@ -108,8 +108,11 @@ pub fn render_sidebar(
 
                         let tabs_for_session = terminal_tabs.get(&session_id);
                         let tab_items = render_terminal_items(
-                            &session_id, tabs_for_session, pane_grid,
-                            theme::aurora(), cx,
+                            &session_id,
+                            tabs_for_session,
+                            pane_grid,
+                            theme::aurora(),
+                            cx,
                         );
 
                         let sid_for_add = session_id.clone();
@@ -128,29 +131,11 @@ pub fn render_sidebar(
                                     }),
                                 ))
                                 .children(tab_items)
-                                .child(
-                                    div()
-                                        .id(gpui::SharedString::from(format!(
-                                            "sidebar-add-terminal-{}",
-                                            sid_for_add
-                                        )))
-                                        .pl(px(16.0))
-                                        .py(px(2.0))
-                                        .cursor_pointer()
-                                        .text_size(px(10.0))
-                                        .text_color(theme::text_muted())
-                                        .opacity(0.4)
-                                        .rounded(px(theme::RADIUS_SM))
-                                        .hover(|s| s.opacity(1.0).bg(theme::surface()))
-                                        .on_mouse_up(
-                                            gpui::MouseButton::Left,
-                                            cx.listener(move |view, _, window, cx| {
-                                                view.on_kild_select(&sid_for_add, window, cx);
-                                                view.on_add_local_tab(&sid_for_add, window, cx);
-                                            }),
-                                        )
-                                        .child("+ terminal"),
-                                ),
+                                .child(render_add_terminal_button(
+                                    &format!("sidebar-add-terminal-{}", sid_for_add),
+                                    sid_for_add,
+                                    cx,
+                                )),
                         );
                     }
 
@@ -179,8 +164,11 @@ pub fn render_sidebar(
 
                             let tabs_for_session = terminal_tabs.get(&session_id);
                             let tab_items = render_terminal_items(
-                                &session_id, tabs_for_session, pane_grid,
-                                theme::text_muted(), cx,
+                                &session_id,
+                                tabs_for_session,
+                                pane_grid,
+                                theme::text_muted(),
+                                cx,
                             );
 
                             let status = match display.process_status {
@@ -204,29 +192,11 @@ pub fn render_sidebar(
                                         }),
                                     ))
                                     .children(tab_items)
-                                    .child(
-                                        div()
-                                            .id(gpui::SharedString::from(format!(
-                                                "sidebar-add-terminal-stopped-{}",
-                                                sid_for_add
-                                            )))
-                                            .pl(px(16.0))
-                                            .py(px(2.0))
-                                            .cursor_pointer()
-                                            .text_size(px(10.0))
-                                            .text_color(theme::text_muted())
-                                            .opacity(0.4)
-                                            .rounded(px(theme::RADIUS_SM))
-                                            .hover(|s| s.opacity(1.0).bg(theme::surface()))
-                                            .on_mouse_up(
-                                                gpui::MouseButton::Left,
-                                                cx.listener(move |view, _, window, cx| {
-                                                    view.on_kild_select(&sid_for_add, window, cx);
-                                                    view.on_add_local_tab(&sid_for_add, window, cx);
-                                                }),
-                                            )
-                                            .child("+ terminal"),
-                                    ),
+                                    .child(render_add_terminal_button(
+                                        &format!("sidebar-add-terminal-stopped-{}", sid_for_add),
+                                        sid_for_add,
+                                        cx,
+                                    )),
                             );
                         }
                         stopped_elements
@@ -257,7 +227,7 @@ pub fn render_sidebar(
                 .child(
                     div()
                         .id("sidebar-create-kild")
-                        .py(px(2.0))
+                        .py(px(theme::SPACE_HALF))
                         .cursor_pointer()
                         .text_size(px(theme::TEXT_XS))
                         .text_color(theme::text_muted())
@@ -283,14 +253,14 @@ fn render_section_header(title: &str, count: usize, count_color: Rgba) -> impl I
         .justify_between()
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(px(theme::TEXT_XXS))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme::text_muted())
                 .child(title.to_uppercase()),
         )
         .child(
             div()
-                .text_size(px(10.0))
+                .text_size(px(theme::TEXT_XXS))
                 .text_color(count_color)
                 .child(count.to_string()),
         )
@@ -343,7 +313,7 @@ fn render_kild_row(
         .child(
             div()
                 .flex_shrink_0()
-                .text_size(px(10.0))
+                .text_size(px(theme::TEXT_XXS))
                 .text_color(theme::text_muted())
                 .child(time_meta.to_string()),
         )
@@ -362,12 +332,15 @@ fn render_terminal_items(
     };
     let mut items = Vec::new();
     for tab_idx in 0..tabs.len() {
-        items.push(render_terminal_item(session_id, tab_idx, tabs, pane_grid, dot_color, cx).into_any_element());
+        items.push(
+            render_terminal_item(session_id, tab_idx, tabs, pane_grid, dot_color, cx)
+                .into_any_element(),
+        );
     }
     items
 }
 
-/// Render a single terminal item row with hover-revealed − (minimize) and × (close) buttons.
+/// Render a single terminal item row with hover-revealed × (close) button.
 fn render_terminal_item(
     session_id: &str,
     tab_idx: usize,
@@ -388,23 +361,22 @@ fn render_terminal_item(
         })
         .unwrap_or("local");
     let in_grid = pane_grid.find_slot(session_id, tab_idx).is_some();
-    let sid = session_id.to_string();
-    let sid_for_click = sid.clone();
-    let sid_for_close = sid.clone();
+    let sid: gpui::SharedString = format!("sidebar-tab-{}-{}", session_id, tab_idx).into();
+    let sid_close: gpui::SharedString =
+        format!("sidebar-tab-close-{}-{}", session_id, tab_idx).into();
+    let sid_for_click = session_id.to_string();
+    let sid_for_close = session_id.to_string();
 
     div()
-        .id(gpui::SharedString::from(format!(
-            "sidebar-tab-{}-{}",
-            sid, tab_idx
-        )))
+        .id(sid)
         .group("terminal-row")
         .relative()
-        .pl(px(16.0))
+        .pl(px(theme::SPACE_4))
         .pr(px(theme::SPACE_2))
-        .py(px(2.0))
+        .py(px(theme::SPACE_HALF))
         .flex()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(theme::SPACE_1_HALF))
         .cursor_pointer()
         .rounded(px(theme::RADIUS_SM))
         .hover(|s| s.bg(theme::surface()))
@@ -418,7 +390,7 @@ fn render_terminal_item(
         // Status dot
         .child(
             div()
-                .size(px(5.0))
+                .size(px(theme::TERMINAL_DOT_SIZE))
                 .rounded_full()
                 .flex_shrink_0()
                 .bg(dot_color),
@@ -427,7 +399,7 @@ fn render_terminal_item(
         .child(
             div()
                 .flex_1()
-                .text_size(px(10.0))
+                .text_size(px(theme::TEXT_XXS))
                 .text_color(if in_grid {
                     theme::text()
                 } else {
@@ -440,7 +412,7 @@ fn render_terminal_item(
         // Mode badge — hidden on hover to make room for buttons
         .child(
             div()
-                .text_size(px(9.0))
+                .text_size(px(theme::TEXT_BADGE))
                 .text_color(theme::text_muted())
                 .opacity(0.5)
                 .flex_shrink_0()
@@ -451,7 +423,7 @@ fn render_terminal_item(
         .child(
             div()
                 .absolute()
-                .right(px(4.0))
+                .right(px(theme::SPACE_1))
                 .top_0()
                 .bottom_0()
                 .flex()
@@ -461,15 +433,12 @@ fn render_terminal_item(
                 .group_hover("terminal-row", |s| s.opacity(1.0))
                 .child(
                     div()
-                        .id(gpui::SharedString::from(format!(
-                            "sidebar-tab-close-{}-{}",
-                            sid_for_close, tab_idx
-                        )))
+                        .id(sid_close)
                         .px(px(3.0))
                         .cursor_pointer()
-                        .text_size(px(10.0))
+                        .text_size(px(theme::TEXT_XXS))
                         .text_color(theme::text_muted())
-                        .rounded(px(2.0))
+                        .rounded(px(theme::SPACE_HALF))
                         .hover(|s| s.text_color(theme::ember()).bg(theme::elevated()))
                         .on_mouse_up(
                             gpui::MouseButton::Left,
@@ -480,4 +449,30 @@ fn render_terminal_item(
                         .child("\u{00d7}"), // ×
                 ),
         )
+}
+
+/// Render the "+ terminal" button used under each kild's terminal list.
+fn render_add_terminal_button(
+    id: &str,
+    session_id: String,
+    cx: &mut Context<MainView>,
+) -> impl IntoElement {
+    div()
+        .id(gpui::SharedString::from(id.to_string()))
+        .pl(px(theme::SPACE_4))
+        .py(px(theme::SPACE_HALF))
+        .cursor_pointer()
+        .text_size(px(theme::TEXT_XXS))
+        .text_color(theme::text_muted())
+        .opacity(0.4)
+        .rounded(px(theme::RADIUS_SM))
+        .hover(|s| s.opacity(1.0).bg(theme::surface()))
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(move |view, _, window, cx| {
+                view.on_kild_select(&session_id, window, cx);
+                view.on_add_local_tab(&session_id, window, cx);
+            }),
+        )
+        .child("+ terminal")
 }

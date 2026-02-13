@@ -547,7 +547,6 @@ mod tests {
         state.set_error(
             "branch",
             OperationError {
-                branch: "branch".to_string(),
                 message: "error".to_string(),
             },
         );
@@ -1321,7 +1320,6 @@ mod tests {
         state.set_error(
             "branch-1",
             OperationError {
-                branch: "branch-1".to_string(),
                 message: "Previous error".to_string(),
             },
         );
@@ -1341,7 +1339,6 @@ mod tests {
         state.set_error(
             "branch-1",
             OperationError {
-                branch: "branch-1".to_string(),
                 message: "Error message".to_string(),
             },
         );

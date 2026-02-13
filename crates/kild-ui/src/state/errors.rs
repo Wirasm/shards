@@ -1,8 +1,6 @@
-/// Error from a kild operation, with the branch name for context.
+/// Error from a kild operation.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct OperationError {
-    pub branch: String,
     pub message: String,
 }
 
@@ -46,7 +44,6 @@ mod tests {
         errors.set(
             "branch-1",
             OperationError {
-                branch: "branch-1".to_string(),
                 message: "error 1".to_string(),
             },
         );
@@ -63,7 +60,6 @@ mod tests {
         errors.set(
             "branch-1",
             OperationError {
-                branch: "branch-1".to_string(),
                 message: "error 1".to_string(),
             },
         );
