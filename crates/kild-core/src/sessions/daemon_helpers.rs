@@ -120,6 +120,8 @@ fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
     let hook_path = home.join(".kild").join("hooks").join("codex-notify");
     let hook_path_str = hook_path.display().to_string();
 
+    use std::fmt::Write;
+
     if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
             .map_err(|e| format!("failed to read {}: {}", config_path.display(), e))?;
@@ -146,7 +148,8 @@ fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
         if !new_content.ends_with('\n') && !new_content.is_empty() {
             new_content.push('\n');
         }
-        new_content.push_str(&format!("notify = [\"{}\"]\n", hook_path_str));
+        writeln!(new_content, "notify = [\"{}\"]", hook_path_str)
+            .expect("String formatting is infallible");
 
         std::fs::write(&config_path, new_content)
             .map_err(|e| format!("failed to write {}: {}", config_path.display(), e))?;
@@ -154,7 +157,10 @@ fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
         // Config doesn't exist — create it with just the notify line
         std::fs::create_dir_all(&codex_dir)
             .map_err(|e| format!("failed to create {}: {}", codex_dir.display(), e))?;
-        std::fs::write(&config_path, format!("notify = [\"{}\"]\n", hook_path_str))
+        let mut content = String::new();
+        writeln!(content, "notify = [\"{}\"]", hook_path_str)
+            .expect("String formatting is infallible");
+        std::fs::write(&config_path, content)
             .map_err(|e| format!("failed to write {}: {}", config_path.display(), e))?;
     }
 
