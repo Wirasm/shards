@@ -1730,10 +1730,10 @@ impl MainView {
             )
             // Spacer
             .child(div().flex_1())
-            // + Create ghost button
+            // + terminal ghost button
             .child(
                 div()
-                    .id("view-tab-create")
+                    .id("view-tab-add-terminal")
                     .px(px(theme::SPACE_2))
                     .py(px(theme::SPACE_1))
                     .my(px(theme::SPACE_1))
@@ -1752,10 +1752,14 @@ impl MainView {
                     .on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(|view, _, window, cx| {
-                            view.on_create_button_click(window, cx);
+                            if let Some(session_id) =
+                                view.state.selected_id().map(|s| s.to_string())
+                            {
+                                view.on_add_local_tab(&session_id, window, cx);
+                            }
                         }),
                     )
-                    .child("+ Create"),
+                    .child("+ terminal"),
             )
     }
 
