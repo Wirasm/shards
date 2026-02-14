@@ -24,6 +24,28 @@ pub fn keystroke_to_escape(keystroke: &Keystroke, app_cursor_mode: bool) -> Opti
         return None;
     }
 
+    // Cmd+nav: macOS line-level shortcuts
+    if cmd {
+        return match key {
+            "backspace" => Some(vec![0x15]), // Ctrl+U: delete to beginning of line
+            "delete" => Some(vec![0x0b]),    // Ctrl+K: delete to end of line
+            "left" => Some(vec![0x01]),      // Ctrl+A: beginning of line
+            "right" => Some(vec![0x05]),     // Ctrl+E: end of line
+            _ => None,                       // Other Cmd+key: propagate to parent
+        };
+    }
+
+    // Alt+nav: macOS word-level shortcuts
+    if alt {
+        match key {
+            "backspace" => return Some(vec![0x1b, 0x7f]), // ESC DEL: delete word backward
+            "delete" => return Some(vec![0x1b, b'd']),    // ESC d: delete word forward
+            "left" => return Some(vec![0x1b, b'b']),      // ESC b: word backward
+            "right" => return Some(vec![0x1b, b'f']),     // ESC f: word forward
+            _ => {} // Fall through to printable Alt+key handler
+        }
+    }
+
     // Ctrl+letter → ASCII control code (0x01-0x1A)
     if ctrl && key.len() == 1 {
         let ch = key.as_bytes()[0];
@@ -324,5 +346,75 @@ mod tests {
     #[test]
     fn test_cmd_d_returns_none() {
         assert_eq!(keystroke_to_escape(&cmd_key("d"), false), None);
+    }
+
+    #[test]
+    fn test_cmd_backspace_deletes_to_line_start() {
+        assert_eq!(
+            keystroke_to_escape(&cmd_key("backspace"), false),
+            Some(vec![0x15])
+        );
+    }
+
+    #[test]
+    fn test_cmd_delete_deletes_to_line_end() {
+        assert_eq!(
+            keystroke_to_escape(&cmd_key("delete"), false),
+            Some(vec![0x0b])
+        );
+    }
+
+    #[test]
+    fn test_cmd_left_jumps_to_line_start() {
+        assert_eq!(
+            keystroke_to_escape(&cmd_key("left"), false),
+            Some(vec![0x01])
+        );
+    }
+
+    #[test]
+    fn test_cmd_right_jumps_to_line_end() {
+        assert_eq!(
+            keystroke_to_escape(&cmd_key("right"), false),
+            Some(vec![0x05])
+        );
+    }
+
+    #[test]
+    fn test_alt_backspace_deletes_word() {
+        assert_eq!(
+            keystroke_to_escape(&alt_key("backspace"), false),
+            Some(vec![0x1b, 0x7f])
+        );
+    }
+
+    #[test]
+    fn test_alt_left_moves_word_backward() {
+        assert_eq!(
+            keystroke_to_escape(&alt_key("left"), false),
+            Some(vec![0x1b, b'b'])
+        );
+    }
+
+    #[test]
+    fn test_alt_delete_deletes_word_forward() {
+        assert_eq!(
+            keystroke_to_escape(&alt_key("delete"), false),
+            Some(vec![0x1b, b'd'])
+        );
+    }
+
+    #[test]
+    fn test_alt_right_moves_word_forward() {
+        assert_eq!(
+            keystroke_to_escape(&alt_key("right"), false),
+            Some(vec![0x1b, b'f'])
+        );
+    }
+
+    #[test]
+    fn test_cmd_other_keys_propagate() {
+        assert_eq!(keystroke_to_escape(&cmd_key("z"), false), None);
+        assert_eq!(keystroke_to_escape(&cmd_key("a"), false), None);
     }
 }
