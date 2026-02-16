@@ -177,6 +177,7 @@ impl Store for CoreStore {
 mod tests {
     use super::*;
     use crate::projects::persistence::test_helpers::*;
+    use crate::sessions::errors::SessionError;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -514,10 +515,6 @@ mod tests {
         assert!(loaded.active.is_none());
     }
 
-    // --- Session command dispatch error path tests ---
-    // These verify that dispatch→handler wiring is correct for session commands.
-    // Non-existent sessions hit NotFound errors before any I/O matters.
-
     #[test]
     fn test_dispatch_destroy_kild_not_found() {
         let mut store = CoreStore::new(KildConfig::default());
@@ -525,7 +522,10 @@ mod tests {
             branch: "nonexistent-branch".to_string(),
             force: false,
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 
     #[test]
@@ -534,7 +534,10 @@ mod tests {
         let result = store.dispatch(Command::StopKild {
             branch: "nonexistent-branch".to_string(),
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 
     #[test]
@@ -543,7 +546,10 @@ mod tests {
         let result = store.dispatch(Command::CompleteKild {
             branch: "nonexistent-branch".to_string(),
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 
     #[test]
@@ -556,7 +562,10 @@ mod tests {
             runtime_mode: Some(RuntimeMode::Terminal),
             resume: false,
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 
     #[test]
@@ -567,14 +576,16 @@ mod tests {
             branch: "nonexistent-branch".to_string(),
             status: AgentStatus::Working,
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 
     #[test]
     fn test_dispatch_refresh_sessions_succeeds() {
         let mut store = CoreStore::new(KildConfig::default());
         let result = store.dispatch(Command::RefreshSessions);
-        // RefreshSessions reads from filesystem — empty is fine, should not error
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec![Event::SessionsRefreshed]);
     }
@@ -585,6 +596,9 @@ mod tests {
         let result = store.dispatch(Command::RefreshPrStatus {
             branch: "nonexistent-branch".to_string(),
         });
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DispatchError::Session(SessionError::NotFound { .. }))
+        ));
     }
 }

@@ -250,8 +250,6 @@ mod tests {
         assert!(names.contains(&"KILD_PORT_COUNT"));
     }
 
-    // --- allocate_port_range integration tests (filesystem-based) ---
-
     #[test]
     fn test_allocate_port_range_empty_dir() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -264,32 +262,14 @@ mod tests {
     fn test_allocate_port_range_avoids_existing_session() {
         let tmp = tempfile::TempDir::new().unwrap();
 
-        // Create worktree directory for structural validation
         let wt = tmp.path().join("wt");
         std::fs::create_dir_all(&wt).unwrap();
 
-        // Write a session file with ports 3000-3009
-        let existing = create_session_with_ports(3000, 3009);
-        // Need a session with a valid worktree for load validation
-        let existing_with_wt = Session::new(
-            existing.id.clone(),
-            existing.project_id.clone(),
-            existing.branch.clone(),
-            wt,
-            existing.agent.clone(),
-            existing.status.clone(),
-            existing.created_at.clone(),
-            existing.port_range_start,
-            existing.port_range_end,
-            existing.port_count,
-            None,
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
-        super::super::persistence::save_session_to_file(&existing_with_wt, tmp.path()).unwrap();
+        let mut existing = Session::new_for_test("existing".to_string(), wt);
+        existing.port_range_start = 3000;
+        existing.port_range_end = 3009;
+        existing.port_count = 10;
+        super::super::persistence::save_session_to_file(&existing, tmp.path()).unwrap();
 
         let (start, end) = allocate_port_range(tmp.path(), 10, 3000).unwrap();
         assert_eq!(start, 3010);
@@ -301,7 +281,6 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let nonexistent = tmp.path().join("does_not_exist");
 
-        // Non-existent dir returns empty sessions, so first range
         let (start, end) = allocate_port_range(&nonexistent, 10, 3000).unwrap();
         assert_eq!(start, 3000);
         assert_eq!(end, 3009);

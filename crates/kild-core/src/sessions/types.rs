@@ -1777,8 +1777,6 @@ mod tests {
         }
     }
 
-    // --- Session/AgentProcess construction invariant tests ---
-
     #[test]
     fn test_session_new_sets_all_fields() {
         use crate::state::types::RuntimeMode;
@@ -1854,7 +1852,6 @@ mod tests {
 
     #[test]
     fn test_agent_process_daemon_only_no_pid() {
-        // Daemon-managed agent: no PID, has daemon_session_id
         let agent = AgentProcess::new(
             "claude".to_string(),
             "proj_feat_0".to_string(),

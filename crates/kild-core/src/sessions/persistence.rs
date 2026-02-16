@@ -1354,8 +1354,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    /// Test that save→load round-trip preserves ALL fields including newer ones
-    /// (agent_session_id, task_list_id, runtime_mode, agents with full metadata).
     #[test]
     fn test_save_load_roundtrip_all_fields() {
         use crate::state::types::RuntimeMode;
@@ -1364,7 +1362,6 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let sessions_dir = tmp.path();
 
-        // Create worktree directory so validation passes
         let worktree_dir = sessions_dir.join("worktree");
         std::fs::create_dir_all(&worktree_dir).unwrap();
 
@@ -1436,7 +1433,6 @@ mod tests {
         assert!(agent.daemon_session_id().is_none());
     }
 
-    /// Test that the session ID `/` to `_` filename mapping is correct.
     #[test]
     fn test_session_id_filename_mapping() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1466,11 +1462,9 @@ mod tests {
 
         save_session_to_file(&session, sessions_dir).unwrap();
 
-        // The file should use underscores for slashes
         let expected_file = sessions_dir.join("my-project_deep_nested.json");
-        assert!(expected_file.exists(), "Session file should use _ for /");
+        assert!(expected_file.exists());
 
-        // Load back and verify
         let loaded = load_session_from_file("deep-nested", sessions_dir).unwrap();
         assert_eq!(loaded.id, "my-project/deep/nested");
     }

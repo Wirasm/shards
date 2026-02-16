@@ -99,7 +99,6 @@ pub fn find_session_by_worktree_path(
 mod tests {
     use super::*;
 
-    /// Test worktree path matching logic: exact path match.
     #[test]
     fn test_worktree_path_match_exact() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -109,27 +108,10 @@ mod tests {
         let worktree = tmp.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        let session = Session::new(
-            "test/feat".to_string(),
-            "test".to_string(),
-            "feat".to_string(),
-            worktree.clone(),
-            "claude".to_string(),
-            super::super::types::SessionStatus::Active,
-            "2024-01-01T00:00:00Z".to_string(),
-            0,
-            0,
-            0,
-            None,
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let mut session = Session::new_for_test("feat".to_string(), worktree.clone());
+        session.worktree_path = worktree.clone();
         persistence::save_session_to_file(&session, &sessions_dir).unwrap();
 
-        // Load sessions and replicate the path matching logic
         let (sessions, _) = persistence::load_sessions_from_files(&sessions_dir).unwrap();
         let found = sessions
             .iter()
@@ -138,7 +120,6 @@ mod tests {
         assert_eq!(found.unwrap().branch, "feat");
     }
 
-    /// Test worktree path matching logic: subdirectory matches.
     #[test]
     fn test_worktree_path_match_subdirectory() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -148,29 +129,12 @@ mod tests {
         let worktree = tmp.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        let session = Session::new(
-            "test/feat".to_string(),
-            "test".to_string(),
-            "feat".to_string(),
-            worktree.clone(),
-            "claude".to_string(),
-            super::super::types::SessionStatus::Active,
-            "2024-01-01T00:00:00Z".to_string(),
-            0,
-            0,
-            0,
-            None,
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let mut session = Session::new_for_test("feat".to_string(), worktree.clone());
+        session.worktree_path = worktree.clone();
         persistence::save_session_to_file(&session, &sessions_dir).unwrap();
 
         let (sessions, _) = persistence::load_sessions_from_files(&sessions_dir).unwrap();
 
-        // Subdirectory of worktree should match
         let subdir = worktree.join("src").join("main.rs");
         let found = sessions
             .iter()
@@ -179,7 +143,6 @@ mod tests {
         assert_eq!(found.unwrap().branch, "feat");
     }
 
-    /// Test worktree path matching logic: non-matching path returns None.
     #[test]
     fn test_worktree_path_no_match() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -189,29 +152,12 @@ mod tests {
         let worktree = tmp.path().join("worktree");
         std::fs::create_dir_all(&worktree).unwrap();
 
-        let session = Session::new(
-            "test/feat".to_string(),
-            "test".to_string(),
-            "feat".to_string(),
-            worktree,
-            "claude".to_string(),
-            super::super::types::SessionStatus::Active,
-            "2024-01-01T00:00:00Z".to_string(),
-            0,
-            0,
-            0,
-            None,
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let mut session = Session::new_for_test("feat".to_string(), worktree.clone());
+        session.worktree_path = worktree;
         persistence::save_session_to_file(&session, &sessions_dir).unwrap();
 
         let (sessions, _) = persistence::load_sessions_from_files(&sessions_dir).unwrap();
 
-        // Completely different path should not match
         let other_path = tmp.path().join("other_project");
         let found = sessions
             .iter()

@@ -758,7 +758,6 @@ mod tests {
         let task_list_id = "tl_nested_test";
         let task_dir = tmp.path().join(".claude").join("tasks").join(task_list_id);
 
-        // Create nested structure
         let sub_dir = task_dir.join("subtasks");
         std::fs::create_dir_all(&sub_dir).unwrap();
         std::fs::write(task_dir.join("task1.json"), r#"{"id":"1"}"#).unwrap();
@@ -770,16 +769,13 @@ mod tests {
 
         cleanup_task_list("session-nested", task_list_id, tmp.path());
 
-        // Entire directory tree should be removed
         assert!(!task_dir.exists());
     }
 
     #[test]
     fn test_destroy_safety_info_default_does_not_block() {
-        // Default has has_remote_branch=false, so has_warnings() is true,
-        // but should_block() is false (only blocks on uncommitted changes).
         let info = DestroySafetyInfo::default();
-        assert!(!info.should_block(), "Default should not block");
+        assert!(!info.should_block());
     }
 
     #[test]
@@ -805,7 +801,6 @@ mod tests {
     fn test_has_warnings_each_condition_independently() {
         use crate::git::types::WorktreeStatus;
 
-        // Only uncommitted changes
         let uncommitted = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 has_uncommitted_changes: true,
@@ -816,7 +811,6 @@ mod tests {
         };
         assert!(uncommitted.has_warnings());
 
-        // Only unpushed commits
         let unpushed = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 unpushed_commit_count: 3,
@@ -827,7 +821,6 @@ mod tests {
         };
         assert!(unpushed.has_warnings());
 
-        // Only no remote branch
         let no_remote = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 has_remote_branch: false,
@@ -837,7 +830,6 @@ mod tests {
         };
         assert!(no_remote.has_warnings());
 
-        // Only no PR
         let no_pr = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 has_remote_branch: true,
@@ -847,7 +839,6 @@ mod tests {
         };
         assert!(no_pr.has_warnings());
 
-        // Only status check failed
         let status_failed = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 status_check_failed: true,
@@ -863,7 +854,6 @@ mod tests {
     fn test_warning_messages_severity_order() {
         use crate::git::types::WorktreeStatus;
 
-        // Combine all warning conditions
         let info = DestroySafetyInfo {
             git_status: WorktreeStatus {
                 has_uncommitted_changes: true,
@@ -877,15 +867,8 @@ mod tests {
 
         let msgs = info.warning_messages();
         assert!(msgs.len() >= 3);
-
-        // Status check failure should come first (highest severity)
         assert!(msgs[0].contains("Git status check failed"));
-
-        // Unpushed commits should follow
-        // (uncommitted is skipped when status_check_failed)
         assert!(msgs[1].contains("unpushed"));
-
-        // No PR should be last (advisory)
         assert!(msgs.last().unwrap().contains("No PR found"));
     }
 }

@@ -279,8 +279,6 @@ mod tests {
         assert!(!error.is_user_error());
     }
 
-    // --- Exhaustive error_code and is_user_error tests for all remaining variants ---
-
     #[test]
     fn test_worktree_not_found_error() {
         let error = SessionError::WorktreeNotFound {
@@ -416,15 +414,12 @@ mod tests {
 
     #[test]
     fn test_daemon_auto_start_failed_delegates_is_user_error() {
-        // DaemonAutoStartFailed delegates is_user_error to the nested source.
-        // Disabled is a user error:
         let disabled_error = SessionError::DaemonAutoStartFailed {
             source: crate::daemon::errors::DaemonAutoStartError::Disabled,
         };
         assert_eq!(disabled_error.error_code(), "DAEMON_AUTO_START_FAILED");
         assert!(disabled_error.is_user_error());
 
-        // SpawnFailed is NOT a user error:
         let spawn_error = SessionError::DaemonAutoStartFailed {
             source: crate::daemon::errors::DaemonAutoStartError::SpawnFailed {
                 message: "failed".to_string(),
