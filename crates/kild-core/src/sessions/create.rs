@@ -8,7 +8,6 @@ use crate::terminal;
 
 use super::daemon_helpers::{
     build_daemon_create_request, compute_spawn_id, ensure_shim_binary, setup_codex_integration,
-    spawn_attach_window,
 };
 
 pub fn create_session(
@@ -397,9 +396,9 @@ pub fn create_session(
                 eprintln!("Agent teams will not work in this session.");
             }
 
-            let mut agent_process = AgentProcess::new(
+            AgentProcess::new(
                 validated.agent.clone(),
-                spawn_id.clone(),
+                spawn_id,
                 None,
                 None,
                 None,
@@ -408,17 +407,7 @@ pub fn create_session(
                 validated.command.clone(),
                 now.clone(),
                 Some(daemon_result.daemon_session_id),
-            )?;
-
-            // Auto-attach: spawn a Ghostty window running `kild attach <branch>`
-            if request.auto_attach
-                && let Some((terminal_type, window_id)) =
-                    spawn_attach_window(&validated.name, &spawn_id, &worktree.path, kild_config)
-            {
-                agent_process.set_terminal_info(Some(terminal_type), window_id);
-            }
-
-            agent_process
+            )?
         }
     };
 

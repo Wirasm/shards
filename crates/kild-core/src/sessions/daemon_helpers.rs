@@ -62,7 +62,7 @@ pub(crate) fn ensure_shim_binary() -> Result<(), String> {
 ///
 /// Returns `Some((terminal_type, terminal_window_id))` on success, `None` on failure.
 /// Failures are logged as warnings but never block session creation.
-pub(crate) fn spawn_attach_window(
+pub fn spawn_attach_window(
     branch: &str,
     spawn_id: &str,
     worktree_path: &Path,

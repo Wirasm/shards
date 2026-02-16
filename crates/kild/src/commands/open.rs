@@ -4,10 +4,11 @@ use tracing::{error, info};
 use kild_core::SessionStatus;
 use kild_core::events;
 use kild_core::session_ops;
+use kild_core::sessions::daemon_helpers::spawn_attach_window;
 
 use super::helpers::{
     FailedOperation, OpenedKild, format_count, format_partial_failure_error,
-    resolve_explicit_runtime_mode, resolve_open_mode,
+    load_config_with_warning, resolve_explicit_runtime_mode, resolve_open_mode,
 };
 
 pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
@@ -29,8 +30,18 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
 
     info!(event = "cli.open_started", branch = branch, mode = ?mode);
 
-    match session_ops::open_session(branch, mode.clone(), runtime_mode, resume, true) {
+    match session_ops::open_session(branch, mode.clone(), runtime_mode, resume) {
         Ok(session) => {
+            // Auto-attach: open a Ghostty window for daemon sessions
+            if session.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
+                let config = load_config_with_warning();
+                let spawn_id = session
+                    .latest_agent()
+                    .map(|a| a.spawn_id().to_string())
+                    .unwrap_or_default();
+                spawn_attach_window(&session.branch, &spawn_id, &session.worktree_path, &config);
+            }
+
             match mode {
                 kild_core::OpenMode::BareShell => {
                     println!("Opened bare terminal for '{}'.", branch);
@@ -90,18 +101,25 @@ fn handle_open_all(
         return Ok(());
     }
 
+    // Load config once for potential auto-attach calls
+    let config = load_config_with_warning();
+
     let mut opened: Vec<OpenedKild> = Vec::new();
     let mut errors: Vec<FailedOperation> = Vec::new();
 
     for session in stopped {
-        match session_ops::open_session(
-            &session.branch,
-            mode.clone(),
-            runtime_mode.clone(),
-            resume,
-            true,
-        ) {
+        match session_ops::open_session(&session.branch, mode.clone(), runtime_mode.clone(), resume)
+        {
             Ok(s) => {
+                // Auto-attach: open a Ghostty window for daemon sessions
+                if s.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
+                    let spawn_id = s
+                        .latest_agent()
+                        .map(|a| a.spawn_id().to_string())
+                        .unwrap_or_default();
+                    spawn_attach_window(&s.branch, &spawn_id, &s.worktree_path, &config);
+                }
+
                 info!(
                     event = "cli.open_completed",
                     branch = s.branch,
