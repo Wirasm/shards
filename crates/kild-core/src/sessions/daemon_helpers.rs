@@ -3,7 +3,9 @@ use std::path::Path;
 use tracing::{debug, info, warn};
 
 use crate::agents;
+use crate::config::KildConfig;
 use crate::sessions::errors::SessionError;
+use crate::terminal;
 
 /// Compute a unique spawn ID for a given session and spawn index.
 ///
@@ -50,6 +52,68 @@ pub(crate) fn ensure_shim_binary() -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// Spawn a terminal attach window for a daemon session (best-effort).
+///
+/// After a daemon PTY is created, this spawns a terminal window running
+/// `kild attach <branch>` so the CLI user gets immediate visual feedback.
+/// The terminal backend is selected via user config or auto-detection
+/// (Ghostty > iTerm > Terminal.app on macOS).
+/// The attach process is ephemeral — Ctrl+C detaches without killing the agent.
+///
+/// Failures are logged as warnings but never block session creation.
+pub fn spawn_attach_window(
+    branch: &str,
+    spawn_id: &str,
+    worktree_path: &Path,
+    kild_config: &KildConfig,
+) {
+    info!(event = "core.session.auto_attach_started", branch = branch);
+
+    let kild_binary = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            warn!(
+                event = "core.session.auto_attach_failed",
+                branch = branch,
+                error = %e,
+                "Could not resolve kild binary path for auto-attach"
+            );
+            eprintln!("Warning: Could not auto-attach to daemon session: {}", e);
+            eprintln!("         Use `kild attach {}` to connect manually.", branch);
+            return;
+        }
+    };
+
+    let attach_command = format!("{} attach '{}'", kild_binary.display(), branch);
+
+    // Pass None for kild_dir to skip PID file creation — the attach process is ephemeral
+    match terminal::handler::spawn_terminal(
+        worktree_path,
+        &attach_command,
+        kild_config,
+        Some(spawn_id),
+        None,
+    ) {
+        Ok(result) => {
+            info!(
+                event = "core.session.auto_attach_completed",
+                branch = branch,
+                window_id = ?result.terminal_window_id
+            );
+        }
+        Err(e) => {
+            warn!(
+                event = "core.session.auto_attach_failed",
+                branch = branch,
+                error = %e,
+                "Could not spawn attach window for daemon session"
+            );
+            eprintln!("Warning: Could not auto-attach to daemon session: {}", e);
+            eprintln!("         Use `kild attach {}` to connect manually.", branch);
+        }
+    }
 }
 
 /// Ensure the Codex notify hook script is installed at `<home>/.kild/hooks/codex-notify`.

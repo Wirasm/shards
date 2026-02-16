@@ -4,6 +4,7 @@ use tracing::{error, info};
 use kild_core::CreateSessionRequest;
 use kild_core::events;
 use kild_core::session_ops;
+use kild_core::sessions::daemon_helpers::spawn_attach_window;
 
 use super::helpers::{load_config_with_warning, resolve_runtime_mode, shorten_home_path};
 
@@ -61,6 +62,15 @@ pub(crate) fn handle_create_command(
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {
+            // Auto-attach: open a terminal window for daemon sessions
+            if session.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
+                let spawn_id = session
+                    .latest_agent()
+                    .map(|a| a.spawn_id().to_string())
+                    .unwrap_or_default();
+                spawn_attach_window(&session.branch, &spawn_id, &session.worktree_path, &config);
+            }
+
             println!("Kild created.");
             println!("  Branch:   {}", session.branch);
             if session.agent == "shell" {
