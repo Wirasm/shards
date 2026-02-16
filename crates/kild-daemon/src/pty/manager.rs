@@ -153,6 +153,11 @@ impl PtyManager {
             cmd.env(key, value);
         }
 
+        // Strip nesting-detection env vars inherited from the daemon's parent.
+        // When kild is launched from inside Claude Code, CLAUDECODE leaks through
+        // and causes spawned agents to refuse to start.
+        cmd.env_remove("CLAUDECODE");
+
         info!(
             event = "daemon.pty.create_started",
             session_id = session_id,

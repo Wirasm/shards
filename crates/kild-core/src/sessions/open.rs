@@ -355,8 +355,9 @@ pub fn open_session(
         setup_codex_integration(&agent);
 
         // Terminal path: spawn in external terminal
-        // Prepend task list env vars via `env` command for agents that support it.
-        // Uses `env KEY=val command` so it works with `exec` (env is an executable).
+        // Always use `env` to strip nesting-detection vars (e.g. CLAUDECODE) so
+        // agents don't refuse to start when kild is invoked from inside Claude Code.
+        // Also sets task list env vars for agents that support them.
         let terminal_command = {
             let mut env_prefix: Vec<(String, String)> = Vec::new();
             if let Some(ref tlid) = new_task_list_id {
@@ -364,14 +365,25 @@ pub fn open_session(
             }
             env_prefix.extend(agents::resume::codex_env_vars(&agent, &session.branch));
 
-            if env_prefix.is_empty() {
-                agent_command.clone()
+            let env_args: Vec<String> = env_prefix
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            let unset_args = super::env_cleanup::ENV_VARS_TO_STRIP
+                .iter()
+                .map(|k| format!("-u {}", k))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            if env_args.is_empty() {
+                format!("env {} {}", unset_args, agent_command)
             } else {
-                let env_args: Vec<String> = env_prefix
-                    .iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
-                    .collect();
-                format!("env {} {}", env_args.join(" "), agent_command)
+                format!(
+                    "env {} {} {}",
+                    unset_args,
+                    env_args.join(" "),
+                    agent_command
+                )
             }
         };
         let spawn_result = terminal::handler::spawn_terminal(
