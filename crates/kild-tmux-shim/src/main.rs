@@ -7,6 +7,8 @@ mod state;
 use std::env;
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+
 fn main() {
     setup_logging();
 
@@ -39,9 +41,9 @@ fn setup_logging() {
             if session_id.is_empty() {
                 return;
             }
-            let dir = match dirs::home_dir() {
-                Some(h) => h.join(".kild").join("shim").join(&session_id),
-                None => {
+            let dir = match KildPaths::resolve() {
+                Ok(paths) => paths.shim_session_dir(&session_id),
+                Err(_) => {
                     eprintln!("tmux: $HOME not set, cannot create log directory");
                     return;
                 }

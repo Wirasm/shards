@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 
+use kild_paths::KildPaths;
 use tracing::{debug, error};
 
 use crate::errors::ShimError;
@@ -76,8 +77,8 @@ fn build_child_env() -> HashMap<String, String> {
         .collect();
 
     // Ensure ~/.kild/bin is at the front of PATH so the shim stays on PATH
-    if let Some(home) = dirs::home_dir() {
-        let kild_bin = home.join(".kild").join("bin");
+    if let Ok(paths) = KildPaths::resolve() {
+        let kild_bin = paths.bin_dir();
         let current_path = env_vars.get("PATH").cloned().unwrap_or_default();
         let kild_bin_str = kild_bin.to_string_lossy();
         let already_present = current_path

@@ -7,6 +7,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+use kild_paths::KildPaths;
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,14 +55,9 @@ impl From<&HealthOutput> for HealthSnapshot {
 }
 
 pub fn get_history_dir() -> Result<PathBuf, std::io::Error> {
-    dirs::home_dir()
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not find home directory",
-            )
-        })
-        .map(|p| p.join(".kild").join("health_history"))
+    KildPaths::resolve()
+        .map(|p| p.health_history_dir())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()))
 }
 
 pub fn save_snapshot(snapshot: &HealthSnapshot) -> Result<(), std::io::Error> {

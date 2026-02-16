@@ -9,14 +9,16 @@ use std::path::PathBuf;
 
 /// Default socket path for the daemon.
 pub fn socket_path() -> PathBuf {
-    let home = dirs::home_dir().expect("HOME not set");
-    home.join(".kild").join("daemon.sock")
+    kild_paths::KildPaths::resolve()
+        .expect("HOME not set — cannot determine daemon socket path")
+        .daemon_socket()
 }
 
 /// PID file path for the daemon process.
 pub fn pid_file_path() -> PathBuf {
-    let home = dirs::home_dir().expect("HOME not set");
-    home.join(".kild").join("daemon.pid")
+    kild_paths::KildPaths::resolve()
+        .expect("HOME not set — cannot determine daemon PID path")
+        .daemon_pid_file()
 }
 
 /// Find a sibling binary next to the currently running executable.

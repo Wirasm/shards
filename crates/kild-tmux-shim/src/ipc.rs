@@ -5,15 +5,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use base64::Engine;
+use kild_paths::KildPaths;
 use kild_protocol::{ClientMessage, DaemonMessage};
 use tracing::debug;
 
 use crate::errors::ShimError;
 
 fn socket_path() -> Result<PathBuf, ShimError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| ShimError::state("home directory not found - $HOME not set"))?;
-    Ok(home.join(".kild").join("daemon.sock"))
+    let paths = KildPaths::resolve().map_err(|e| ShimError::state(e.to_string()))?;
+    Ok(paths.daemon_socket())
 }
 
 fn connect() -> Result<UnixStream, ShimError> {

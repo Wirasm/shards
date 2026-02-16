@@ -1,16 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kild_paths::KildPaths;
 use tracing::{debug, warn};
 
 use crate::errors::DaemonError;
 
 /// Returns the default PID file path: `~/.kild/daemon.pid`.
 pub fn pid_file_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".kild")
-        .join("daemon.pid")
+    KildPaths::resolve()
+        .unwrap_or_else(|_| KildPaths::from_dir(PathBuf::from("/tmp/.kild")))
+        .daemon_pid_file()
 }
 
 /// Write the current process PID to the PID file.

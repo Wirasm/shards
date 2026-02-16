@@ -3399,6 +3399,7 @@ dependencies = [
  "git2",
  "glob",
  "ignore",
+ "kild-paths",
  "kild-protocol",
  "serde",
  "serde_json",
@@ -3420,8 +3421,8 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chrono",
- "dirs 5.0.1",
  "kild-core",
+ "kild-paths",
  "kild-protocol",
  "nix 0.29.0",
  "portable-pty",
@@ -3433,6 +3434,14 @@ dependencies = [
  "tokio-util",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "kild-paths"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -3477,6 +3486,7 @@ name = "kild-teams"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "kild-paths",
  "notify 8.2.0",
  "serde",
  "serde_json",
@@ -3490,7 +3500,7 @@ name = "kild-tmux-shim"
 version = "0.1.0"
 dependencies = [
  "base64",
- "dirs 5.0.1",
+ "kild-paths",
  "kild-protocol",
  "nix 0.29.0",
  "serde",

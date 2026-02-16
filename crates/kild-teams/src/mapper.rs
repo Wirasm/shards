@@ -5,18 +5,17 @@
 
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+
 use crate::errors::TeamsError;
 use crate::parser;
 use crate::types::TeamState;
 
-/// Default shim state directory: `~/.kild/shim/`.
-fn shim_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".kild").join("shim"))
-}
-
 /// Resolve a shim pane registry path for a session.
 fn shim_registry_path(session_id: &str) -> Option<PathBuf> {
-    shim_dir().map(|d| d.join(session_id).join("panes.json"))
+    KildPaths::resolve()
+        .ok()
+        .map(|p| p.shim_panes_file(session_id))
 }
 
 /// Enrich team state with daemon session IDs from the shim pane registry.

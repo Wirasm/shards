@@ -1,0 +1,306 @@
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, thiserror::Error)]
+pub enum PathError {
+    #[error("home directory not found — set $HOME environment variable")]
+    HomeNotFound,
+}
+
+/// Centralized path construction for the `~/.kild/` directory layout.
+///
+/// Single source of truth for every path under `~/.kild/`. Use `resolve()` in
+/// production code and `from_dir()` in tests.
+#[derive(Debug, Clone)]
+pub struct KildPaths {
+    kild_dir: PathBuf,
+}
+
+impl KildPaths {
+    /// Resolve paths from the user's home directory (`~/.kild`).
+    pub fn resolve() -> Result<Self, PathError> {
+        let home = dirs::home_dir().ok_or(PathError::HomeNotFound)?;
+        Ok(Self {
+            kild_dir: home.join(".kild"),
+        })
+    }
+
+    /// Create paths from an explicit base directory. Use in tests.
+    pub fn from_dir(kild_dir: PathBuf) -> Self {
+        Self { kild_dir }
+    }
+
+    /// The base `~/.kild` directory.
+    pub fn kild_dir(&self) -> &Path {
+        &self.kild_dir
+    }
+
+    // --- Top-level subdirectories ---
+
+    pub fn sessions_dir(&self) -> PathBuf {
+        self.kild_dir.join("sessions")
+    }
+
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.kild_dir.join("worktrees")
+    }
+
+    pub fn pids_dir(&self) -> PathBuf {
+        self.kild_dir.join("pids")
+    }
+
+    pub fn bin_dir(&self) -> PathBuf {
+        self.kild_dir.join("bin")
+    }
+
+    pub fn hooks_dir(&self) -> PathBuf {
+        self.kild_dir.join("hooks")
+    }
+
+    pub fn shim_dir(&self) -> PathBuf {
+        self.kild_dir.join("shim")
+    }
+
+    pub fn health_history_dir(&self) -> PathBuf {
+        self.kild_dir.join("health_history")
+    }
+
+    // --- Top-level files ---
+
+    pub fn daemon_socket(&self) -> PathBuf {
+        self.kild_dir.join("daemon.sock")
+    }
+
+    pub fn daemon_pid_file(&self) -> PathBuf {
+        self.kild_dir.join("daemon.pid")
+    }
+
+    pub fn projects_file(&self) -> PathBuf {
+        self.kild_dir.join("projects.json")
+    }
+
+    pub fn user_config(&self) -> PathBuf {
+        self.kild_dir.join("config.toml")
+    }
+
+    // --- Parameterized paths ---
+
+    pub fn shim_session_dir(&self, session_id: &str) -> PathBuf {
+        self.shim_dir().join(session_id)
+    }
+
+    pub fn shim_panes_file(&self, session_id: &str) -> PathBuf {
+        self.shim_session_dir(session_id).join("panes.json")
+    }
+
+    pub fn shim_lock_file(&self, session_id: &str) -> PathBuf {
+        self.shim_session_dir(session_id).join("panes.lock")
+    }
+
+    pub fn shim_zdotdir(&self, session_id: &str) -> PathBuf {
+        self.shim_session_dir(session_id).join("zdotdir")
+    }
+
+    pub fn tmux_shim_binary(&self) -> PathBuf {
+        self.bin_dir().join("tmux")
+    }
+
+    pub fn codex_notify_hook(&self) -> PathBuf {
+        self.hooks_dir().join("codex-notify")
+    }
+
+    pub fn pid_file(&self, session_id: &str) -> PathBuf {
+        let safe_id = session_id.replace('/', "-");
+        self.pids_dir().join(format!("{safe_id}.pid"))
+    }
+
+    // --- Static helpers (no self) ---
+
+    /// Project-level config: `<project_root>/.kild/config.toml`.
+    pub fn project_config(project_root: &Path) -> PathBuf {
+        project_root.join(".kild").join("config.toml")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_paths() -> KildPaths {
+        KildPaths::from_dir(PathBuf::from("/home/user/.kild"))
+    }
+
+    #[test]
+    fn test_resolve_returns_ok_when_home_set() {
+        // HOME is set in CI and dev environments
+        let result = KildPaths::resolve();
+        assert!(result.is_ok());
+        let paths = result.unwrap();
+        assert!(paths.kild_dir().to_string_lossy().contains(".kild"));
+    }
+
+    #[test]
+    fn test_from_dir() {
+        let paths = KildPaths::from_dir(PathBuf::from("/tmp/test-kild"));
+        assert_eq!(paths.kild_dir(), Path::new("/tmp/test-kild"));
+    }
+
+    #[test]
+    fn test_sessions_dir() {
+        assert_eq!(
+            test_paths().sessions_dir(),
+            PathBuf::from("/home/user/.kild/sessions")
+        );
+    }
+
+    #[test]
+    fn test_worktrees_dir() {
+        assert_eq!(
+            test_paths().worktrees_dir(),
+            PathBuf::from("/home/user/.kild/worktrees")
+        );
+    }
+
+    #[test]
+    fn test_pids_dir() {
+        assert_eq!(
+            test_paths().pids_dir(),
+            PathBuf::from("/home/user/.kild/pids")
+        );
+    }
+
+    #[test]
+    fn test_bin_dir() {
+        assert_eq!(
+            test_paths().bin_dir(),
+            PathBuf::from("/home/user/.kild/bin")
+        );
+    }
+
+    #[test]
+    fn test_hooks_dir() {
+        assert_eq!(
+            test_paths().hooks_dir(),
+            PathBuf::from("/home/user/.kild/hooks")
+        );
+    }
+
+    #[test]
+    fn test_shim_dir() {
+        assert_eq!(
+            test_paths().shim_dir(),
+            PathBuf::from("/home/user/.kild/shim")
+        );
+    }
+
+    #[test]
+    fn test_health_history_dir() {
+        assert_eq!(
+            test_paths().health_history_dir(),
+            PathBuf::from("/home/user/.kild/health_history")
+        );
+    }
+
+    #[test]
+    fn test_daemon_socket() {
+        assert_eq!(
+            test_paths().daemon_socket(),
+            PathBuf::from("/home/user/.kild/daemon.sock")
+        );
+    }
+
+    #[test]
+    fn test_daemon_pid_file() {
+        assert_eq!(
+            test_paths().daemon_pid_file(),
+            PathBuf::from("/home/user/.kild/daemon.pid")
+        );
+    }
+
+    #[test]
+    fn test_projects_file() {
+        assert_eq!(
+            test_paths().projects_file(),
+            PathBuf::from("/home/user/.kild/projects.json")
+        );
+    }
+
+    #[test]
+    fn test_user_config() {
+        assert_eq!(
+            test_paths().user_config(),
+            PathBuf::from("/home/user/.kild/config.toml")
+        );
+    }
+
+    #[test]
+    fn test_shim_session_dir() {
+        assert_eq!(
+            test_paths().shim_session_dir("my-session"),
+            PathBuf::from("/home/user/.kild/shim/my-session")
+        );
+    }
+
+    #[test]
+    fn test_shim_panes_file() {
+        assert_eq!(
+            test_paths().shim_panes_file("my-session"),
+            PathBuf::from("/home/user/.kild/shim/my-session/panes.json")
+        );
+    }
+
+    #[test]
+    fn test_shim_lock_file() {
+        assert_eq!(
+            test_paths().shim_lock_file("my-session"),
+            PathBuf::from("/home/user/.kild/shim/my-session/panes.lock")
+        );
+    }
+
+    #[test]
+    fn test_shim_zdotdir() {
+        assert_eq!(
+            test_paths().shim_zdotdir("my-session"),
+            PathBuf::from("/home/user/.kild/shim/my-session/zdotdir")
+        );
+    }
+
+    #[test]
+    fn test_tmux_shim_binary() {
+        assert_eq!(
+            test_paths().tmux_shim_binary(),
+            PathBuf::from("/home/user/.kild/bin/tmux")
+        );
+    }
+
+    #[test]
+    fn test_codex_notify_hook() {
+        assert_eq!(
+            test_paths().codex_notify_hook(),
+            PathBuf::from("/home/user/.kild/hooks/codex-notify")
+        );
+    }
+
+    #[test]
+    fn test_pid_file_simple() {
+        assert_eq!(
+            test_paths().pid_file("abc123"),
+            PathBuf::from("/home/user/.kild/pids/abc123.pid")
+        );
+    }
+
+    #[test]
+    fn test_pid_file_sanitizes_slashes() {
+        assert_eq!(
+            test_paths().pid_file("project/branch"),
+            PathBuf::from("/home/user/.kild/pids/project-branch.pid")
+        );
+    }
+
+    #[test]
+    fn test_project_config() {
+        assert_eq!(
+            KildPaths::project_config(Path::new("/my/project")),
+            PathBuf::from("/my/project/.kild/config.toml")
+        );
+    }
+}

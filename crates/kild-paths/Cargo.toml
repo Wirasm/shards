@@ -1,0 +1,10 @@
+[package]
+name = "kild-paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Centralized path construction for the ~/.kild/ directory layout"
+
+[dependencies]
+dirs.workspace = true
+thiserror.workspace = true

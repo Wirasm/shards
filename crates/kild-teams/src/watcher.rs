@@ -88,7 +88,8 @@ impl TeamWatcher {
     pub fn new_default() -> Option<Self> {
         let home = dirs::home_dir()?;
         let teams_dir = home.join(".claude").join("teams");
-        let shim_dir = home.join(".kild").join("shim");
+        let paths = kild_paths::KildPaths::resolve().ok()?;
+        let shim_dir = paths.shim_dir();
 
         Self::new(Some(&teams_dir), Some(&shim_dir))
     }
