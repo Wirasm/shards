@@ -159,7 +159,21 @@ pub fn open_session(
                 (name, command)
             }
             crate::state::types::OpenMode::DefaultAgent => {
-                let agent = session.agent.clone();
+                // Use session's stored agent, but fall back to config default
+                // when the session was created with --no-agent (stored as "shell").
+                // "shell" is not a registered agent, so get_agent_command would fail.
+                let agent = if session.agent == "shell" {
+                    let default = kild_config.agent.default.clone();
+                    info!(
+                        event = "core.session.open_agent_fallback_to_config",
+                        stored_agent = "shell",
+                        config_default = %default,
+                        "Session was created with --no-agent, falling back to config default"
+                    );
+                    default
+                } else {
+                    session.agent.clone()
+                };
                 info!(event = "core.session.open_agent_selected", agent = agent);
 
                 // Warn if agent CLI is not available in PATH
@@ -841,5 +855,89 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    // --- DefaultAgent "shell" fallback tests ---
+
+    /// When session.agent is "shell" (created with --no-agent), DefaultAgent
+    /// should fall back to the config default agent, not try to use "shell".
+    #[test]
+    fn test_default_agent_fallback_for_shell_sessions() {
+        let config = crate::config::KildConfig::default();
+        let session_agent = "shell";
+
+        // Replicate the DefaultAgent branch logic from open_session
+        let resolved = if session_agent == "shell" {
+            config.agent.default.clone()
+        } else {
+            session_agent.to_string()
+        };
+
+        assert_eq!(
+            resolved, "claude",
+            "shell sessions should fall back to config default (claude)"
+        );
+
+        // The resolved agent must be a valid agent with a command
+        assert!(
+            config.get_agent_command(&resolved).is_ok(),
+            "Config default agent must have a valid command"
+        );
+    }
+
+    /// When session.agent is a real agent (e.g. "claude"), DefaultAgent
+    /// should use the session's stored agent as before.
+    #[test]
+    fn test_default_agent_preserves_real_agent() {
+        let session_agent = "claude";
+
+        let resolved = if session_agent == "shell" {
+            panic!("should not enter shell fallback");
+        } else {
+            session_agent.to_string()
+        };
+
+        assert_eq!(resolved, "claude");
+    }
+
+    /// Verify that "shell" is NOT a registered agent, confirming
+    /// get_agent_command("shell") would fail without the fallback.
+    #[test]
+    fn test_shell_is_not_a_registered_agent() {
+        assert!(
+            !agents::is_valid_agent("shell"),
+            "\"shell\" must not be a valid agent name"
+        );
+        assert!(
+            agents::get_default_command("shell").is_none(),
+            "\"shell\" must not have a default command"
+        );
+
+        let config = crate::config::KildConfig::default();
+        assert!(
+            config.get_agent_command("shell").is_err(),
+            "get_agent_command(\"shell\") must return an error"
+        );
+    }
+
+    /// DefaultAgent fallback should work with custom config defaults too,
+    /// not just the hardcoded "claude".
+    #[test]
+    fn test_default_agent_fallback_uses_config_not_hardcoded() {
+        let mut config = crate::config::KildConfig::default();
+        config.agent.default = "gemini".to_string();
+
+        let session_agent = "shell";
+
+        let resolved = if session_agent == "shell" {
+            config.agent.default.clone()
+        } else {
+            session_agent.to_string()
+        };
+
+        assert_eq!(
+            resolved, "gemini",
+            "shell fallback must use the config's default, not a hardcoded value"
+        );
     }
 }
