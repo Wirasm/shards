@@ -13,7 +13,7 @@
 
 use crate::agents;
 use crate::config::types::{
-    AgentConfig, DaemonRuntimeConfig, GitConfig, HealthConfig, KildConfig, TerminalConfig,
+    AgentConfig, DaemonRuntimeConfig, GitConfig, HealthConfig, KildConfig, TerminalConfig, UiConfig,
 };
 
 use crate::config::validation::validate_config;
@@ -176,6 +176,7 @@ pub fn merge_configs(base: KildConfig, override_config: KildConfig) -> KildConfi
         },
         editor: base.editor.merge(override_config.editor),
         daemon: DaemonRuntimeConfig::merge(&base.daemon, &override_config.daemon),
+        ui: UiConfig::merge(&base.ui, &override_config.ui),
     }
 }
 
@@ -931,5 +932,40 @@ default = "claude"
         assert!(merged.editor.default().is_none());
         assert!(merged.editor.flags().is_none());
         assert!(!merged.editor.terminal());
+    }
+
+    // --- UiConfig merge in hierarchy tests ---
+
+    #[test]
+    fn test_ui_config_merge_in_hierarchy() {
+        let base = KildConfig {
+            ui: crate::config::types::UiConfig {
+                nav_modifier: Some("ctrl".to_string()),
+            },
+            ..Default::default()
+        };
+        let override_config = KildConfig {
+            ui: crate::config::types::UiConfig {
+                nav_modifier: Some("alt".to_string()),
+            },
+            ..Default::default()
+        };
+
+        let merged = merge_configs(base, override_config);
+        assert_eq!(merged.ui.nav_modifier(), "alt");
+    }
+
+    #[test]
+    fn test_ui_config_merge_defaults_preserved() {
+        let base = KildConfig {
+            ui: crate::config::types::UiConfig {
+                nav_modifier: Some("cmd+shift".to_string()),
+            },
+            ..Default::default()
+        };
+        let override_config = KildConfig::default(); // No ui override
+
+        let merged = merge_configs(base, override_config);
+        assert_eq!(merged.ui.nav_modifier(), "cmd+shift");
     }
 }

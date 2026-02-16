@@ -40,7 +40,7 @@ The GUI currently supports:
 - Destroying kilds with confirmation dialog
 - Quick actions: Copy path to clipboard, open in editor, focus terminal window
 - Live terminal rendering with multiple tabs per kild
-- Keyboard navigation: Cmd+J (next kild), Cmd+K (prev kild), Cmd+D (toggle Control/Dashboard view), Ctrl+Escape (move focus from terminal to sidebar)
+- Keyboard navigation: Ctrl+1-9 (jump to kild by index, configurable), Cmd+Shift+[/] (cycle workspaces), Cmd+J/K (next/prev kild), Cmd+D (toggle Control/Dashboard view), Ctrl+Escape (move focus from terminal to sidebar)
 
 See the [PRD](.claude/PRPs/prds/gpui-native-terminal-ui.prd.md) for the development roadmap.
 

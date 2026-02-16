@@ -587,6 +587,20 @@ When using `open --all`, each kild respects its own stored runtime mode unless o
 
 **Agent teams:** Daemon sessions automatically inject `$TMUX` environment variable and configure the tmux shim (see "tmux Shim for Agent Teams" section) to enable Claude Code agent teams without external tmux installation.
 
+**UI Config:** Control keyboard navigation behavior in the native GUI:
+
+```toml
+[ui]
+nav_modifier = "ctrl"    # Modifier for 1-9 kild jumping (supports "ctrl", "alt", "cmd+shift")
+```
+
+Keyboard shortcuts:
+- `<modifier>+1-9`: Jump to Nth kild in sidebar (modifier configured by `nav_modifier`)
+- `Cmd+Shift+[/]`: Cycle between Control workspaces
+- `Cmd+J/K`: Navigate next/previous kild
+- `Cmd+D`: Toggle Control/Dashboard view
+- `Ctrl+Escape`: Move focus from terminal to sidebar
+
 ## Error Handling
 
 All domain errors implement `KildError` trait with `error_code()` and `is_user_error()`. Use `thiserror` for definitions.
