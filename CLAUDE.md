@@ -48,11 +48,13 @@ cargo build --all              # Clean build
 # Build
 cargo build --all              # Build all crates
 cargo build -p kild-core       # Build specific crate
+cargo build -p kild-paths      # Build paths crate
 cargo build -p kild-protocol   # Build protocol types crate
 
 # Test
 cargo test --all               # Run all tests
 cargo test -p kild-core        # Test specific crate
+cargo test -p kild-paths       # Test paths crate
 cargo test -p kild-protocol    # Test protocol types crate
 cargo test test_name           # Run single test by name
 
@@ -200,6 +202,7 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 ## Architecture
 
 **Workspace structure:**
+- `crates/kild-paths` - Centralized path construction for ~/.kild/ directory layout (KildPaths struct with typed methods for all paths). Single source of truth for KILD filesystem layout.
 - `crates/kild-protocol` - Shared IPC protocol types (ClientMessage, DaemonMessage, SessionInfo, SessionStatus, ErrorCode). All public enums are `#[non_exhaustive]` for forward compatibility. Deps: serde, serde_json only. No tokio, no kild-core. Single source of truth for daemon wire format.
 - `crates/kild-core` - Core library with all business logic, no CLI dependencies
 - `crates/kild` - Thin CLI that consumes kild-core (clap for arg parsing)
