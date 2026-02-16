@@ -47,7 +47,9 @@ impl TableFormatter {
                     session.agent_count() - 1
                 )
             } else {
-                session.agent.clone()
+                session
+                    .latest_agent()
+                    .map_or(session.agent.clone(), |a| a.agent().to_string())
             };
             agent_width = agent_width.max(display_width(&agent_display));
 

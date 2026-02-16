@@ -102,7 +102,10 @@ fn handle_open_all(
                     branch = s.branch,
                     session_id = s.id
                 );
-                opened.push((s.branch, s.agent, s.runtime_mode.clone()));
+                let display_agent = s
+                    .latest_agent()
+                    .map_or(s.agent.clone(), |a| a.agent().to_string());
+                opened.push((s.branch, display_agent, s.runtime_mode.clone()));
             }
             Err(e) => {
                 error!(
