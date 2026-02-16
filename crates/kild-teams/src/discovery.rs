@@ -14,7 +14,16 @@ use crate::types::{TeamColor, TeamMember};
 
 /// Default shim state directory: `~/.kild/shim/`.
 fn shim_dir() -> Option<PathBuf> {
-    KildPaths::resolve().ok().map(|p| p.shim_dir())
+    match KildPaths::resolve() {
+        Ok(p) => Some(p.shim_dir()),
+        Err(e) => {
+            tracing::warn!(
+                event = "teams.discovery.home_dir_unavailable",
+                error = %e,
+            );
+            None
+        }
+    }
 }
 
 /// Discover teammates from the shim pane registry for a session.

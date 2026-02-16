@@ -297,6 +297,38 @@ mod tests {
     }
 
     #[test]
+    fn test_pid_file_multiple_slashes() {
+        assert_eq!(
+            test_paths().pid_file("a//b///c"),
+            PathBuf::from("/home/user/.kild/pids/a--b---c.pid")
+        );
+    }
+
+    #[test]
+    fn test_pid_file_leading_trailing_slashes() {
+        assert_eq!(
+            test_paths().pid_file("/branch/"),
+            PathBuf::from("/home/user/.kild/pids/-branch-.pid")
+        );
+    }
+
+    #[test]
+    fn test_pid_file_empty_session_id() {
+        assert_eq!(
+            test_paths().pid_file(""),
+            PathBuf::from("/home/user/.kild/pids/.pid")
+        );
+    }
+
+    #[test]
+    fn test_path_error_message() {
+        let err = PathError::HomeNotFound;
+        let msg = err.to_string();
+        assert!(msg.contains("home directory not found"));
+        assert!(msg.contains("$HOME"));
+    }
+
+    #[test]
     fn test_project_config() {
         assert_eq!(
             KildPaths::project_config(Path::new("/my/project")),

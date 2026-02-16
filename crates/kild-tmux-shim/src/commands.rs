@@ -77,17 +77,25 @@ fn build_child_env() -> HashMap<String, String> {
         .collect();
 
     // Ensure ~/.kild/bin is at the front of PATH so the shim stays on PATH
-    if let Ok(paths) = KildPaths::resolve() {
-        let kild_bin = paths.bin_dir();
-        let current_path = env_vars.get("PATH").cloned().unwrap_or_default();
-        let kild_bin_str = kild_bin.to_string_lossy();
-        let already_present = current_path
-            .split(':')
-            .any(|component| component == kild_bin_str.as_ref());
-        if !already_present {
-            env_vars.insert(
-                "PATH".to_string(),
-                format!("{}:{}", kild_bin_str, current_path),
+    match KildPaths::resolve() {
+        Ok(paths) => {
+            let kild_bin = paths.bin_dir();
+            let current_path = env_vars.get("PATH").cloned().unwrap_or_default();
+            let kild_bin_str = kild_bin.to_string_lossy();
+            let already_present = current_path
+                .split(':')
+                .any(|component| component == kild_bin_str.as_ref());
+            if !already_present {
+                env_vars.insert(
+                    "PATH".to_string(),
+                    format!("{}:{}", kild_bin_str, current_path),
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                event = "shim.split_window.path_resolution_failed",
+                error = %e,
             );
         }
     }

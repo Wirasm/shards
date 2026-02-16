@@ -9,7 +9,14 @@ use crate::errors::DaemonError;
 /// Returns the default PID file path: `~/.kild/daemon.pid`.
 pub fn pid_file_path() -> PathBuf {
     KildPaths::resolve()
-        .unwrap_or_else(|_| KildPaths::from_dir(PathBuf::from("/tmp/.kild")))
+        .unwrap_or_else(|e| {
+            warn!(
+                event = "daemon.pid.home_dir_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
         .daemon_pid_file()
 }
 

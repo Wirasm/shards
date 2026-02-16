@@ -7,6 +7,7 @@ use crate::agents;
 use crate::config::types::{AgentConfig, Config, HealthConfig, TerminalConfig};
 use kild_paths::KildPaths;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Returns the default agent name.
 ///
@@ -59,12 +60,19 @@ impl Default for TerminalConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        let paths = KildPaths::resolve().unwrap_or_else(|_| {
+        let paths = KildPaths::resolve().unwrap_or_else(|e| {
+            let fallback = std::env::temp_dir().join(".kild");
+            warn!(
+                event = "core.config.home_dir_fallback",
+                error = %e,
+                fallback = %fallback.display(),
+            );
             eprintln!(
                 "Warning: Could not find home directory. Set HOME environment variable. \
-                Using fallback directory."
+                Using fallback directory: {}",
+                fallback.display()
             );
-            KildPaths::from_dir(std::env::temp_dir().join(".kild"))
+            KildPaths::from_dir(fallback)
         });
 
         Self {

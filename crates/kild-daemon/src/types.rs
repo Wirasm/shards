@@ -78,13 +78,27 @@ impl Default for DaemonConfig {
 
 fn default_socket_path() -> PathBuf {
     KildPaths::resolve()
-        .unwrap_or_else(|_| KildPaths::from_dir(PathBuf::from("/tmp/.kild")))
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.socket_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
         .daemon_socket()
 }
 
 fn default_pid_path() -> PathBuf {
     KildPaths::resolve()
-        .unwrap_or_else(|_| KildPaths::from_dir(PathBuf::from("/tmp/.kild")))
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.pid_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
         .daemon_pid_file()
 }
 
@@ -120,7 +134,14 @@ struct ConfigFile {
 /// defaults if the file doesn't exist or the section is missing.
 pub fn load_daemon_config() -> Result<DaemonConfig, crate::errors::DaemonError> {
     let config_path = KildPaths::resolve()
-        .unwrap_or_else(|_| KildPaths::from_dir(PathBuf::from("/tmp/.kild")))
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.home_dir_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
         .user_config();
 
     let config = match std::fs::read_to_string(&config_path) {
