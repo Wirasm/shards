@@ -62,7 +62,7 @@ pub(crate) fn handle_create_command(
 
     match session_ops::create_session(request, &config) {
         Ok(session) => {
-            // Auto-attach: open a Ghostty window for daemon sessions
+            // Auto-attach: open a terminal window for daemon sessions
             if session.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
                 let spawn_id = session
                     .latest_agent()

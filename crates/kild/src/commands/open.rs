@@ -32,7 +32,7 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
 
     match session_ops::open_session(branch, mode.clone(), runtime_mode, resume) {
         Ok(session) => {
-            // Auto-attach: open a Ghostty window for daemon sessions
+            // Auto-attach: open a terminal window for daemon sessions
             if session.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
                 let config = load_config_with_warning();
                 let spawn_id = session
@@ -111,7 +111,7 @@ fn handle_open_all(
         match session_ops::open_session(&session.branch, mode.clone(), runtime_mode.clone(), resume)
         {
             Ok(s) => {
-                // Auto-attach: open a Ghostty window for daemon sessions
+                // Auto-attach: open a terminal window for daemon sessions
                 if s.runtime_mode == Some(kild_core::RuntimeMode::Daemon) {
                     let spawn_id = s
                         .latest_agent()
