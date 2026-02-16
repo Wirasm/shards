@@ -49,9 +49,14 @@ impl DaemonConfig {
                 "scrollback_buffer_size must be > 0".to_string(),
             ));
         }
-        if self.client_buffer_size == 0 {
+        if self.client_buffer_size < 16_384 {
             return Err(crate::errors::DaemonError::ConfigInvalid(
-                "client_buffer_size must be > 0".to_string(),
+                "client_buffer_size must be >= 16384 (16 KB)".to_string(),
+            ));
+        }
+        if self.client_buffer_size > 104_857_600 {
+            return Err(crate::errors::DaemonError::ConfigInvalid(
+                "client_buffer_size must be <= 104857600 (100 MB)".to_string(),
             ));
         }
         if self.shutdown_timeout_secs == 0 {
@@ -267,11 +272,26 @@ default = "claude"
     }
 
     #[test]
-    fn test_validate_zero_client_buffer_fails() {
+    fn test_validate_small_client_buffer_fails() {
         let mut config = DaemonConfig::default();
-        config.client_buffer_size = 0;
+        config.client_buffer_size = 1024;
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("client_buffer_size"));
+    }
+
+    #[test]
+    fn test_validate_huge_client_buffer_fails() {
+        let mut config = DaemonConfig::default();
+        config.client_buffer_size = 200_000_000;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("client_buffer_size"));
+    }
+
+    #[test]
+    fn test_validate_min_client_buffer_ok() {
+        let mut config = DaemonConfig::default();
+        config.client_buffer_size = 16_384;
+        assert!(config.validate().is_ok());
     }
 
     #[test]

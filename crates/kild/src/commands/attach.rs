@@ -115,7 +115,9 @@ fn attach_to_daemon_session(
         forward_stdin_to_daemon(&mut write_stream, &session_id_owned);
     });
 
-    // Spawn SIGWINCH handler thread to relay terminal resizes to the daemon
+    // Spawn SIGWINCH handler thread to relay terminal resizes to the daemon.
+    // Thread exits when its socket write fails (daemon disconnected). We don't join()
+    // because it blocks on sigwait() — on normal exit the OS cleans up the thread.
     let sigwinch_session_id = daemon_session_id.to_string();
     let mut sigwinch_stream = stream.try_clone()?;
     let sigwinch_handle = std::thread::spawn(move || {
@@ -124,19 +126,18 @@ fn attach_to_daemon_session(
 
     // Main thread: read daemon output, write to stdout
     // Re-use the BufReader directly so we don't lose buffered data
-    forward_daemon_to_stdout_buffered(reader)?;
+    let result = forward_daemon_to_stdout_buffered(reader);
 
-    // Restore terminal
+    // Restore terminal and clean up threads regardless of error
     drop(_raw_guard);
     eprintln!("\r\nDetached. Reconnect: kild attach {}", branch);
 
     if let Err(e) = stdin_handle.join() {
         error!(event = "cli.attach.stdin_thread_panicked", error = ?e);
     }
-    // SIGWINCH thread will exit when the socket closes (write fails)
-    // or when the process exits. Don't block on it.
     drop(sigwinch_handle);
-    Ok(())
+
+    result
 }
 
 fn terminal_size() -> (u16, u16) {
@@ -249,8 +250,12 @@ fn handle_sigwinch(sigset: &SigSet, stream: &mut UnixStream, session_id: &str) {
                         continue;
                     }
                 };
-                if writeln!(stream, "{}", serialized).is_err() || stream.flush().is_err() {
-                    // Connection lost — main thread will detect EOF and exit
+                if let Err(e) = writeln!(stream, "{}", serialized) {
+                    warn!(event = "cli.attach.resize_send_failed", error = %e);
+                    break;
+                }
+                if let Err(e) = stream.flush() {
+                    warn!(event = "cli.attach.resize_send_failed", error = %e);
                     break;
                 }
                 info!(event = "cli.attach.resize_sent", cols = cols, rows = rows,);
@@ -304,9 +309,15 @@ fn forward_daemon_to_stdout_buffered(
                 }
             }
             Some("pty_output_dropped") => {
-                // Reset terminal SGR state + show cursor to recover from split escape sequences
-                let _ = stdout.write_all(b"\x1b[0m\x1b[?25h");
-                let _ = stdout.flush();
+                // Reset SGR attributes + show cursor to recover from split escape sequences.
+                // Minimal reset preserves scrollback and cursor position — full terminal
+                // reset (\x1b[!p) would clear the screen which is worse than partial recovery.
+                if let Err(e) = stdout.write_all(b"\x1b[0m\x1b[?25h") {
+                    error!(event = "cli.attach.sgr_reset_failed", error = %e);
+                }
+                if let Err(e) = stdout.flush() {
+                    error!(event = "cli.attach.sgr_reset_flush_failed", error = %e);
+                }
                 let dropped = msg
                     .get("bytes_dropped")
                     .and_then(|b| b.as_u64())

@@ -100,9 +100,9 @@ impl SessionManager {
         // Clone the reader for the background read task
         let reader = managed_pty.try_clone_reader()?;
 
-        // Create broadcast channel for output distribution.
-        // Capacity derived from client_buffer_size: each slot holds ~4KB (PTY read chunk size),
-        // so capacity = client_buffer_size / 4096, minimum 16 slots.
+        // Create broadcast channel for output distribution (shared across all attached clients).
+        // Each slot holds ~4KB (PTY read chunk size), so capacity = client_buffer_size / 4096,
+        // minimum 16 slots. Slow consumers trigger RecvError::Lagged for all clients.
         let broadcast_capacity = std::cmp::max(self.config.client_buffer_size / 4096, 16);
         let (output_tx, _) = broadcast::channel(broadcast_capacity);
         let reader_tx = output_tx.clone();
@@ -575,5 +575,18 @@ mod tests {
         assert_eq!(mgr.next_client_id(), 1);
         assert_eq!(mgr.next_client_id(), 2);
         assert_eq!(mgr.next_client_id(), 3);
+    }
+
+    #[test]
+    fn test_broadcast_capacity_calculation() {
+        // capacity = max(client_buffer_size / 4096, 16)
+        // Default 1MB → 256 slots
+        assert_eq!(std::cmp::max(1_048_576_usize / 4096, 16), 256);
+        // 256KB → 64 slots
+        assert_eq!(std::cmp::max(262_144_usize / 4096, 16), 64);
+        // 16KB (minimum valid) → 16 slots (floor)
+        assert_eq!(std::cmp::max(16_384_usize / 4096, 16), 16);
+        // Anything small → floor at 16
+        assert_eq!(std::cmp::max(4096_usize / 4096, 16), 16);
     }
 }

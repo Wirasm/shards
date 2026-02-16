@@ -21,6 +21,9 @@ impl ScrollbackBuffer {
     }
 
     /// Append bytes to the ring buffer, evicting oldest data if full.
+    ///
+    /// If `data` alone exceeds capacity, clears buffer and keeps the last `capacity` bytes.
+    /// Otherwise drains the minimum oldest bytes needed to fit the new data.
     pub fn push(&mut self, data: &[u8]) {
         if data.len() >= self.capacity {
             // Data alone fills or exceeds capacity — just keep the tail
@@ -292,6 +295,27 @@ mod tests {
         buf.push(b"abcdefghij");
         assert_eq!(buf.len(), 3);
         assert_eq!(buf.contents(), b"hij");
+    }
+
+    #[test]
+    fn test_scrollback_buffer_exactly_one_byte_over() {
+        let mut buf = ScrollbackBuffer::new(5);
+        buf.push(b"12345");
+        assert_eq!(buf.len(), 5);
+        // Add 1 byte — should drain exactly 1 oldest byte
+        buf.push(b"6");
+        assert_eq!(buf.len(), 5);
+        assert_eq!(buf.contents(), b"23456");
+    }
+
+    #[test]
+    fn test_scrollback_buffer_drain_boundary() {
+        let mut buf = ScrollbackBuffer::new(10);
+        buf.push(b"12345"); // len=5
+        buf.push(b"67890"); // len=10, at capacity
+        buf.push(b"abc"); // should drain 3, remain 10
+        assert_eq!(buf.len(), 10);
+        assert_eq!(buf.contents(), b"4567890abc");
     }
 
     #[test]
