@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+
 use super::errors::ProjectError;
 use super::types::ProjectsData;
 
@@ -163,9 +165,9 @@ fn projects_file_path() -> PathBuf {
         return PathBuf::from(path_str);
     }
 
-    match dirs::home_dir() {
-        Some(home) => home.join(".kild").join("projects.json"),
-        None => {
+    match KildPaths::resolve() {
+        Ok(paths) => paths.projects_file(),
+        Err(_) => {
             tracing::error!(
                 event = "core.projects.home_dir_not_found",
                 fallback = ".",

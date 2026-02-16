@@ -66,15 +66,14 @@ pub fn load_hierarchy() -> Result<KildConfig, Box<dyn std::error::Error>> {
 
 /// Load the user configuration from ~/.kild/config.toml.
 fn load_user_config() -> Result<KildConfig, Box<dyn std::error::Error>> {
-    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
-    let config_path = home_dir.join(".kild").join("config.toml");
-    load_config_file(&config_path)
+    let paths = kild_paths::KildPaths::resolve().map_err(|e| e.to_string())?;
+    load_config_file(&paths.user_config())
 }
 
 /// Load the project configuration from ./.kild/config.toml.
 fn load_project_config() -> Result<KildConfig, Box<dyn std::error::Error>> {
-    let config_path = std::env::current_dir()?.join(".kild").join("config.toml");
-    load_config_file(&config_path)
+    let project_root = std::env::current_dir()?;
+    load_config_file(&kild_paths::KildPaths::project_config(&project_root))
 }
 
 /// Load a configuration file from the given path.

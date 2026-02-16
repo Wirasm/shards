@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use kild_paths::KildPaths;
 use tracing::{debug, info, warn};
 
 use crate::agents;
@@ -21,11 +22,9 @@ pub(super) fn compute_spawn_id(session_id: &str, spawn_index: usize) -> String {
 /// Looks for `kild-tmux-shim` next to the running `kild` binary and symlinks
 /// it as `tmux` in `~/.kild/bin/`. Agent teams require this binary.
 pub(crate) fn ensure_shim_binary() -> Result<(), String> {
-    let shim_bin_dir = dirs::home_dir()
-        .ok_or("HOME not set — cannot install tmux shim")?
-        .join(".kild")
-        .join("bin");
-    let shim_link = shim_bin_dir.join("tmux");
+    let paths = KildPaths::resolve().map_err(|e| e.to_string())?;
+    let shim_bin_dir = paths.bin_dir();
+    let shim_link = paths.tmux_shim_binary();
 
     if shim_link.exists() {
         return Ok(());
@@ -122,9 +121,9 @@ pub fn spawn_attach_window(
 /// maps event types to KILD agent statuses, and calls `kild agent-status`.
 /// Event mappings: `agent-turn-complete` → `idle`, `approval-requested` → `waiting`.
 /// Idempotent: skips if script already exists.
-fn ensure_codex_notify_hook_with_home(home: &Path) -> Result<(), String> {
-    let hooks_dir = home.join(".kild").join("hooks");
-    let hook_path = hooks_dir.join("codex-notify");
+fn ensure_codex_notify_hook_with_paths(paths: &KildPaths) -> Result<(), String> {
+    let hooks_dir = paths.hooks_dir();
+    let hook_path = paths.codex_notify_hook();
 
     if hook_path.exists() {
         debug!(
@@ -168,8 +167,8 @@ esac
 }
 
 pub(crate) fn ensure_codex_notify_hook() -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("HOME not set — cannot install Codex notify hook")?;
-    ensure_codex_notify_hook_with_home(&home)
+    let paths = KildPaths::resolve().map_err(|e| e.to_string())?;
+    ensure_codex_notify_hook_with_paths(&paths)
 }
 
 /// Ensure Codex CLI config has the KILD notify hook configured.
@@ -178,10 +177,10 @@ pub(crate) fn ensure_codex_notify_hook() -> Result<(), String> {
 /// field is missing or empty. Respects existing user configuration — if notify
 /// is already set to a non-empty array, it is left unchanged and this function
 /// returns Ok without modifying the file.
-fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
+fn ensure_codex_config_with_home(home: &Path, paths: &KildPaths) -> Result<(), String> {
     let codex_dir = home.join(".codex");
     let config_path = codex_dir.join("config.toml");
-    let hook_path = home.join(".kild").join("hooks").join("codex-notify");
+    let hook_path = paths.codex_notify_hook();
     let hook_path_str = hook_path.display().to_string();
 
     use std::fmt::Write;
@@ -238,7 +237,8 @@ fn ensure_codex_config_with_home(home: &Path) -> Result<(), String> {
 
 pub(crate) fn ensure_codex_config() -> Result<(), String> {
     let home = dirs::home_dir().ok_or("HOME not set — cannot patch Codex config")?;
-    ensure_codex_config_with_home(&home)
+    let paths = KildPaths::resolve().map_err(|e| e.to_string())?;
+    ensure_codex_config_with_home(&home, &paths)
 }
 
 /// Install Codex notify hook and patch config if needed.
@@ -259,9 +259,9 @@ pub(crate) fn setup_codex_integration(agent: &str) {
     if let Err(msg) = ensure_codex_config() {
         warn!(event = "core.session.codex_config_patch_failed", error = %msg);
         eprintln!("Warning: {msg}");
-        let hook_path = dirs::home_dir()
-            .map(|h| h.join(".kild/hooks/codex-notify").display().to_string())
-            .unwrap_or_else(|| "<HOME>/.kild/hooks/codex-notify".to_string());
+        let hook_path = KildPaths::resolve()
+            .map(|p| p.codex_notify_hook().display().to_string())
+            .unwrap_or_else(|_| "<HOME>/.kild/hooks/codex-notify".to_string());
         let config_path = dirs::home_dir()
             .map(|h| h.join(".codex/config.toml").display().to_string())
             .unwrap_or_else(|| "<HOME>/.codex/config.toml".to_string());
@@ -324,10 +324,10 @@ pub(super) fn build_daemon_create_request(
     }
 
     // tmux shim environment for daemon sessions
-    let home_dir = dirs::home_dir().ok_or_else(|| SessionError::DaemonError {
-        message: "HOME not set — cannot configure tmux shim PATH".to_string(),
+    let paths = KildPaths::resolve().map_err(|e| SessionError::DaemonError {
+        message: format!("{} — cannot configure tmux shim PATH", e),
     })?;
-    let shim_bin_dir = home_dir.join(".kild").join("bin");
+    let shim_bin_dir = paths.bin_dir();
 
     // Prepend shim dir to PATH so our tmux shim is found first.
     // NOTE: For login shells on macOS, /etc/zprofile runs path_helper which
@@ -345,11 +345,7 @@ pub(super) fn build_daemon_create_request(
     // Create a ZDOTDIR wrapper so that ~/.kild/bin is prepended to PATH
     // AFTER login shell profile scripts run (macOS path_helper in /etc/zprofile
     // reconstructs PATH and drops our prepended entry).
-    let zdotdir = home_dir
-        .join(".kild")
-        .join("shim")
-        .join(session_id)
-        .join("zdotdir");
+    let zdotdir = paths.shim_zdotdir(session_id);
     if let Err(e) = create_zdotdir_wrapper(&zdotdir, &shim_bin_dir) {
         warn!(
             event = "core.session.zdotdir_setup_failed",
@@ -752,7 +748,8 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_home);
         let hook_path = temp_home.join(".kild").join("hooks").join("codex-notify");
 
-        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        let result =
+            ensure_codex_notify_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
         assert!(result.is_ok(), "Hook install should succeed: {:?}", result);
         assert!(hook_path.exists(), "Hook script should exist");
 
@@ -802,12 +799,14 @@ mod tests {
         let hook_path = temp_home.join(".kild").join("hooks").join("codex-notify");
 
         // First call creates the script
-        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        let result =
+            ensure_codex_notify_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
         assert!(result.is_ok());
         let content1 = fs::read_to_string(&hook_path).unwrap();
 
         // Second call should succeed without changing content
-        let result = ensure_codex_notify_hook_with_home(&temp_home);
+        let result =
+            ensure_codex_notify_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
         assert!(result.is_ok());
         let content2 = fs::read_to_string(&hook_path).unwrap();
         assert_eq!(
@@ -829,7 +828,10 @@ mod tests {
         fs::create_dir_all(&codex_dir).unwrap();
         fs::write(codex_dir.join("config.toml"), "").unwrap();
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(result.is_ok(), "Config patch should succeed: {:?}", result);
 
         let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
@@ -864,7 +866,10 @@ mod tests {
         )
         .unwrap();
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(result.is_ok());
 
         let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
@@ -893,7 +898,10 @@ mod tests {
         fs::create_dir_all(&codex_dir).unwrap();
         fs::write(codex_dir.join("config.toml"), "notify = []\n").unwrap();
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(result.is_ok());
 
         let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
@@ -915,7 +923,10 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_home);
         // Don't create .codex dir — it shouldn't exist yet
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(
             result.is_ok(),
             "Should create config from scratch: {:?}",
@@ -952,7 +963,10 @@ mod tests {
         )
         .unwrap();
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(result.is_ok());
 
         let content = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
@@ -982,7 +996,10 @@ mod tests {
         fs::create_dir_all(&codex_dir).unwrap();
         fs::write(codex_dir.join("config.toml"), "[invalid toml syntax\n").unwrap();
 
-        let result = ensure_codex_config_with_home(&temp_home);
+        let result = ensure_codex_config_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
         assert!(result.is_err(), "Should fail on malformed TOML");
 
         let err = result.unwrap_err();

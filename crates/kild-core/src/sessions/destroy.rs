@@ -1,3 +1,4 @@
+use kild_paths::KildPaths;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
@@ -330,11 +331,11 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     }
 
     // 3b. Clean up tmux shim state and destroy child shim panes
-    if let Some(home) = dirs::home_dir() {
-        let shim_dir = home.join(".kild").join("shim").join(&session.id);
+    if let Ok(paths) = KildPaths::resolve() {
+        let shim_dir = paths.shim_session_dir(&session.id);
         if shim_dir.exists() {
             // Destroy any child shim panes that may still be running
-            let panes_path = shim_dir.join("panes.json");
+            let panes_path = paths.shim_panes_file(&session.id);
             match std::fs::read_to_string(&panes_path) {
                 Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                     Ok(registry) => {
@@ -464,7 +465,7 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
     }
 
     // 7. Clean up PID files (best-effort, don't fail if missing)
-    cleanup_session_pid_files(&session, &config.kild_dir, "destroy");
+    cleanup_session_pid_files(&session, config.kild_dir(), "destroy");
 
     // 8. Remove sidecar files (best-effort)
     persistence::remove_agent_status_file(&config.sessions_dir(), &session.id);

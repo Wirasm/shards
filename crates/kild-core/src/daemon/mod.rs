@@ -7,16 +7,35 @@ pub use errors::DaemonAutoStartError;
 
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+use tracing::warn;
+
 /// Default socket path for the daemon.
 pub fn socket_path() -> PathBuf {
-    let home = dirs::home_dir().expect("HOME not set");
-    home.join(".kild").join("daemon.sock")
+    KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            warn!(
+                event = "core.daemon.socket_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .daemon_socket()
 }
 
 /// PID file path for the daemon process.
 pub fn pid_file_path() -> PathBuf {
-    let home = dirs::home_dir().expect("HOME not set");
-    home.join(".kild").join("daemon.pid")
+    KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            warn!(
+                event = "core.daemon.pid_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .daemon_pid_file()
 }
 
 /// Find a sibling binary next to the currently running executable.

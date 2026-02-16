@@ -6,13 +6,24 @@
 
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+
 use crate::errors::TeamsError;
 use crate::parser;
 use crate::types::{TeamColor, TeamMember};
 
 /// Default shim state directory: `~/.kild/shim/`.
 fn shim_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".kild").join("shim"))
+    match KildPaths::resolve() {
+        Ok(p) => Some(p.shim_dir()),
+        Err(e) => {
+            tracing::warn!(
+                event = "teams.discovery.home_dir_unavailable",
+                error = %e,
+            );
+            None
+        }
+    }
 }
 
 /// Discover teammates from the shim pane registry for a session.

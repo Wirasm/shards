@@ -5,18 +5,25 @@
 
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
+
 use crate::errors::TeamsError;
 use crate::parser;
 use crate::types::TeamState;
 
-/// Default shim state directory: `~/.kild/shim/`.
-fn shim_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".kild").join("shim"))
-}
-
 /// Resolve a shim pane registry path for a session.
 fn shim_registry_path(session_id: &str) -> Option<PathBuf> {
-    shim_dir().map(|d| d.join(session_id).join("panes.json"))
+    match KildPaths::resolve() {
+        Ok(p) => Some(p.shim_panes_file(session_id)),
+        Err(e) => {
+            tracing::warn!(
+                event = "teams.mapper.home_dir_unavailable",
+                session_id = session_id,
+                error = %e,
+            );
+            None
+        }
+    }
 }
 
 /// Enrich team state with daemon session IDs from the shim pane registry.
@@ -25,10 +32,6 @@ fn shim_registry_path(session_id: &str) -> Option<PathBuf> {
 /// the `daemon_session_id`. Members with no matching pane keep `None`.
 pub fn resolve_team(mut team_state: TeamState, session_id: &str) -> Result<TeamState, TeamsError> {
     let Some(registry_path) = shim_registry_path(session_id) else {
-        tracing::debug!(
-            event = "teams.mapper.home_dir_unavailable",
-            session_id = session_id
-        );
         return Ok(team_state);
     };
 

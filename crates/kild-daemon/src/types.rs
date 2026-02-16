@@ -1,3 +1,4 @@
+use kild_paths::KildPaths;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -76,17 +77,29 @@ impl Default for DaemonConfig {
 }
 
 fn default_socket_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".kild")
-        .join("daemon.sock")
+    KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.socket_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .daemon_socket()
 }
 
 fn default_pid_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".kild")
-        .join("daemon.pid")
+    KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.pid_path_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .daemon_pid_file()
 }
 
 fn default_scrollback_buffer_size() -> usize {
@@ -120,10 +133,16 @@ struct ConfigFile {
 /// Reads the `[daemon]` section from the user's config file. Falls back to
 /// defaults if the file doesn't exist or the section is missing.
 pub fn load_daemon_config() -> Result<DaemonConfig, crate::errors::DaemonError> {
-    let config_path = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join(".kild")
-        .join("config.toml");
+    let config_path = KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                event = "daemon.config.home_dir_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .user_config();
 
     let config = match std::fs::read_to_string(&config_path) {
         Ok(contents) => match toml::from_str::<ConfigFile>(&contents) {

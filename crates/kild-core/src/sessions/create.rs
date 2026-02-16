@@ -1,3 +1,4 @@
+use kild_paths::KildPaths;
 use tracing::{debug, error, info, warn};
 
 use crate::agents;
@@ -174,7 +175,7 @@ pub fn create_session(
     }
 
     let worktree = git::handler::create_worktree(
-        &base_config.kild_dir,
+        base_config.kild_dir(),
         &project,
         &validated.name,
         Some(kild_config),
@@ -216,7 +217,7 @@ pub fn create_session(
                 &terminal_command,
                 kild_config,
                 Some(&spawn_id),
-                Some(&base_config.kild_dir),
+                Some(base_config.kild_dir()),
             )
             .map_err(|e| SessionError::TerminalError { source: e })?;
 
@@ -345,11 +346,9 @@ pub fn create_session(
 
             // Initialize tmux shim state directory
             let shim_init_result = (|| -> Result<(), String> {
-                let shim_dir = dirs::home_dir()
-                    .ok_or("HOME not set")?
-                    .join(".kild")
-                    .join("shim")
-                    .join(&session_id);
+                let shim_dir = KildPaths::resolve()
+                    .map_err(|e| e.to_string())?
+                    .shim_session_dir(&session_id);
                 std::fs::create_dir_all(&shim_dir)
                     .map_err(|e| format!("failed to create shim state directory: {}", e))?;
 

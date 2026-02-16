@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+use kild_paths::KildPaths;
 use nix::fcntl::{Flock, FlockArg};
 use serde::{Deserialize, Serialize};
 
@@ -79,17 +80,18 @@ pub struct SessionEntry {
 }
 
 pub fn state_dir(session_id: &str) -> Result<PathBuf, ShimError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| ShimError::state("home directory not found - $HOME not set"))?;
-    Ok(home.join(".kild").join("shim").join(session_id))
+    let paths = KildPaths::resolve().map_err(|e| ShimError::state(e.to_string()))?;
+    Ok(paths.shim_session_dir(session_id))
 }
 
 fn lock_path(session_id: &str) -> Result<PathBuf, ShimError> {
-    Ok(state_dir(session_id)?.join("panes.lock"))
+    let paths = KildPaths::resolve().map_err(|e| ShimError::state(e.to_string()))?;
+    Ok(paths.shim_lock_file(session_id))
 }
 
 fn panes_path(session_id: &str) -> Result<PathBuf, ShimError> {
-    Ok(state_dir(session_id)?.join("panes.json"))
+    let paths = KildPaths::resolve().map_err(|e| ShimError::state(e.to_string()))?;
+    Ok(paths.shim_panes_file(session_id))
 }
 
 /// Acquire an exclusive file lock for the pane registry.

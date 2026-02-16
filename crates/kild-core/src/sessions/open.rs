@@ -387,7 +387,7 @@ pub fn open_session(
             &terminal_command,
             &kild_config,
             Some(&spawn_id),
-            Some(&config.kild_dir),
+            Some(config.kild_dir()),
         )
         .map_err(|e| SessionError::TerminalError { source: e })?;
 

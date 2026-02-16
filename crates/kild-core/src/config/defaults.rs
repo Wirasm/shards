@@ -5,7 +5,9 @@
 
 use crate::agents;
 use crate::config::types::{AgentConfig, Config, HealthConfig, TerminalConfig};
+use kild_paths::KildPaths;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Returns the default agent name.
 ///
@@ -58,19 +60,23 @@ impl Default for TerminalConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        let kild_dir = match dirs::home_dir() {
-            Some(home) => home.join(".kild"),
-            None => {
-                eprintln!(
-                    "Warning: Could not find home directory. Set HOME environment variable. \
-                    Using fallback directory."
-                );
-                std::env::temp_dir().join(".kild")
-            }
-        };
+        let paths = KildPaths::resolve().unwrap_or_else(|e| {
+            let fallback = std::env::temp_dir().join(".kild");
+            warn!(
+                event = "core.config.home_dir_fallback",
+                error = %e,
+                fallback = %fallback.display(),
+            );
+            eprintln!(
+                "Warning: Could not find home directory. Set HOME environment variable. \
+                Using fallback directory: {}",
+                fallback.display()
+            );
+            KildPaths::from_dir(fallback)
+        });
 
         Self {
-            kild_dir,
+            paths,
             log_level: std::env::var("KILD_LOG_LEVEL").unwrap_or("info".to_string()),
             default_port_count: parse_default_port_count(),
             base_port_range: parse_base_port_range(),
@@ -120,11 +126,11 @@ impl Config {
     }
 
     pub fn worktrees_dir(&self) -> PathBuf {
-        self.kild_dir.join("worktrees")
+        self.paths().worktrees_dir()
     }
 
     pub fn sessions_dir(&self) -> PathBuf {
-        self.kild_dir.join("sessions")
+        self.paths().sessions_dir()
     }
 }
 
@@ -153,7 +159,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::new();
-        assert!(config.kild_dir.to_string_lossy().contains(".kild"));
+        assert!(config.kild_dir().to_string_lossy().contains(".kild"));
         assert_eq!(config.log_level, "info");
     }
 

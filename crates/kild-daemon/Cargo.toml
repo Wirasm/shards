@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 kild-core.workspace = true
+kild-paths.workspace = true
 kild-protocol.workspace = true
 
 # Async runtime
@@ -34,9 +35,6 @@ thiserror.workspace = true
 
 # Binary encoding for PTY data
 base64.workspace = true
-
-# Home directory for socket path
-dirs.workspace = true
 
 # TOML config parsing
 toml.workspace = true

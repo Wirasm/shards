@@ -30,9 +30,10 @@
 
 use crate::files::types::IncludeConfig;
 use crate::forge::ForgeType;
+use kild_paths::KildPaths;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use tracing::debug;
 
 /// Runtime configuration for the KILD CLI.
@@ -41,14 +42,26 @@ use tracing::debug;
 /// variables and system defaults, not from config files.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Base directory for all KILD data (default: ~/.kild)
-    pub kild_dir: PathBuf,
+    /// Centralized path construction for `~/.kild/` layout.
+    pub(crate) paths: KildPaths,
     /// Log level for the application
     pub log_level: String,
     /// Default number of ports to allocate per session
     pub default_port_count: u16,
     /// Base port range for session port allocation
     pub base_port_range: u16,
+}
+
+impl Config {
+    /// Access the underlying KildPaths.
+    pub fn paths(&self) -> &KildPaths {
+        &self.paths
+    }
+
+    /// The base `~/.kild` directory.
+    pub fn kild_dir(&self) -> &Path {
+        self.paths.kild_dir()
+    }
 }
 
 /// Main configuration loaded from TOML config files.

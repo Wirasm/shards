@@ -57,6 +57,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 # Internal workspace dependencies
 kild-core = { path = "crates/kild-core" }
 kild-daemon = { path = "crates/kild-daemon" }
+kild-paths = { path = "crates/kild-paths" }
 kild-peek-core = { path = "crates/kild-peek-core" }
 kild-protocol = { path = "crates/kild-protocol" }
 kild-teams = { path = "crates/kild-teams" }
