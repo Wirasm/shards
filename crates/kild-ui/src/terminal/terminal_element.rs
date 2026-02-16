@@ -804,8 +804,7 @@ impl Element for TerminalElement {
         window.on_mouse_event::<ScrollWheelEvent>(move |event, phase, window, _cx| {
             if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                 let pixel_delta = event.delta.pixel_delta(cell_height);
-                // GPUI pixel_delta.y: positive = scroll up. Alacritty Delta: positive = scroll up.
-                let lines = (pixel_delta.y / cell_height).round() as i32;
+                let lines = scroll_delta_lines(pixel_delta.y, cell_height);
                 if lines != 0 {
                     term.lock().scroll_display(Scroll::Delta(lines));
                 }
@@ -900,6 +899,15 @@ impl Element for TerminalElement {
             }
         });
     }
+}
+
+/// Convert a GPUI pixel scroll delta to an alacritty line count.
+///
+/// Both GPUI and alacritty use the same sign convention: positive = scroll up
+/// (toward history). The result is rounded to the nearest integer and returned
+/// as-is — no negation needed.
+pub(crate) fn scroll_delta_lines(pixel_delta_y: Pixels, cell_height: Pixels) -> i32 {
+    (pixel_delta_y / cell_height).round() as i32
 }
 
 /// Extract URLs from terminal line texts and compute their pixel bounds.
@@ -1194,5 +1202,58 @@ mod tests {
         assert_eq!(regions[0].bounds.origin.y, px(0.0)); // line 0
         assert_eq!(regions[1].url, "https://b.com");
         assert_eq!(regions[1].bounds.origin.y, px(40.0)); // line 2 * 20.0
+    }
+
+    // --- scroll direction tests ---
+
+    #[test]
+    fn scroll_up_produces_positive_delta() {
+        // GPUI: positive pixel_delta.y = user scrolled up (toward history).
+        // Alacritty: positive Scroll::Delta = scroll display up.
+        // These must agree — no negation.
+        let lines = scroll_delta_lines(px(60.0), px(20.0));
+        assert_eq!(lines, 3);
+    }
+
+    #[test]
+    fn scroll_down_produces_negative_delta() {
+        let lines = scroll_delta_lines(px(-60.0), px(20.0));
+        assert_eq!(lines, -3);
+    }
+
+    #[test]
+    fn scroll_small_delta_rounds_to_zero() {
+        // Sub-half-cell movement should round to 0 and be ignored.
+        let lines = scroll_delta_lines(px(5.0), px(20.0));
+        assert_eq!(lines, 0);
+    }
+
+    #[test]
+    fn scroll_half_cell_rounds_to_one() {
+        let lines = scroll_delta_lines(px(10.0), px(20.0));
+        assert_eq!(lines, 1);
+    }
+
+    // --- cmd_held URL gate tests ---
+
+    #[test]
+    fn url_detection_returns_empty_when_no_lines_accumulated() {
+        // When cmd_held is false, no line text is accumulated → detect_urls
+        // receives an empty slice and returns no regions. This test documents
+        // that invariant to prevent performance regression if the gate is removed.
+        let empty: Vec<LineText> = vec![];
+        let regions = detect_urls(&empty, test_bounds(), cell_w(), cell_h());
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn url_detection_finds_urls_when_lines_accumulated() {
+        // When cmd_held is true, lines are accumulated and passed to detect_urls.
+        let text = "See https://example.com for details".to_string();
+        let col_offsets = build_col_offsets(&text, &[]);
+        let line_texts = vec![(0i32, text, col_offsets)];
+        let regions = detect_urls(&line_texts, test_bounds(), cell_w(), cell_h());
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].url, "https://example.com");
     }
 }
