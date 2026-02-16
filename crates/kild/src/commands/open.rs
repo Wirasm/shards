@@ -42,7 +42,13 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                     } else {
                         println!("Opened agent for '{}'.", branch);
                     }
-                    println!("  Agent: {}", session.agent);
+                    // Show the agent that was actually spawned, not the session's
+                    // stored creation agent (which may be "shell" for --no-agent sessions).
+                    let display_agent = session
+                        .latest_agent()
+                        .map(|a| a.agent().to_string())
+                        .unwrap_or_else(|| session.agent.clone());
+                    println!("  Agent: {}", display_agent);
                 }
             }
             if let Some(pid) = session.latest_agent().and_then(|a| a.process_id()) {
