@@ -26,6 +26,9 @@
 //! [health]
 //! idle_threshold_minutes = 10
 //! history_enabled = true
+//!
+//! [ui]
+//! nav_modifier = "ctrl"
 //! ```
 
 use crate::files::types::IncludeConfig;
