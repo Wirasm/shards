@@ -258,6 +258,14 @@ warn!(event = "core.daemon.ping_check_failed", error = %e);
 info!(event = "cli.daemon.start_started", foreground = foreground);
 info!(event = "cli.attach_started", branch = branch);
 
+// Claude Code status hook integration
+info!(event = "core.session.claude_status_hook_installed", path = %hook_path.display());
+debug!(event = "core.session.claude_status_hook_already_exists", path = %hook_path.display());
+warn!(event = "core.session.claude_status_hook_failed", error = %msg);
+info!(event = "core.session.claude_settings_patched", path = %settings_path.display());
+info!(event = "core.session.claude_settings_already_configured");
+warn!(event = "core.session.claude_settings_patch_failed", error = %msg);
+
 // Codex notify hook integration
 info!(event = "core.session.codex_notify_hook_installed", path = %hook_path.display());
 warn!(event = "core.session.codex_notify_hook_failed", error = %msg);
@@ -384,18 +392,49 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 - `$TMUX_PANE` - Current pane ID (e.g., `%0` for leader, `%1`, `%2` for teammates)
 - `$KILD_SHIM_SESSION` - Session ID for shim state lookup
 - `$KILD_SHIM_LOG` - Enable shim logging (file path or `1` for `~/.kild/shim/<session>/shim.log`)
-- `$KILD_SESSION_BRANCH` - Branch name for Codex notify hook status reporting (fallback when `--self` PWD detection unavailable)
+- `$KILD_SESSION_BRANCH` - Branch name for Claude Code and Codex notify hook status reporting (fallback when `--self` PWD detection unavailable)
 
 **Integration points in kild-core:**
 - `daemon_helpers.rs:ensure_shim_binary()` - Symlinks shim as `~/.kild/bin/tmux` (best-effort, warns on failure)
 - `daemon_helpers.rs:ensure_codex_notify_hook()` - Installs `~/.kild/hooks/codex-notify` for Codex CLI integration (idempotent, best-effort)
 - `daemon_helpers.rs:ensure_codex_config()` - Patches `~/.codex/config.toml` with notify hook (respects existing config, best-effort)
-- `daemon_helpers.rs:build_daemon_create_request()` - Injects shim and Codex env vars into daemon PTY requests
-- `create.rs:create_session()` - Initializes shim state directory, `panes.json`, and Codex notify hook for daemon sessions
-- `open.rs:open_session()` - Ensures Codex notify hook when opening Codex sessions
+- `daemon_helpers.rs:ensure_claude_status_hook()` - Installs `~/.kild/hooks/claude-status` for Claude Code integration (idempotent, best-effort)
+- `daemon_helpers.rs:ensure_claude_settings()` - Patches `~/.claude/settings.json` with hook entries (respects existing config, best-effort)
+- `daemon_helpers.rs:build_daemon_create_request()` - Injects shim, Codex, and Claude Code env vars into daemon PTY requests
+- `create.rs:create_session()` - Initializes shim state directory, `panes.json`, and agent-specific hooks for daemon sessions
+- `open.rs:open_session()` - Ensures agent-specific hooks when opening sessions
 - `destroy.rs:destroy_session()` - Destroys child shim PTYs and UI-created daemon sessions via daemon IPC, removes `~/.kild/shim/<session>/`, and cleans up task lists at `~/.claude/tasks/<task_list_id>/`
 
-## Codex Notify Hook Integration
+## Agent Hook Integration
+
+### Claude Code Status Hook Integration
+
+**Purpose:** Auto-configures Claude Code to report agent activity states (idle/waiting) back to KILD via `agent-status` command.
+
+**How it works:**
+
+1. `kild create/open --agent claude` installs `~/.kild/hooks/claude-status` shell script
+2. Script is patched into `~/.claude/settings.json` for Stop, Notification, SubagentStop, TeammateIdle, and TaskCompleted hook events
+3. Claude Code calls the hook with JSON events on stdin
+4. Hook maps events to KILD statuses: Stop/SubagentStop/TeammateIdle/TaskCompleted → idle, Notification(permission_prompt) → waiting, Notification(idle_prompt) → idle
+5. Hook calls `kild agent-status --self <status> --notify` to update session state and send desktop notifications
+
+**Hook script:** `~/.kild/hooks/claude-status` (shell script, auto-generated, do not edit)
+
+**Settings patching behavior:**
+- Idempotent: runs on every `create/open --agent claude` but only patches if needed
+- Respects existing user hooks: if any hook event already references the claude-status script, skips patching
+- Creates `~/.claude/settings.json` if missing
+- Preserves all existing settings and hooks
+
+**Environment variables:**
+- `$KILD_SESSION_BRANCH` - Injected into Claude Code sessions as fallback for `--self` PWD-based detection
+
+**Manual setup:** Run `kild init-hooks claude` to install hook and patch settings without creating a session.
+
+**Best-effort pattern:** All operations warn on failure but never block session creation. If hook install or settings patch fails, user sees warnings with manual remediation steps.
+
+### Codex Notify Hook Integration
 
 **Purpose:** Auto-configures Codex CLI to report agent activity states (idle/waiting) back to KILD via `agent-status` command.
 
