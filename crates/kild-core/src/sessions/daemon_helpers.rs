@@ -62,6 +62,8 @@ pub(crate) fn ensure_shim_binary() -> Result<(), String> {
 /// (Ghostty > iTerm > Terminal.app on macOS).
 /// The attach process is ephemeral — Ctrl+C detaches without killing the agent.
 ///
+/// Returns `Some((terminal_type, window_id))` on success for storage in
+/// `AgentProcess`, enabling cleanup during destroy. Returns `None` on failure.
 /// Failures are logged as warnings but never block session creation.
 pub fn spawn_attach_window(
     branch: &str,
