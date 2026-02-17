@@ -85,7 +85,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 
 **Workspace structure:**
 - `crates/kild-paths` - Centralized path construction for ~/.kild/ directory layout (KildPaths struct with typed methods for all paths). Single source of truth for KILD filesystem layout.
-- `crates/kild-protocol` - Shared IPC protocol types (ClientMessage, DaemonMessage, SessionInfo, SessionStatus, ErrorCode) and domain newtypes (SessionId, BranchName, ProjectId). Also provides `IpcConnection` for JSONL-over-Unix-socket client used by both kild-core and kild-tmux-shim. All public enums are `#[non_exhaustive]` for forward compatibility. Newtypes defined via `newtype_string!` macro for compile-time type safety. Deps: serde, serde_json only (tempfile for tests). No tokio, no kild-core. Single source of truth for daemon wire format and IPC client.
+- `crates/kild-protocol` - Shared IPC protocol types (ClientMessage, DaemonMessage, SessionInfo, SessionStatus, ErrorCode) and domain newtypes (SessionId, BranchName, ProjectId). Also provides `IpcConnection` for JSONL-over-Unix-socket client used by both kild-core and kild-tmux-shim with connection health checking via `is_alive()`. All public enums are `#[non_exhaustive]` for forward compatibility. Newtypes defined via `newtype_string!` macro for compile-time type safety. Deps: serde, serde_json only (tempfile for tests). No tokio, no kild-core. Single source of truth for daemon wire format and IPC client.
 - `crates/kild-core` - Core library with all business logic, no CLI dependencies
 - `crates/kild` - Thin CLI that consumes kild-core (clap for arg parsing, color.rs for Tallinn Night palette output)
 - `crates/kild-daemon` - Standalone daemon binary for PTY management (async tokio server, JSONL IPC protocol, portable-pty integration). CLI spawns this as subprocess. Wire types re-exported from kild-protocol.
@@ -98,7 +98,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `sessions/` - Session lifecycle (create, open, stop, destroy, complete, list)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app, Alacritty)
 - `agents/` - Agent backend system (amp, claude, kiro, gemini, codex, opencode, resume.rs for session continuity)
-- `daemon/` - Daemon client for IPC communication (delegates to kild-protocol::IpcConnection) and auto-start logic (discovers kild-daemon binary as sibling executable)
+- `daemon/` - Daemon client for IPC communication with thread-local connection pooling (delegates to kild-protocol::IpcConnection) and auto-start logic (discovers kild-daemon binary as sibling executable)
 - `editor/` - Editor backend system (Zed, VS Code, Vim, generic fallback) with registry.rs for detection and resolution chain (CLI > config > $VISUAL > $EDITOR > OS default via duti/xdg-mime > PATH scan)
 - `git/` - Git worktree operations via git2
 - `forge/` - Forge backend system (GitHub, future: GitLab, Bitbucket, Gitea) for PR operations
@@ -124,11 +124,11 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `refresh.rs` - Background refresh logic with hybrid file watching + slow poll fallback
 
 **Key modules in kild-daemon:**
-- `protocol/` - JSONL IPC protocol (ClientMessage, DaemonMessage, codec)
+- `protocol/` - JSONL IPC protocol (ClientMessage, DaemonMessage, codec with flush/no-flush variants)
 - `pty/` - PTY lifecycle management (PtyManager, ManagedPty via portable-pty, output broadcasting)
 - `session/` - Daemon session state machine (SessionManager, DaemonSession, SessionState enum)
 - `server/` - Unix socket server (async connection handling, message dispatch, signal-based shutdown)
-- `client/` - Daemon client for typed IPC operations (DaemonClient with connection pooling)
+- `client/` - Daemon client for typed IPC operations (DaemonClient)
 
 **Key modules in kild-peek-core:**
 - `window/` - Window and monitor enumeration via macOS APIs
@@ -144,7 +144,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `parser.rs` - Hand-rolled tmux argument parser for ~15 subcommands + aliases
 - `commands.rs` - Command handlers dispatching to daemon IPC or local state
 - `state.rs` - File-based pane registry with flock concurrency control
-- `ipc.rs` - Domain-specific IPC helpers (delegates to kild-protocol::IpcConnection)
+- `ipc.rs` - Domain-specific IPC helpers with thread-local connection pooling (delegates to kild-protocol::IpcConnection)
 - `main.rs` - Entry point, file-based logging controlled by KILD_SHIM_LOG env var
 - `errors.rs` - ShimError type
 
