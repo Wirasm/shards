@@ -9,7 +9,7 @@ use crate::terminal;
 
 use super::daemon_helpers::{
     build_daemon_create_request, compute_spawn_id, ensure_shim_binary, setup_codex_integration,
-    setup_opencode_integration, spawn_attach_window,
+    setup_opencode_integration, spawn_and_save_attach_window,
 };
 
 pub fn create_session(
@@ -439,21 +439,12 @@ pub fn create_session(
 
     // 8. Spawn attach window (best-effort) and update session with terminal info
     if request.runtime_mode == crate::state::types::RuntimeMode::Daemon {
-        let attach_spawn_id = session
-            .latest_agent()
-            .map(|a| a.spawn_id().to_string())
-            .unwrap_or_default();
-        if let Some((tt, wid)) = spawn_attach_window(
+        spawn_and_save_attach_window(
+            &mut session,
             &validated.name,
-            &attach_spawn_id,
-            &session.worktree_path,
             kild_config,
-        ) {
-            if let Some(agent) = session.latest_agent_mut() {
-                agent.set_attach_info(tt, wid);
-            }
-            persistence::save_session_to_file(&session, &config.sessions_dir())?;
-        }
+            &config.sessions_dir(),
+        )?;
     }
 
     info!(

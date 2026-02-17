@@ -8,7 +8,7 @@ use crate::terminal::types::SpawnResult;
 
 use super::daemon_helpers::{
     build_daemon_create_request, compute_spawn_id, setup_codex_integration,
-    setup_opencode_integration, spawn_attach_window,
+    setup_opencode_integration, spawn_and_save_attach_window,
 };
 
 /// Resolve the effective runtime mode for `open_session`.
@@ -466,18 +466,7 @@ pub fn open_session(
 
     // 7. Spawn attach window (best-effort) and update session with terminal info
     if is_daemon {
-        let attach_spawn_id = session
-            .latest_agent()
-            .map(|a| a.spawn_id().to_string())
-            .unwrap_or_default();
-        if let Some((tt, wid)) =
-            spawn_attach_window(name, &attach_spawn_id, &session.worktree_path, &kild_config)
-        {
-            if let Some(agent) = session.latest_agent_mut() {
-                agent.set_attach_info(tt, wid);
-            }
-            persistence::save_session_to_file(&session, &config.sessions_dir())?;
-        }
+        spawn_and_save_attach_window(&mut session, name, &kild_config, &config.sessions_dir())?;
     }
 
     info!(
