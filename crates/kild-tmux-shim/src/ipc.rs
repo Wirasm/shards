@@ -47,10 +47,11 @@ pub fn create_session(
 
     let daemon_session_id = match response {
         DaemonMessage::SessionCreated { session, .. } => session.id.into_inner(),
-        _ => {
-            return Err(ShimError::ipc(
-                "create_session: expected SessionCreated response",
-            ));
+        other => {
+            return Err(ShimError::ipc(format!(
+                "create_session for {}: expected SessionCreated, got {:?}",
+                session_id, other
+            )));
         }
     };
 
@@ -69,7 +70,10 @@ pub fn write_stdin(session_id: &str, data: &[u8]) -> Result<(), ShimError> {
         bytes = data.len(),
     );
 
-    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+    // Pre-size the base64 buffer: base64 output is ceil(input_len / 3) * 4
+    let encoded_len = data.len().div_ceil(3) * 4;
+    let mut encoded = String::with_capacity(encoded_len);
+    base64::engine::general_purpose::STANDARD.encode_string(data, &mut encoded);
 
     let request = ClientMessage::WriteStdin {
         id: uuid::Uuid::new_v4().to_string(),
@@ -127,11 +131,17 @@ pub fn read_scrollback(session_id: &str) -> Result<Vec<u8>, ShimError> {
     let decoded = match response {
         DaemonMessage::ScrollbackContents { data, .. } => base64::engine::general_purpose::STANDARD
             .decode(data)
-            .map_err(|e| ShimError::ipc(format!("read_scrollback: base64 decode failed: {}", e)))?,
-        _ => {
-            return Err(ShimError::ipc(
-                "read_scrollback: expected ScrollbackContents response",
-            ));
+            .map_err(|e| {
+                ShimError::ipc(format!(
+                    "read_scrollback for {}: base64 decode failed: {}",
+                    session_id, e
+                ))
+            })?,
+        other => {
+            return Err(ShimError::ipc(format!(
+                "read_scrollback for {}: expected ScrollbackContents, got {:?}",
+                session_id, other
+            )));
         }
     };
 
