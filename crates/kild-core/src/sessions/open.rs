@@ -470,12 +470,9 @@ pub fn open_session(
             .latest_agent()
             .map(|a| a.spawn_id().to_string())
             .unwrap_or_default();
-        if let Some((tt, wid)) = spawn_attach_window(
-            name,
-            &attach_spawn_id,
-            &session.worktree_path,
-            &kild_config,
-        ) {
+        if let Some((tt, wid)) =
+            spawn_attach_window(name, &attach_spawn_id, &session.worktree_path, &kild_config)
+        {
             if let Some(agent) = session.latest_agent_mut() {
                 agent.set_attach_info(tt, wid);
             }
