@@ -7,6 +7,7 @@ use crate::agents;
 use crate::config::KildConfig;
 use crate::sessions::errors::SessionError;
 use crate::terminal;
+use crate::terminal::types::TerminalType;
 
 /// Compute a unique spawn ID for a given session and spawn index.
 ///
@@ -67,7 +68,7 @@ pub fn spawn_attach_window(
     spawn_id: &str,
     worktree_path: &Path,
     kild_config: &KildConfig,
-) {
+) -> Option<(TerminalType, String)> {
     info!(event = "core.session.auto_attach_started", branch = branch);
 
     let kild_binary = match std::env::current_exe() {
@@ -81,7 +82,7 @@ pub fn spawn_attach_window(
             );
             eprintln!("Warning: Could not auto-attach to daemon session: {}", e);
             eprintln!("         Use `kild attach {}` to connect manually.", branch);
-            return;
+            return None;
         }
     };
 
@@ -101,6 +102,9 @@ pub fn spawn_attach_window(
                 branch = branch,
                 window_id = ?result.terminal_window_id
             );
+            result
+                .terminal_window_id
+                .map(|wid| (result.terminal_type, wid))
         }
         Err(e) => {
             warn!(
@@ -111,6 +115,7 @@ pub fn spawn_attach_window(
             );
             eprintln!("Warning: Could not auto-attach to daemon session: {}", e);
             eprintln!("         Use `kild attach {}` to connect manually.", branch);
+            None
         }
     }
 }
