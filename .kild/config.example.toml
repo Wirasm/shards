@@ -36,14 +36,6 @@ default = "claude"
 #   Linux: Alacritty (requires Hyprland window manager)
 preferred = "ghostty"
 
-# Delay in milliseconds after spawning terminal (for process detection)
-# Default: 1000
-spawn_delay_ms = 1000
-
-# Maximum retry attempts for terminal spawn
-# Default: 5
-max_retry_attempts = 5
-
 # =============================================================================
 # PER-AGENT SETTINGS
 # Override global agent settings for specific agents

@@ -8,7 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::process::errors::ProcessError;
 
@@ -37,65 +37,69 @@ pub fn ensure_pid_dir(kild_dir: &Path) -> Result<PathBuf, ProcessError> {
     Ok(pid_dir)
 }
 
-/// Read PID from a PID file with retry logic
+/// Read PID from a PID file with fast polling.
 ///
-/// The PID file may not exist immediately after spawning, so we retry
-/// with exponential backoff.
-pub fn read_pid_file_with_retry(
-    pid_file: &Path,
-    max_attempts: u32,
-    initial_delay_ms: u64,
-) -> Result<Option<u32>, ProcessError> {
-    let mut delay = Duration::from_millis(initial_delay_ms);
+/// The PID file is written by `echo $$ > file && exec cmd` before the
+/// agent process starts, so it typically appears within milliseconds.
+/// Polls at 100ms intervals with a 3s timeout.
+pub fn read_pid_file_with_retry(pid_file: &Path) -> Result<Option<u32>, ProcessError> {
+    const POLL_INTERVAL: Duration = Duration::from_millis(100);
+    const MAX_WAIT: Duration = Duration::from_secs(3);
 
-    for attempt in 1..=max_attempts {
-        debug!(
-            event = "core.pid_file.read_attempt",
-            attempt,
-            max_attempts,
-            path = %pid_file.display()
-        );
+    let start = std::time::Instant::now();
+    let mut last_error: Option<ProcessError> = None;
 
+    while start.elapsed() <= MAX_WAIT {
         match read_pid_file(pid_file) {
             Ok(Some(pid)) => {
                 debug!(
                     event = "core.pid_file.read_success",
-                    attempt,
                     pid,
+                    elapsed_ms = start.elapsed().as_millis() as u64,
                     path = %pid_file.display()
                 );
                 return Ok(Some(pid));
             }
             Ok(None) => {
-                // File doesn't exist yet, wait and retry
-                if attempt < max_attempts {
-                    debug!(
-                        event = "core.pid_file.not_found_retry",
-                        attempt,
-                        next_delay_ms = delay.as_millis()
-                    );
-                    std::thread::sleep(delay);
-                    delay = std::cmp::min(delay * 2, Duration::from_secs(8));
-                }
+                // File doesn't exist yet, continue polling
             }
             Err(e) => {
-                debug!(
-                    event = "core.pid_file.read_error",
-                    attempt,
-                    error = %e
-                );
-                if attempt == max_attempts {
-                    return Err(e);
-                }
-                std::thread::sleep(delay);
-                delay = std::cmp::min(delay * 2, Duration::from_secs(8));
+                last_error = Some(e);
             }
         }
+
+        if let Some(ref error) = last_error {
+            debug!(
+                event = "core.pid_file.polling_with_error",
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                error = %error,
+                path = %pid_file.display()
+            );
+        } else {
+            debug!(
+                event = "core.pid_file.polling",
+                elapsed_ms = start.elapsed().as_millis() as u64,
+                path = %pid_file.display()
+            );
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Timeout reached — surface errors encountered during polling
+    if let Some(error) = last_error {
+        warn!(
+            event = "core.pid_file.timeout_with_errors",
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            error = %error,
+            path = %pid_file.display(),
+            message = "PID file polling timed out after encountering errors"
+        );
+        return Err(error);
     }
 
     debug!(
-        event = "core.pid_file.not_found_final",
-        max_attempts,
+        event = "core.pid_file.not_found_timeout",
+        elapsed_ms = start.elapsed().as_millis() as u64,
         path = %pid_file.display()
     );
     Ok(None)
@@ -305,7 +309,74 @@ mod tests {
         let mut file = fs::File::create(&pid_file).unwrap();
         writeln!(file, "99999").unwrap();
 
-        let result = read_pid_file_with_retry(&pid_file, 3, 10).unwrap();
+        let result = read_pid_file_with_retry(&pid_file).unwrap();
         assert_eq!(result, Some(99999));
+    }
+
+    #[test]
+    fn test_read_pid_file_with_retry_not_found_times_out() {
+        let temp_dir = TempDir::new().unwrap();
+        let pid_file = temp_dir.path().join("never_created.pid");
+
+        let start = std::time::Instant::now();
+        let result = read_pid_file_with_retry(&pid_file).unwrap();
+        let elapsed_ms = start.elapsed().as_millis();
+
+        assert_eq!(result, None);
+        // Should timeout at ~3000ms. Allow 500ms tolerance for CI variance.
+        assert!(
+            elapsed_ms >= 3000 && elapsed_ms < 3500,
+            "Should timeout at ~3s (3000-3500ms), took {}ms",
+            elapsed_ms
+        );
+    }
+
+    #[test]
+    fn test_read_pid_file_with_retry_success_after_delay() {
+        let temp_dir = TempDir::new().unwrap();
+        let pid_file = temp_dir.path().join("delayed.pid");
+
+        // Simulate PID file written after 250ms (2-3 poll iterations)
+        let pid_file_clone = pid_file.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            let mut file = fs::File::create(&pid_file_clone).unwrap();
+            writeln!(file, "77777").unwrap();
+        });
+
+        let start = std::time::Instant::now();
+        let result = read_pid_file_with_retry(&pid_file).unwrap();
+        let elapsed_ms = start.elapsed().as_millis();
+
+        assert_eq!(result, Some(77777));
+        assert!(
+            elapsed_ms >= 250 && elapsed_ms < 1000,
+            "Should find PID within 1s after 250ms delay, took {}ms",
+            elapsed_ms
+        );
+    }
+
+    #[test]
+    fn test_read_pid_file_with_retry_persistent_error_returns_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let pid_file = temp_dir.path().join("always_invalid.pid");
+
+        // Create file with invalid content that persists
+        let mut file = fs::File::create(&pid_file).unwrap();
+        writeln!(file, "not-a-number").unwrap();
+
+        let start = std::time::Instant::now();
+        let result = read_pid_file_with_retry(&pid_file);
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_err(),
+            "Should return error for persistent invalid PID"
+        );
+        assert!(
+            elapsed.as_secs() >= 3 && elapsed.as_secs() < 5,
+            "Should timeout after ~3s, took {:?}",
+            elapsed
+        );
     }
 }

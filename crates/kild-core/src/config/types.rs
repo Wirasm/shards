@@ -389,23 +389,13 @@ pub struct AgentConfig {
 
 /// Terminal configuration.
 ///
-/// Controls which terminal emulator to use and spawn behavior.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Controls which terminal emulator to use.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TerminalConfig {
     /// Preferred terminal emulator.
     /// Options: iterm2, iterm, terminal, ghostty, native.
     #[serde(default)]
     pub preferred: Option<String>,
-
-    /// Delay in milliseconds after spawning a terminal.
-    /// Default: 1000ms.
-    #[serde(default = "super::defaults::default_spawn_delay_ms")]
-    pub spawn_delay_ms: u64,
-
-    /// Maximum retry attempts for process discovery after terminal spawn.
-    /// Default: 5.
-    #[serde(default = "super::defaults::default_max_retry_attempts")]
-    pub max_retry_attempts: u32,
 }
 
 /// Per-agent settings that override global agent config.
