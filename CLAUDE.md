@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **YAGNI:** Justify every line of code against the problem it solves. Is it needed?
 
+**DRY:** Don't Repeat Yourself. Every piece of knowledge should have a single, authoritative representation. Extract shared logic rather than copy-pasting.
+
 **Type Safety (CRITICAL):** Rust's type system is a feature, not an obstacle. Use it fully.
 
 **No Silent Failures:** This is a developer tool. Developers need to know when something fails. Never swallow errors, never hide failures behind fallbacks without logging, never leave things "behind the curtain". If config is wrong, say so. If an operation fails, surface it. Explicit failure is better than silent misbehavior.
@@ -288,6 +290,12 @@ KILD_SHIM_LOG=1 cargo run -p kild-tmux-shim -- <command>  # Enable file-based lo
 **Use newtypes for domain identifiers.** Session IDs, branch names, and project IDs use the `newtype_string!` macro pattern for compile-time type safety. See `kild-protocol/src/types.rs` for the macro and existing newtypes. This prevents mixing up identifiers at the type level.
 
 **No backward-compatibility shims.** When renaming or moving types, rename all usages. Never introduce type aliases, re-exports, or wrapper types solely for backward compatibility. This is a single-developer tool with no external consumers — there is nobody to keep compatible with. One name, one type, everywhere.
+
+**No `.unwrap()` / `.expect()` in production code.** Always propagate errors with `?` or handle them explicitly. Panicking crashes the process — use `Result` for all fallible operations.
+
+**Don't clone to satisfy the borrow checker.** If the borrow checker complains, understand the ownership issue first. Restructure borrows, use `mem::take`, or redesign the data flow. Cloning `Rc`/`Arc` is fine — that's their purpose.
+
+**Prefer borrowed types for function arguments.** Use `&str` over `&String`, `&[T]` over `&Vec<T>`, `&Path` over `&PathBuf`. This accepts more input types via deref coercion and avoids unnecessary indirection.
 
 ## Structured Logging
 
