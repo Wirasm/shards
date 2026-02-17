@@ -8,8 +8,8 @@ use crate::sessions::{errors::SessionError, persistence, ports, types::*, valida
 use crate::terminal;
 
 use super::daemon_helpers::{
-    build_daemon_create_request, compute_spawn_id, ensure_shim_binary, setup_codex_integration,
-    setup_opencode_integration, spawn_attach_window,
+    build_daemon_create_request, compute_spawn_id, ensure_shim_binary, setup_claude_integration,
+    setup_codex_integration, setup_opencode_integration, spawn_attach_window,
 };
 
 pub fn create_session(
@@ -200,6 +200,7 @@ pub fn create_session(
         crate::state::types::RuntimeMode::Terminal => {
             setup_codex_integration(&validated.agent);
             setup_opencode_integration(&validated.agent, &worktree.path);
+            setup_claude_integration(&validated.agent);
 
             // Terminal path: spawn in external terminal
             // Wrap with `env` to strip nesting-detection vars and inject agent env.
@@ -209,6 +210,7 @@ pub fn create_session(
                     env_prefix.extend(agents::resume::task_list_env_vars(&agent, tlid));
                 }
                 env_prefix.extend(agents::resume::codex_env_vars(&agent, &validated.name));
+                env_prefix.extend(agents::resume::claude_env_vars(&agent, &validated.name));
                 super::env_cleanup::build_env_command(&env_prefix, &validated.command)
             };
             debug!(
@@ -260,6 +262,7 @@ pub fn create_session(
 
             setup_codex_integration(&validated.agent);
             setup_opencode_integration(&validated.agent, &worktree.path);
+            setup_claude_integration(&validated.agent);
 
             // Pre-emptive cleanup: remove stale daemon session if previous destroy failed.
             // Daemon-not-running and session-not-found are expected (normal case).

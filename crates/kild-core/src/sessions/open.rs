@@ -7,8 +7,8 @@ use crate::terminal;
 use crate::terminal::types::SpawnResult;
 
 use super::daemon_helpers::{
-    build_daemon_create_request, compute_spawn_id, setup_codex_integration,
-    setup_opencode_integration, spawn_attach_window,
+    build_daemon_create_request, compute_spawn_id, setup_claude_integration,
+    setup_codex_integration, setup_opencode_integration, spawn_attach_window,
 };
 
 /// Resolve the effective runtime mode for `open_session`.
@@ -300,6 +300,7 @@ pub fn open_session(
 
         setup_codex_integration(&agent);
         setup_opencode_integration(&agent, &session.worktree_path);
+        setup_claude_integration(&agent);
 
         // Daemon path: create new daemon PTY (uses shared helper with create_session)
         let (cmd, cmd_args, env_vars, use_login_shell) = build_daemon_create_request(
@@ -401,6 +402,7 @@ pub fn open_session(
     } else {
         setup_codex_integration(&agent);
         setup_opencode_integration(&agent, &session.worktree_path);
+        setup_claude_integration(&agent);
 
         // Terminal path: spawn in external terminal
         // Wrap with `env` to strip nesting-detection vars and inject agent env.
@@ -410,6 +412,7 @@ pub fn open_session(
                 env_prefix.extend(agents::resume::task_list_env_vars(&agent, tlid));
             }
             env_prefix.extend(agents::resume::codex_env_vars(&agent, &session.branch));
+            env_prefix.extend(agents::resume::claude_env_vars(&agent, &session.branch));
             super::env_cleanup::build_env_command(&env_prefix, &agent_command)
         };
         debug!(

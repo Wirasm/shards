@@ -18,9 +18,41 @@ pub(crate) fn handle_init_hooks_command(
     );
 
     match agent.as_str() {
+        "claude" => init_claude_hooks(),
         "opencode" => init_opencode_hooks(no_install),
         _ => Err(format!("Unsupported agent: {}", agent).into()),
     }
+}
+
+fn init_claude_hooks() -> Result<(), Box<dyn std::error::Error>> {
+    kild_core::sessions::daemon_helpers::ensure_claude_status_hook().map_err(
+        |e| -> Box<dyn std::error::Error> { format!("Failed to create hook script: {}", e).into() },
+    )?;
+    println!(
+        "  {} Installed ~/.kild/hooks/claude-status",
+        color::aurora("✓")
+    );
+
+    kild_core::sessions::daemon_helpers::ensure_claude_settings().map_err(
+        |e| -> Box<dyn std::error::Error> {
+            format!("Failed to patch settings.json: {}", e).into()
+        },
+    )?;
+    println!(
+        "  {} Configured ~/.claude/settings.json",
+        color::aurora("✓")
+    );
+
+    println!();
+    println!("Claude Code status reporting configured.");
+    println!(
+        "Agent activity will be reported via {}.",
+        color::bold("kild agent-status")
+    );
+
+    info!(event = "cli.init_hooks_completed", agent = "claude");
+
+    Ok(())
 }
 
 fn init_opencode_hooks(no_install: bool) -> Result<(), Box<dyn std::error::Error>> {

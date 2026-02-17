@@ -276,6 +276,222 @@ pub(crate) fn setup_codex_integration(agent: &str) {
     }
 }
 
+/// Ensure the Claude Code status hook script is installed at `~/.kild/hooks/claude-status`.
+///
+/// This script is registered in Claude Code's `~/.claude/settings.json` for Stop,
+/// Notification, SubagentStop, TeammateIdle, and TaskCompleted hooks. It reads JSON
+/// from stdin, maps Claude Code events to KILD agent statuses, and calls
+/// `kild agent-status --self <status> --notify`.
+/// Idempotent: skips if script already exists.
+fn ensure_claude_status_hook_with_paths(paths: &KildPaths) -> Result<(), String> {
+    let hooks_dir = paths.hooks_dir();
+    let hook_path = paths.claude_status_hook();
+
+    if hook_path.exists() {
+        debug!(
+            event = "core.session.claude_status_hook_already_exists",
+            path = %hook_path.display()
+        );
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&hooks_dir)
+        .map_err(|e| format!("failed to create {}: {}", hooks_dir.display(), e))?;
+
+    let script = r#"#!/bin/sh
+# KILD Claude Code status hook — auto-generated, do not edit.
+# Registered in ~/.claude/settings.json for Stop, Notification, SubagentStop,
+# TeammateIdle, and TaskCompleted hooks.
+# Maps Claude Code events to KILD agent statuses.
+INPUT=$(cat)
+EVENT=$(echo "$INPUT" | grep -o '"hook_event_name":"[^"]*"' | head -1 | sed 's/"hook_event_name":"//;s/"//')
+NTYPE=$(echo "$INPUT" | grep -o '"notification_type":"[^"]*"' | head -1 | sed 's/"notification_type":"//;s/"//')
+case "$EVENT" in
+  Stop|SubagentStop|TeammateIdle|TaskCompleted)
+    kild agent-status --self idle --notify
+    ;;
+  Notification)
+    case "$NTYPE" in
+      permission_prompt) kild agent-status --self waiting --notify ;;
+      idle_prompt)       kild agent-status --self idle --notify ;;
+    esac
+    ;;
+esac
+"#;
+
+    std::fs::write(&hook_path, script)
+        .map_err(|e| format!("failed to write {}: {}", hook_path.display(), e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("failed to chmod {}: {}", hook_path.display(), e))?;
+    }
+
+    info!(
+        event = "core.session.claude_status_hook_installed",
+        path = %hook_path.display()
+    );
+
+    Ok(())
+}
+
+pub fn ensure_claude_status_hook() -> Result<(), String> {
+    let paths = KildPaths::resolve().map_err(|e| e.to_string())?;
+    ensure_claude_status_hook_with_paths(&paths)
+}
+
+/// Ensure Claude Code settings.json has KILD status hooks configured.
+///
+/// Patches `~/.claude/settings.json` to add Stop, Notification, SubagentStop,
+/// TeammateIdle, and TaskCompleted hook entries pointing to the claude-status
+/// hook script. Preserves all existing settings and hooks.
+/// Idempotent: skips if any hook already references the claude-status script.
+fn ensure_claude_settings_with_home(home: &Path, paths: &KildPaths) -> Result<(), String> {
+    let claude_dir = home.join(".claude");
+    let settings_path = claude_dir.join("settings.json");
+    let hook_path = paths.claude_status_hook();
+    let hook_path_str = hook_path.display().to_string();
+
+    let mut settings: serde_json::Value = if settings_path.exists() {
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("failed to read {}: {}", settings_path.display(), e))?;
+        serde_json::from_str(&content).map_err(|e| {
+            format!(
+                "failed to parse {}: {} — fix JSON syntax or remove the file to reset",
+                settings_path.display(),
+                e
+            )
+        })?
+    } else {
+        serde_json::json!({})
+    };
+
+    // Check if already configured: scan all relevant hook arrays for our script path
+    if let Some(serde_json::Value::Object(hooks)) = settings.get("hooks") {
+        let already_configured = [
+            "Stop",
+            "Notification",
+            "SubagentStop",
+            "TeammateIdle",
+            "TaskCompleted",
+        ]
+        .iter()
+        .any(|event| {
+            if let Some(serde_json::Value::Array(entries)) = hooks.get(*event) {
+                entries.iter().any(|entry| {
+                    if let Some(serde_json::Value::Array(hook_list)) = entry.get("hooks") {
+                        hook_list.iter().any(|h| {
+                            h.get("command").and_then(|c| c.as_str()) == Some(&hook_path_str)
+                        })
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        });
+
+        if already_configured {
+            info!(event = "core.session.claude_settings_already_configured");
+            return Ok(());
+        }
+    }
+
+    // Build hook entries
+    let hook_entry = serde_json::json!({
+        "type": "command",
+        "command": hook_path_str,
+        "timeout": 5
+    });
+
+    let hooks = settings
+        .as_object_mut()
+        .ok_or("settings.json root is not an object")?
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+
+    let hooks_obj = hooks
+        .as_object_mut()
+        .ok_or("\"hooks\" field in settings.json is not an object")?;
+
+    // Stop, SubagentStop, TeammateIdle, TaskCompleted: no matcher needed
+    for event in &["Stop", "SubagentStop", "TeammateIdle", "TaskCompleted"] {
+        let entries = hooks_obj
+            .entry(*event)
+            .or_insert_with(|| serde_json::json!([]));
+        if let serde_json::Value::Array(arr) = entries {
+            arr.push(serde_json::json!({
+                "hooks": [hook_entry.clone()]
+            }));
+        }
+    }
+
+    // Notification: matcher for permission_prompt and idle_prompt
+    let notification_entries = hooks_obj
+        .entry("Notification")
+        .or_insert_with(|| serde_json::json!([]));
+    if let serde_json::Value::Array(arr) = notification_entries {
+        arr.push(serde_json::json!({
+            "matcher": "permission_prompt|idle_prompt",
+            "hooks": [hook_entry.clone()]
+        }));
+    }
+
+    // Write back
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| format!("failed to create {}: {}", claude_dir.display(), e))?;
+
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("failed to serialize settings.json: {}", e))?;
+
+    std::fs::write(&settings_path, format!("{}\n", content))
+        .map_err(|e| format!("failed to write {}: {}", settings_path.display(), e))?;
+
+    info!(
+        event = "core.session.claude_settings_patched",
+        path = %settings_path.display()
+    );
+
+    Ok(())
+}
+
+pub fn ensure_claude_settings() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("HOME not set — cannot patch Claude Code settings")?;
+    let paths = KildPaths::resolve().map_err(|e| e.to_string())?;
+    ensure_claude_settings_with_home(&home, &paths)
+}
+
+/// Install Claude Code status hook and patch settings if needed.
+///
+/// Best-effort: warns on failure but doesn't block session creation.
+/// No-op for non-Claude agents.
+pub(crate) fn setup_claude_integration(agent: &str) {
+    if agent != "claude" {
+        return;
+    }
+
+    if let Err(msg) = ensure_claude_status_hook() {
+        warn!(event = "core.session.claude_status_hook_failed", error = %msg);
+        eprintln!("Warning: {msg}");
+        eprintln!("Claude Code status reporting may not work.");
+    }
+
+    if let Err(msg) = ensure_claude_settings() {
+        warn!(event = "core.session.claude_settings_patch_failed", error = %msg);
+        eprintln!("Warning: {msg}");
+        let hook_path = KildPaths::resolve()
+            .map(|p| p.claude_status_hook().display().to_string())
+            .unwrap_or_else(|_| "<HOME>/.kild/hooks/claude-status".to_string());
+        let settings_path = dirs::home_dir()
+            .map(|h| h.join(".claude/settings.json").display().to_string())
+            .unwrap_or_else(|| "<HOME>/.claude/settings.json".to_string());
+        eprintln!("Add hooks entries referencing \"{hook_path}\" to {settings_path} manually.");
+    }
+}
+
 /// Ensure the OpenCode KILD status plugin is installed in a worktree.
 ///
 /// Creates `.opencode/plugins/kild-status.ts` in the worktree directory.
@@ -640,6 +856,10 @@ pub(super) fn build_daemon_create_request(
     let codex_env = agents::resume::codex_env_vars(agent_name, branch);
     env_vars.extend(codex_env);
 
+    // $KILD_SESSION_BRANCH for Claude Code status hook reporting
+    let claude_env = agents::resume::claude_env_vars(agent_name, branch);
+    env_vars.extend(claude_env);
+
     Ok((cmd, cmd_args, env_vars, use_login_shell))
 }
 
@@ -983,15 +1203,19 @@ mod tests {
     }
 
     #[test]
-    fn test_build_daemon_request_no_codex_env_for_claude() {
+    fn test_build_daemon_request_includes_claude_env_vars() {
         let (_cmd, _args, env_vars, _) =
             build_daemon_create_request("claude", "claude", "test-session", None, "my-feature")
                 .unwrap();
 
-        let has_branch = env_vars.iter().any(|(k, _)| k == "KILD_SESSION_BRANCH");
-        assert!(
-            !has_branch,
-            "KILD_SESSION_BRANCH should not be set for claude agent"
+        let branch_val = env_vars
+            .iter()
+            .find(|(k, _)| k == "KILD_SESSION_BRANCH")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            branch_val,
+            Some("my-feature"),
+            "KILD_SESSION_BRANCH should be set for claude agent"
         );
     }
 
@@ -1714,5 +1938,331 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    // --- Claude Code integration tests ---
+
+    #[test]
+    fn test_ensure_claude_status_hook_creates_script() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_claude_hook_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        let hook_path = temp_home.join(".kild").join("hooks").join("claude-status");
+
+        let result =
+            ensure_claude_status_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
+        assert!(result.is_ok(), "Hook install should succeed: {:?}", result);
+        assert!(hook_path.exists(), "Hook script should exist");
+
+        let content = fs::read_to_string(&hook_path).unwrap();
+        assert!(
+            content.starts_with("#!/bin/sh"),
+            "Script should have shebang"
+        );
+        assert!(
+            content.contains("hook_event_name"),
+            "Script should parse hook_event_name from JSON"
+        );
+        assert!(
+            content.contains("Stop|SubagentStop|TeammateIdle|TaskCompleted"),
+            "Script should handle Stop, SubagentStop, TeammateIdle, TaskCompleted"
+        );
+        assert!(
+            content.contains("permission_prompt"),
+            "Script should handle permission_prompt notification"
+        );
+        assert!(
+            content.contains("idle_prompt"),
+            "Script should handle idle_prompt notification"
+        );
+        assert!(
+            content.contains("kild agent-status --self idle --notify"),
+            "Script should call kild agent-status for idle"
+        );
+        assert!(
+            content.contains("kild agent-status --self waiting --notify"),
+            "Script should call kild agent-status for waiting"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&hook_path).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "Script should be executable, mode: {:o}",
+                mode
+            );
+        }
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_status_hook_idempotent() {
+        use std::fs;
+
+        let temp_home =
+            std::env::temp_dir().join(format!("kild_test_claude_hook_idem_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_home);
+        let hook_path = temp_home.join(".kild").join("hooks").join("claude-status");
+
+        let result =
+            ensure_claude_status_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
+        assert!(result.is_ok());
+        let content1 = fs::read_to_string(&hook_path).unwrap();
+
+        let result =
+            ensure_claude_status_hook_with_paths(&KildPaths::from_dir(temp_home.join(".kild")));
+        assert!(result.is_ok());
+        let content2 = fs::read_to_string(&hook_path).unwrap();
+        assert_eq!(
+            content1, content2,
+            "Content should not change on second call"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_settings_creates_new_config() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_claude_settings_new_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(
+            result.is_ok(),
+            "Should create settings from scratch: {:?}",
+            result
+        );
+
+        let settings_path = temp_home.join(".claude").join("settings.json");
+        assert!(settings_path.exists(), "Settings file should be created");
+
+        let content = fs::read_to_string(&settings_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Verify all hook events are present
+        let hooks = parsed["hooks"].as_object().unwrap();
+        assert!(hooks.contains_key("Stop"), "Should have Stop hooks");
+        assert!(
+            hooks.contains_key("Notification"),
+            "Should have Notification hooks"
+        );
+        assert!(
+            hooks.contains_key("SubagentStop"),
+            "Should have SubagentStop hooks"
+        );
+        assert!(
+            hooks.contains_key("TeammateIdle"),
+            "Should have TeammateIdle hooks"
+        );
+        assert!(
+            hooks.contains_key("TaskCompleted"),
+            "Should have TaskCompleted hooks"
+        );
+
+        // Verify Notification has matcher
+        let notification = parsed["hooks"]["Notification"][0].as_object().unwrap();
+        assert_eq!(
+            notification["matcher"], "permission_prompt|idle_prompt",
+            "Notification should have matcher"
+        );
+
+        // Verify hook command points to claude-status
+        assert!(
+            content.contains("claude-status"),
+            "Settings should reference claude-status hook"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_settings_patches_existing_config() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_claude_settings_patch_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let claude_dir = temp_home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::write(
+            claude_dir.join("settings.json"),
+            "{\"permissions\": {\"allow\": [\"Bash(*)\"]}, \"enabledPlugins\": [\"my-plugin\"]}\n",
+        )
+        .unwrap();
+
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(result.is_ok(), "Config patch should succeed: {:?}", result);
+
+        let content = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Existing settings preserved
+        assert!(
+            parsed["permissions"]["allow"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "Bash(*)"),
+            "Existing permissions should be preserved"
+        );
+        assert!(
+            parsed["enabledPlugins"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "my-plugin"),
+            "Existing enabledPlugins should be preserved"
+        );
+
+        // New hooks added
+        assert!(
+            parsed["hooks"]["Stop"].is_array(),
+            "Stop hooks should be added"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_settings_preserves_existing_hooks() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_claude_settings_idem_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let claude_dir = temp_home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        // First call creates the config
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(result.is_ok());
+        let content1 = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+
+        // Second call should skip (already configured)
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(result.is_ok());
+        let content2 = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+        assert_eq!(
+            content1, content2,
+            "Content should not change when already configured"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_settings_preserves_existing_user_hooks() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_claude_settings_user_hooks_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let claude_dir = temp_home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        // Create settings with existing user hooks
+        let existing = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "/usr/local/bin/my-linter"}]
+                }]
+            }
+        });
+        fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(result.is_ok());
+
+        let content = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Existing PreToolUse hook preserved
+        let pre_tool = parsed["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(
+            pre_tool.len(),
+            1,
+            "Existing PreToolUse hooks should be preserved"
+        );
+        assert!(
+            content.contains("my-linter"),
+            "Existing user hook command should be preserved"
+        );
+
+        // Our hooks added
+        assert!(parsed["hooks"]["Stop"].is_array());
+
+        let _ = fs::remove_dir_all(&temp_home);
+    }
+
+    #[test]
+    fn test_ensure_claude_settings_handles_malformed_json() {
+        use std::fs;
+
+        let temp_home = std::env::temp_dir().join(format!(
+            "kild_test_claude_settings_malformed_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&temp_home);
+        let claude_dir = temp_home.join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::write(claude_dir.join("settings.json"), "{invalid json\n").unwrap();
+
+        let result = ensure_claude_settings_with_home(
+            &temp_home,
+            &KildPaths::from_dir(temp_home.join(".kild")),
+        );
+        assert!(result.is_err(), "Should fail on malformed JSON");
+
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("failed to parse"),
+            "Error should mention parse failure, got: {}",
+            err
+        );
+
+        // Verify the file was NOT modified
+        let content = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
+        assert_eq!(
+            content, "{invalid json\n",
+            "Malformed file should not be modified"
+        );
+
+        let _ = fs::remove_dir_all(&temp_home);
     }
 }
