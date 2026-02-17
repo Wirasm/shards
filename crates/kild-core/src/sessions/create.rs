@@ -399,18 +399,14 @@ pub fn create_session(
                 eprintln!("Agent teams will not work in this session.");
             }
 
-            // Spawn attach window (best-effort) and capture terminal info
-            let attach_info =
-                spawn_attach_window(&validated.name, &spawn_id, &worktree.path, kild_config);
-
             AgentProcess::new(
                 validated.agent.clone(),
                 spawn_id,
                 None,
                 None,
                 None,
-                attach_info.as_ref().map(|(tt, _)| tt.clone()),
-                attach_info.map(|(_, wid)| wid),
+                None,
+                None,
                 validated.command.clone(),
                 now.clone(),
                 Some(daemon_result.daemon_session_id),
@@ -419,11 +415,11 @@ pub fn create_session(
     };
 
     // 6. Create session record
-    let session = Session::new(
+    let mut session = Session::new(
         session_id.clone(),
         project_id,
         validated.name.clone(),
-        worktree.path,
+        worktree.path.clone(),
         validated.agent.clone(),
         SessionStatus::Active,
         now.clone(),
@@ -438,8 +434,27 @@ pub fn create_session(
         Some(request.runtime_mode.clone()),
     );
 
-    // 7. Save session to file
+    // 7. Save session BEFORE spawning attach window so `kild attach` can find it
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
+
+    // 8. Spawn attach window (best-effort) and update session with terminal info
+    if request.runtime_mode == crate::state::types::RuntimeMode::Daemon {
+        let attach_spawn_id = session
+            .latest_agent()
+            .map(|a| a.spawn_id().to_string())
+            .unwrap_or_default();
+        if let Some((tt, wid)) = spawn_attach_window(
+            &validated.name,
+            &attach_spawn_id,
+            &session.worktree_path,
+            kild_config,
+        ) {
+            if let Some(agent) = session.latest_agent_mut() {
+                agent.set_attach_info(tt, wid);
+            }
+            persistence::save_session_to_file(&session, &config.sessions_dir())?;
+        }
+    }
 
     info!(
         event = "core.session.create_completed",
