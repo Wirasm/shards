@@ -108,6 +108,10 @@ impl KildPaths {
         self.hooks_dir().join("codex-notify")
     }
 
+    pub fn claude_status_hook(&self) -> PathBuf {
+        self.hooks_dir().join("claude-status")
+    }
+
     pub fn pid_file(&self, session_id: &str) -> PathBuf {
         let safe_id = session_id.replace('/', "-");
         self.pids_dir().join(format!("{safe_id}.pid"))
@@ -277,6 +281,14 @@ mod tests {
         assert_eq!(
             test_paths().codex_notify_hook(),
             PathBuf::from("/home/user/.kild/hooks/codex-notify")
+        );
+    }
+
+    #[test]
+    fn test_claude_status_hook() {
+        assert_eq!(
+            test_paths().claude_status_hook(),
+            PathBuf::from("/home/user/.kild/hooks/claude-status")
         );
     }
 

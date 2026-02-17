@@ -65,6 +65,18 @@ pub fn codex_env_vars(agent: &str, branch: &str) -> Vec<(String, String)> {
     }
 }
 
+/// Build env vars for Claude Code agent sessions.
+///
+/// Returns `KILD_SESSION_BRANCH` so the Claude Code status hook can identify
+/// which kild session to report status for via `kild agent-status --self`.
+/// Returns an empty vec for non-Claude agents.
+pub fn claude_env_vars(agent: &str, branch: &str) -> Vec<(String, String)> {
+    match agent {
+        "claude" => vec![("KILD_SESSION_BRANCH".into(), branch.into())],
+        _ => vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,11 +191,32 @@ mod tests {
 
     #[test]
     fn test_codex_env_vars_other_agents() {
-        for agent in &["claude", "kiro", "gemini", "amp", "opencode"] {
+        for agent in &["kiro", "gemini", "amp", "opencode"] {
             let vars = codex_env_vars(agent, "my-branch");
             assert!(
                 vars.is_empty(),
                 "agent '{}' should not have codex env vars",
+                agent
+            );
+        }
+    }
+
+    #[test]
+    fn test_claude_env_vars_claude_agent() {
+        let vars = claude_env_vars("claude", "my-feature");
+        assert_eq!(
+            vars,
+            vec![("KILD_SESSION_BRANCH".to_string(), "my-feature".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_claude_env_vars_other_agents() {
+        for agent in &["codex", "kiro", "gemini", "amp", "opencode"] {
+            let vars = claude_env_vars(agent, "my-branch");
+            assert!(
+                vars.is_empty(),
+                "agent '{}' should not have claude env vars",
                 agent
             );
         }
