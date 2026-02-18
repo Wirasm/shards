@@ -18,13 +18,8 @@ pub fn keystroke_to_escape(keystroke: &Keystroke, app_cursor_mode: bool) -> Opti
         return None;
     }
 
-    // Cmd+J/K/D: reserved for kild navigation (handled by MainView)
-    let cmd = keystroke.modifiers.platform;
-    if cmd && matches!(key, "j" | "k" | "d") {
-        return None;
-    }
-
     // Cmd+nav: macOS line-level shortcuts
+    let cmd = keystroke.modifiers.platform;
     if cmd {
         return match key {
             "backspace" => Some(vec![0x15]), // Ctrl+U: delete to beginning of line
@@ -334,17 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_j_returns_none() {
+    fn test_cmd_keys_not_in_line_nav_return_none() {
+        // cmd+j/k/d are not in the hardcoded line-navigation set, so they fall
+        // through to None. Nav-shortcut interception for these keys happens
+        // upstream in TerminalView::handle_key_event via matches_any_nav_shortcut,
+        // not inside keystroke_to_escape.
         assert_eq!(keystroke_to_escape(&cmd_key("j"), false), None);
-    }
-
-    #[test]
-    fn test_cmd_k_returns_none() {
         assert_eq!(keystroke_to_escape(&cmd_key("k"), false), None);
-    }
-
-    #[test]
-    fn test_cmd_d_returns_none() {
         assert_eq!(keystroke_to_escape(&cmd_key("d"), false), None);
     }
 

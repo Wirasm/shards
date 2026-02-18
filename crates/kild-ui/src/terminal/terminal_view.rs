@@ -9,6 +9,7 @@ use super::input;
 use super::state::Terminal;
 use super::terminal_element::{MouseState, TerminalElement};
 use crate::theme;
+use crate::views::main_view::keybindings::UiKeybindings;
 
 /// GPUI View wrapping TerminalElement with focus management and keyboard routing.
 ///
@@ -24,6 +25,8 @@ pub struct TerminalView {
     /// Mouse state passed to TerminalElement on each render.
     /// TerminalElement is reconstructed every frame -- do not cache instances.
     mouse_state: MouseState,
+    /// Parsed keybindings for routing keys between PTY and MainView.
+    keybindings: UiKeybindings,
 }
 
 impl TerminalView {
@@ -34,6 +37,7 @@ impl TerminalView {
     /// batching task via `cx.spawn()` so it can notify GPUI to repaint.
     pub fn from_terminal(
         mut terminal: Terminal,
+        keybindings: UiKeybindings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -74,6 +78,7 @@ impl TerminalView {
                 position: None,
                 cmd_held: false,
             },
+            keybindings,
         }
     }
 
@@ -82,7 +87,11 @@ impl TerminalView {
     /// Used when creating terminals from async contexts (daemon attach) where
     /// `&mut Window` is not available. Focus is applied later by the caller
     /// via `focus_active_terminal()`.
-    pub fn from_terminal_unfocused(mut terminal: Terminal, cx: &mut Context<Self>) -> Self {
+    pub fn from_terminal_unfocused(
+        mut terminal: Terminal,
+        keybindings: UiKeybindings,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
 
         let (byte_rx, event_rx) = terminal.take_channels().expect(
@@ -118,6 +127,7 @@ impl TerminalView {
                 position: None,
                 cmd_held: false,
             },
+            keybindings,
         }
     }
 
@@ -188,8 +198,10 @@ impl TerminalView {
             return;
         }
 
-        // Cmd+J/K/D: reserved for kild navigation — propagate to MainView
-        if cmd && matches!(key, "j" | "k" | "d") {
+        // Nav shortcuts: propagate to MainView instead of sending to the PTY.
+        // Includes focus_escape so Ctrl+Escape reaches MainView rather than
+        // being encoded as \x1b.
+        if self.keybindings.matches_any_nav_shortcut(&event.keystroke) {
             cx.propagate();
             return;
         }
@@ -202,8 +214,8 @@ impl TerminalView {
             cmd = cmd,
         );
 
-        // Cmd+C: copy selection to clipboard and clear it, or send Ctrl+C (SIGINT) if no selection
-        if cmd && key == "c" {
+        // Copy: copy selection or send SIGINT
+        if self.keybindings.terminal.copy.matches(&event.keystroke) {
             let text = self.terminal.term().lock().selection_to_string();
             if let Some(text) = text {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -217,8 +229,8 @@ impl TerminalView {
             return;
         }
 
-        // Cmd+V: paste clipboard to PTY stdin
-        if cmd && key == "v" {
+        // Paste: paste clipboard to PTY stdin
+        if self.keybindings.terminal.paste.matches(&event.keystroke) {
             if let Some(clipboard) = cx.read_from_clipboard()
                 && let Some(text) = clipboard.text()
                 && let Err(e) = self.terminal.write_to_pty(text.as_bytes())
@@ -287,7 +299,10 @@ impl Render for TerminalView {
                     .bg(theme::ember())
                     .text_color(theme::text_white())
                     .text_size(px(theme::TEXT_SM))
-                    .child(format!("Terminal error: {msg}. Ctrl+Esc to return.")),
+                    .child(format!(
+                        "Terminal error: {msg}. {} to return.",
+                        self.keybindings.terminal.focus_escape.hint_str()
+                    )),
             );
         }
 
