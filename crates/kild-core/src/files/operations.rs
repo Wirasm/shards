@@ -2,7 +2,6 @@ use crate::files::{
     errors::FileError,
     types::{CopyOptions, IncludeConfig, PatternRule},
 };
-use glob::Pattern;
 use ignore::WalkBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,13 +13,8 @@ pub fn validate_patterns(config: &IncludeConfig) -> Result<Vec<PatternRule>, Fil
     let mut rules = Vec::new();
 
     for pattern_str in &config.patterns {
-        match Pattern::new(pattern_str) {
-            Ok(compiled) => {
-                rules.push(PatternRule {
-                    pattern: pattern_str.clone(),
-                    compiled,
-                });
-            }
+        match PatternRule::new(pattern_str.clone()) {
+            Ok(rule) => rules.push(rule),
             Err(e) => {
                 return Err(FileError::InvalidPattern {
                     pattern: pattern_str.clone(),
@@ -106,7 +100,7 @@ pub fn find_matching_files(
                 // Check if any pattern matches
                 let path_str = relative_path.to_string_lossy();
                 for rule in rules {
-                    if rule.compiled.matches(&path_str) {
+                    if rule.compiled().matches(&path_str) {
                         matching_files.push(path.to_path_buf());
                         debug!(
                             event = "core.files.pattern.matched",

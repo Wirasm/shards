@@ -1,8 +1,5 @@
 use std::error::Error;
 
-// Re-export ConfigError from kild-config for backward compatibility
-pub use kild_config::ConfigError;
-
 /// Base trait for all application errors
 pub trait KildError: Error + Send + Sync + 'static {
     /// Error code for programmatic handling
@@ -17,23 +14,22 @@ pub trait KildError: Error + Send + Sync + 'static {
 /// Common result type for the application
 pub type KildResult<T> = Result<T, Box<dyn KildError>>;
 
-impl KildError for ConfigError {
+impl KildError for kild_config::ConfigError {
     fn error_code(&self) -> &'static str {
         match self {
-            ConfigError::ConfigNotFound { .. } => "CONFIG_NOT_FOUND",
-            ConfigError::ConfigParseError { .. } => "CONFIG_PARSE_ERROR",
-            ConfigError::InvalidAgent { .. } => "INVALID_AGENT",
-            ConfigError::InvalidConfiguration { .. } => "INVALID_CONFIGURATION",
-            ConfigError::IoError { .. } => "CONFIG_IO_ERROR",
+            kild_config::ConfigError::ConfigParseError { .. } => "CONFIG_PARSE_ERROR",
+            kild_config::ConfigError::InvalidAgent { .. } => "INVALID_AGENT",
+            kild_config::ConfigError::InvalidConfiguration { .. } => "INVALID_CONFIGURATION",
+            kild_config::ConfigError::IoError { .. } => "CONFIG_IO_ERROR",
         }
     }
 
     fn is_user_error(&self) -> bool {
         matches!(
             self,
-            ConfigError::ConfigParseError { .. }
-                | ConfigError::InvalidAgent { .. }
-                | ConfigError::InvalidConfiguration { .. }
+            kild_config::ConfigError::ConfigParseError { .. }
+                | kild_config::ConfigError::InvalidAgent { .. }
+                | kild_config::ConfigError::InvalidConfiguration { .. }
         )
     }
 }
@@ -50,7 +46,7 @@ mod tests {
     #[test]
     fn test_config_error_display() {
         use crate::agents::supported_agents_string;
-        let error = ConfigError::InvalidAgent {
+        let error = kild_config::ConfigError::InvalidAgent {
             agent: "unknown".to_string(),
             supported_agents: supported_agents_string(),
         };
@@ -75,7 +71,7 @@ mod tests {
 
     #[test]
     fn test_config_parse_error() {
-        let error = ConfigError::ConfigParseError {
+        let error = kild_config::ConfigError::ConfigParseError {
             message: "invalid TOML syntax".to_string(),
         };
         assert_eq!(

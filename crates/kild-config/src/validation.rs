@@ -128,4 +128,33 @@ mod tests {
 
         assert!(validate_config(&config).is_ok());
     }
+
+    #[test]
+    fn test_config_validation_invalid_include_pattern() {
+        use crate::include_config::IncludeConfig;
+        let mut config = KildConfig::default();
+        config.include_patterns = Some(IncludeConfig {
+            patterns: vec!["[invalid-glob".to_string()],
+            enabled: true,
+            max_file_size: None,
+        });
+        let result = validate_config(&config);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigError::InvalidConfiguration { .. }
+        ));
+    }
+
+    #[test]
+    fn test_config_validation_valid_include_patterns() {
+        use crate::include_config::IncludeConfig;
+        let mut config = KildConfig::default();
+        config.include_patterns = Some(IncludeConfig {
+            patterns: vec![".env*".to_string(), "*.local.json".to_string()],
+            enabled: true,
+            max_file_size: None,
+        });
+        assert!(validate_config(&config).is_ok());
+    }
 }

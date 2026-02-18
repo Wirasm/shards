@@ -32,6 +32,13 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
 
     let config = Config::new();
     let forge_override = kild_config::KildConfig::load_hierarchy()
+        .inspect_err(|e| {
+            warn!(
+                event = "core.session.config_load_failed",
+                error = %e,
+                "Could not load config for forge override — falling back to auto-detection"
+            );
+        })
         .ok()
         .and_then(|c| c.git.forge());
 
@@ -183,6 +190,13 @@ pub fn complete_session(name: &str) -> Result<CompleteResult, SessionError> {
 /// Returns `None` if no forge detected, CLI unavailable, no PR, or fetch error.
 pub fn fetch_pr_info(worktree_path: &Path, branch: &str) -> Option<crate::forge::types::PrInfo> {
     let forge_override = kild_config::KildConfig::load_hierarchy()
+        .inspect_err(|e| {
+            warn!(
+                event = "core.session.config_load_failed",
+                error = %e,
+                "Could not load config for forge override — falling back to auto-detection"
+            );
+        })
         .ok()
         .and_then(|c| c.git.forge());
 

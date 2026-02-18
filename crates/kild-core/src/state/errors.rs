@@ -1,6 +1,7 @@
-use crate::errors::{ConfigError, KildError};
+use crate::errors::KildError;
 use crate::projects::errors::ProjectError;
 use crate::sessions::errors::SessionError;
+use kild_config::ConfigError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DispatchError {
@@ -60,7 +61,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_error_from_config_error() {
-        let config_err = crate::errors::ConfigError::ConfigParseError {
+        let config_err = kild_config::ConfigError::ConfigParseError {
             message: "invalid TOML".to_string(),
         };
         let dispatch_err = DispatchError::from(config_err);
@@ -74,7 +75,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_error_config_delegates_error_code() {
-        let err = DispatchError::Config(crate::errors::ConfigError::InvalidAgent {
+        let err = DispatchError::Config(kild_config::ConfigError::InvalidAgent {
             agent: "bad".to_string(),
             supported_agents: crate::agents::supported_agents_string(),
         });
@@ -84,7 +85,7 @@ mod tests {
     #[test]
     fn test_dispatch_error_config_io_is_not_user_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err = DispatchError::Config(crate::errors::ConfigError::IoError { source: io_err });
+        let err = DispatchError::Config(kild_config::ConfigError::IoError { source: io_err });
         assert!(!err.is_user_error());
     }
 

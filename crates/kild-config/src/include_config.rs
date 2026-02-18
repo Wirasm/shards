@@ -57,8 +57,24 @@ impl IncludeConfig {
 pub struct PatternRule {
     /// Original pattern string for logging and error messages
     pub pattern: String,
-    /// Compiled glob pattern for efficient matching
-    pub compiled: glob::Pattern,
+    /// Compiled glob pattern for efficient matching.
+    /// Private to enforce the invariant that `pattern` and `compiled` always match.
+    compiled: glob::Pattern,
+}
+
+impl PatternRule {
+    /// Create a new `PatternRule` by compiling the given pattern string.
+    ///
+    /// Returns an error if the pattern is not valid glob syntax.
+    pub fn new(pattern: String) -> Result<Self, glob::PatternError> {
+        let compiled = glob::Pattern::new(&pattern)?;
+        Ok(Self { pattern, compiled })
+    }
+
+    /// Return the compiled glob pattern.
+    pub fn compiled(&self) -> &glob::Pattern {
+        &self.compiled
+    }
 }
 
 /// Options for copying files safely with validation.
@@ -66,6 +82,54 @@ pub struct PatternRule {
 pub struct CopyOptions {
     /// Optional maximum file size in bytes
     pub max_file_size: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_rejects_invalid_glob() {
+        let config = IncludeConfig {
+            patterns: vec!["[bad-glob".to_string()],
+            enabled: true,
+            max_file_size: None,
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_accepts_valid_globs() {
+        let config = IncludeConfig {
+            patterns: vec![".env*".to_string(), "**/*.local.json".to_string()],
+            enabled: true,
+            max_file_size: None,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_patterns_is_ok() {
+        let config = IncludeConfig {
+            patterns: vec![],
+            enabled: true,
+            max_file_size: None,
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_pattern_rule_new_valid() {
+        let rule = PatternRule::new(".env*".to_string()).unwrap();
+        assert_eq!(rule.pattern, ".env*");
+        assert!(rule.compiled().matches(".env.local"));
+        assert!(!rule.compiled().matches("src/main.rs"));
+    }
+
+    #[test]
+    fn test_pattern_rule_new_invalid() {
+        assert!(PatternRule::new("[bad-pattern".to_string()).is_err());
+    }
 }
 
 fn default_enabled() -> bool {

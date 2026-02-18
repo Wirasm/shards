@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each variant represents a known code forge that can host
 /// git repositories and provide PR/MR functionality.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ForgeType {
