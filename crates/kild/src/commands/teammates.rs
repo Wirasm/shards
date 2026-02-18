@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use kild_core::daemon::client;
 use kild_core::events;
@@ -53,14 +53,24 @@ pub(crate) fn handle_teammates_command(
         }
     };
 
-    // 3. Enrich with live daemon status
+    // 3. Enrich with live daemon status (best-effort; daemon may be unavailable)
     let enriched: Vec<_> = members
         .iter()
         .map(|m| {
-            let status = m
-                .daemon_session_id
-                .as_deref()
-                .and_then(|sid| client::get_session_status(sid).ok().flatten());
+            let status = m.daemon_session_id.as_deref().and_then(|sid| {
+                match client::get_session_status(sid) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        debug!(
+                            event = "cli.teammates.status_fetch_failed",
+                            pane_id = m.pane_id,
+                            daemon_session_id = sid,
+                            error = %e
+                        );
+                        None
+                    }
+                }
+            });
             (m, status)
         })
         .collect();
@@ -69,12 +79,13 @@ pub(crate) fn handle_teammates_command(
         let json: Vec<_> = enriched
             .iter()
             .map(|(m, status)| {
+                let role = if m.is_leader() { "leader" } else { "teammate" };
                 serde_json::json!({
                     "pane_id": m.pane_id,
                     "name": m.name,
-                    "role": if m.is_leader { "leader" } else { "teammate" },
+                    "role": role,
                     "daemon_session_id": m.daemon_session_id,
-                    "status": status.as_ref().map(|s| format!("{}", s)),
+                    "status": status.as_ref().map(|s| s.to_string()),
                 })
             })
             .collect();
@@ -89,9 +100,9 @@ pub(crate) fn handle_teammates_command(
             color::muted("STATUS"),
         );
         for (m, status) in &enriched {
-            let role = if m.is_leader { "leader" } else { "teammate" };
+            let role = if m.is_leader() { "leader" } else { "teammate" };
             let status_str = match status {
-                Some(s) => format!("{}", s),
+                Some(s) => s.to_string(),
                 None => "-".to_string(),
             };
             println!(

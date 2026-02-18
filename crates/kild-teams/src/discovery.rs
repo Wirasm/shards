@@ -38,6 +38,21 @@ pub fn discover_teammates(session_id: &str) -> Result<Option<Vec<TeamMember>>, T
     discover_teammates_from_path(&registry_path)
 }
 
+/// Resolve the display name for a pane.
+///
+/// Uses the pane's title if set, otherwise falls back to "leader" for %0
+/// and "teammate-N" for all others.
+fn pane_display_name(title: &str, pane_id: &str, is_leader: bool) -> String {
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    if is_leader {
+        "leader".to_string()
+    } else {
+        format!("teammate-{}", pane_id.trim_start_matches('%'))
+    }
+}
+
 /// Discover teammates from a specific registry path (for testing).
 pub fn discover_teammates_from_path(
     registry_path: &std::path::Path,
@@ -57,28 +72,15 @@ pub fn discover_teammates_from_path(
         .iter()
         .filter(|(_, pane)| !pane.hidden)
         .map(|(pane_id, pane)| {
-            let is_leader = pane_id == "%0";
-            let name = if pane.title.is_empty() {
-                if is_leader {
-                    "leader".to_string()
-                } else {
-                    format!("teammate-{}", pane_id.trim_start_matches('%'))
-                }
-            } else {
-                pane.title.clone()
-            };
-
             let color = TeamColor::from_border_style(&pane.border_style);
-
             TeamMember {
-                name,
-                agent_id: String::new(),
-                agent_type: String::new(),
+                name: pane_display_name(&pane.title, pane_id, pane_id == "%0"),
+                agent_id: None,
+                agent_type: None,
                 color,
                 pane_id: pane_id.clone(),
                 daemon_session_id: Some(pane.daemon_session_id.clone()),
                 is_active: true,
-                is_leader,
             }
         })
         .collect();
@@ -115,13 +117,13 @@ mod tests {
 
         // Leader
         assert_eq!(members[0].pane_id, "%0");
-        assert!(members[0].is_leader);
+        assert!(members[0].is_leader());
         assert_eq!(members[0].name, "leader");
         assert_eq!(members[0].daemon_session_id.as_deref(), Some("d-0"));
 
         // Teammate
         assert_eq!(members[1].pane_id, "%1");
-        assert!(!members[1].is_leader);
+        assert!(!members[1].is_leader());
         assert_eq!(members[1].name, "researcher");
         assert_eq!(members[1].color, TeamColor::Blue);
         assert_eq!(members[1].daemon_session_id.as_deref(), Some("d-1"));

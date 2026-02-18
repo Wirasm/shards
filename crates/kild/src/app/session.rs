@@ -166,7 +166,8 @@ pub fn stop_command() -> Command {
                 .long("pane")
                 .help("Stop a specific teammate pane (e.g. %1, %2)")
                 .value_name("PANE_ID")
-                .conflicts_with("all"),
+                .conflicts_with("all")
+                .requires("branch"),
         )
 }
 

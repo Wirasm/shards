@@ -97,18 +97,14 @@ pub fn parse_team_config(path: &Path) -> Result<Option<TeamState>, TeamsError> {
     let members = raw
         .members
         .into_iter()
-        .map(|m| {
-            let is_leader = m.tmux_pane_id.is_empty() || m.tmux_pane_id == "%0";
-            TeamMember {
-                name: m.name,
-                agent_id: m.agent_id,
-                agent_type: m.agent_type,
-                color: TeamColor::parse(&m.color),
-                pane_id: m.tmux_pane_id,
-                daemon_session_id: None,
-                is_active: m.is_active,
-                is_leader,
-            }
+        .map(|m| TeamMember {
+            name: m.name,
+            agent_id: (!m.agent_id.is_empty()).then_some(m.agent_id),
+            agent_type: (!m.agent_type.is_empty()).then_some(m.agent_type),
+            color: TeamColor::parse(&m.color),
+            pane_id: m.tmux_pane_id,
+            daemon_session_id: None,
+            is_active: m.is_active,
         })
         .collect();
 
@@ -175,7 +171,7 @@ mod tests {
         assert_eq!(result.members[0].color, TeamColor::Blue);
         assert_eq!(result.members[0].pane_id, "%1");
         assert!(result.members[0].is_active);
-        assert!(!result.members[0].is_leader);
+        assert!(!result.members[0].is_leader());
     }
 
     #[test]
@@ -198,8 +194,8 @@ mod tests {
         .unwrap();
 
         let result = parse_team_config(&config_path).unwrap().unwrap();
-        assert!(result.members[0].is_leader);
-        assert!(!result.members[1].is_leader);
+        assert!(result.members[0].is_leader());
+        assert!(!result.members[1].is_leader());
     }
 
     #[test]
@@ -216,7 +212,7 @@ mod tests {
         .unwrap();
 
         let result = parse_team_config(&config_path).unwrap().unwrap();
-        assert!(result.members[0].is_leader);
+        assert!(result.members[0].is_leader());
     }
 
     #[test]
@@ -233,7 +229,7 @@ mod tests {
         assert_eq!(result.members.len(), 1);
         assert_eq!(result.members[0].name, "");
         assert_eq!(result.members[0].color, TeamColor::Unknown);
-        assert!(result.members[0].is_leader); // empty pane_id = leader
+        assert!(result.members[0].is_leader()); // empty pane_id = leader
     }
 
     #[test]

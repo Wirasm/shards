@@ -106,6 +106,11 @@ pub enum SessionError {
     NoTeammates { name: String },
 
     #[error(
+        "Pane %0 is the leader session for '{branch}'. Use 'kild stop {branch}' to stop the leader."
+    )]
+    LeaderPaneStop { branch: String },
+
+    #[error(
         "Pane '{pane_id}' not found in session '{branch}'. Use 'kild teammates {branch}' to list panes."
     )]
     PaneNotFound { pane_id: String, branch: String },
@@ -141,6 +146,7 @@ impl KildError for SessionError {
             SessionError::ResumeNoSessionId { .. } => "RESUME_NO_SESSION_ID",
             SessionError::NoTeammates { .. } => "SESSION_NO_TEAMMATES",
             SessionError::PaneNotFound { .. } => "SESSION_PANE_NOT_FOUND",
+            SessionError::LeaderPaneStop { .. } => "SESSION_LEADER_PANE_STOP",
         }
     }
 
@@ -168,6 +174,7 @@ impl KildError for SessionError {
                 | SessionError::ResumeNoSessionId { .. }
                 | SessionError::NoTeammates { .. }
                 | SessionError::PaneNotFound { .. }
+                | SessionError::LeaderPaneStop { .. }
         )
     }
 }
@@ -422,6 +429,42 @@ mod tests {
         assert!(error.to_string().contains("connection refused"));
         assert_eq!(error.error_code(), "DAEMON_ERROR");
         assert!(!error.is_user_error());
+    }
+
+    #[test]
+    fn test_no_teammates_error() {
+        let error = SessionError::NoTeammates {
+            name: "auth".to_string(),
+        };
+        assert!(error.to_string().contains("auth"));
+        assert!(error.to_string().contains("no teammates"));
+        assert_eq!(error.error_code(), "SESSION_NO_TEAMMATES");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_pane_not_found_error() {
+        let error = SessionError::PaneNotFound {
+            pane_id: "%2".to_string(),
+            branch: "auth".to_string(),
+        };
+        assert!(error.to_string().contains("%2"));
+        assert!(error.to_string().contains("auth"));
+        assert!(error.to_string().contains("kild teammates auth"));
+        assert_eq!(error.error_code(), "SESSION_PANE_NOT_FOUND");
+        assert!(error.is_user_error());
+    }
+
+    #[test]
+    fn test_leader_pane_stop_error() {
+        let error = SessionError::LeaderPaneStop {
+            branch: "auth".to_string(),
+        };
+        assert!(error.to_string().contains("%0"));
+        assert!(error.to_string().contains("auth"));
+        assert!(error.to_string().contains("kild stop auth"));
+        assert_eq!(error.error_code(), "SESSION_LEADER_PANE_STOP");
+        assert!(error.is_user_error());
     }
 
     #[test]

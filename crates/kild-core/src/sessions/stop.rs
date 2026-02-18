@@ -193,6 +193,12 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
 /// * `branch` - Branch name of the parent kild session
 /// * `pane_id` - Pane ID to stop (e.g. "%1", "%2")
 pub fn stop_teammate(branch: &str, pane_id: &str) -> Result<(), SessionError> {
+    if pane_id == "%0" {
+        return Err(SessionError::LeaderPaneStop {
+            branch: branch.to_string(),
+        });
+    }
+
     info!(
         event = "core.session.stop_teammate_started",
         branch = branch,
@@ -227,15 +233,17 @@ pub fn stop_teammate(branch: &str, pane_id: &str) -> Result<(), SessionError> {
             message: format!("corrupt panes.json: {}", e),
         })?;
 
-    let daemon_session_id = registry
-        .get("panes")
-        .and_then(|p| p.get(pane_id))
-        .and_then(|e| e.get("daemon_session_id"))
+    let pane_not_found = || SessionError::PaneNotFound {
+        pane_id: pane_id.to_string(),
+        branch: branch.to_string(),
+    };
+
+    let panes = registry.get("panes").ok_or_else(pane_not_found)?;
+    let pane_entry = panes.get(pane_id).ok_or_else(pane_not_found)?;
+    let daemon_session_id = pane_entry
+        .get("daemon_session_id")
         .and_then(|s| s.as_str())
-        .ok_or_else(|| SessionError::PaneNotFound {
-            pane_id: pane_id.to_string(),
-            branch: branch.to_string(),
-        })?
+        .ok_or_else(pane_not_found)?
         .to_string();
 
     crate::daemon::client::destroy_daemon_session(&daemon_session_id, false).map_err(|e| {
@@ -704,23 +712,11 @@ mod tests {
     }
 
     #[test]
-    fn test_stop_teammate_pane_error_is_user_error() {
-        use crate::errors::KildError;
-        let err = SessionError::PaneNotFound {
-            pane_id: "%2".to_string(),
-            branch: "auth".to_string(),
-        };
-        assert!(err.is_user_error());
-        assert_eq!(err.error_code(), "SESSION_PANE_NOT_FOUND");
-    }
-
-    #[test]
-    fn test_stop_teammate_no_teammates_is_user_error() {
-        use crate::errors::KildError;
-        let err = SessionError::NoTeammates {
-            name: "auth".to_string(),
-        };
-        assert!(err.is_user_error());
-        assert_eq!(err.error_code(), "SESSION_NO_TEAMMATES");
+    fn test_stop_teammate_rejects_leader_pane() {
+        let result = stop_teammate("my-branch", "%0");
+        assert!(
+            matches!(result.unwrap_err(), SessionError::LeaderPaneStop { .. }),
+            "Stopping leader pane %0 should return LeaderPaneStop error"
+        );
     }
 }
