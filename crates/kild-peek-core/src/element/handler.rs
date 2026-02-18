@@ -1,8 +1,13 @@
+use std::thread;
+use std::time::{Duration, Instant};
+
 use tracing::{info, warn};
 
 use super::accessibility;
 use super::errors::ElementError;
-use super::types::{ElementInfo, ElementsRequest, ElementsResult, FindMode, FindRequest};
+use super::types::{
+    ElementInfo, ElementsRequest, ElementsResult, FindMode, FindRequest, WaitRequest, WaitResult,
+};
 use crate::interact::InteractionTarget;
 use crate::window::{
     WindowError, WindowInfo, find_window_by_app, find_window_by_app_and_title,
@@ -198,6 +203,101 @@ pub fn find_element(request: &FindRequest) -> Result<ElementInfo, ElementError> 
                 count,
             })
         }
+    }
+}
+
+const ELEMENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Wait for an element with the given text to appear or disappear
+///
+/// Polls the element tree every 100ms until:
+/// - `until_gone = false`: element matching `request.text()` is found → returns `WaitResult::appeared`
+/// - `until_gone = true`: no element matching `request.text()` is found → returns `WaitResult::gone`
+///
+/// If the window disappears while waiting for an element to be gone, treats
+/// it as success (element is gone because window closed).
+///
+/// # Errors
+///
+/// Returns `WaitTimeoutElementNotFound` or `WaitTimeoutElementStillExists` on timeout.
+/// Returns `AccessibilityPermissionDenied` if permission is not granted.
+pub fn wait_for_element(request: &WaitRequest) -> Result<WaitResult, ElementError> {
+    info!(
+        event = "peek.core.element.wait_started",
+        text = request.text(),
+        until_gone = request.until_gone(),
+        timeout_ms = request.timeout_ms()
+    );
+
+    check_accessibility_permission()?;
+
+    let start = Instant::now();
+    let timeout = Duration::from_millis(request.timeout_ms());
+
+    loop {
+        if start.elapsed() >= timeout {
+            let timeout_error = if request.until_gone() {
+                ElementError::WaitTimeoutElementStillExists {
+                    text: request.text().to_string(),
+                    timeout_ms: request.timeout_ms(),
+                }
+            } else {
+                ElementError::WaitTimeoutElementNotFound {
+                    text: request.text().to_string(),
+                    timeout_ms: request.timeout_ms(),
+                }
+            };
+            return Err(timeout_error);
+        }
+
+        let found = match list_elements(&ElementsRequest::new(request.target().clone())) {
+            Ok(result) => result
+                .elements()
+                .iter()
+                .any(|e| e.matches_text(request.text())),
+            Err(ElementError::WindowNotFound { .. })
+            | Err(ElementError::WindowNotFoundByApp { .. })
+            | Err(ElementError::WaitTimeoutByTitle { .. })
+            | Err(ElementError::WaitTimeoutByApp { .. })
+            | Err(ElementError::WaitTimeoutByAppAndTitle { .. }) => {
+                if request.until_gone() {
+                    // Window gone means element is gone — success
+                    false
+                } else {
+                    // Window not yet available — keep polling
+                    thread::sleep(ELEMENT_POLL_INTERVAL);
+                    continue;
+                }
+            }
+            Err(e) => {
+                warn!(
+                    event = "peek.core.element.wait_error",
+                    text = request.text(),
+                    elapsed_ms = start.elapsed().as_millis() as u64,
+                    error = %e
+                );
+                return Err(e);
+            }
+        };
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let condition_met = (!request.until_gone() && found) || (request.until_gone() && !found);
+
+        if condition_met {
+            let result = if request.until_gone() {
+                WaitResult::gone(request.text(), elapsed_ms)
+            } else {
+                WaitResult::appeared(request.text(), elapsed_ms)
+            };
+            info!(
+                event = "peek.core.element.wait_completed",
+                text = request.text(),
+                elapsed_ms = elapsed_ms
+            );
+            return Ok(result);
+        }
+
+        thread::sleep(ELEMENT_POLL_INTERVAL);
     }
 }
 
@@ -474,6 +574,43 @@ mod tests {
             }
             other => panic!("Expected InvalidRegex error, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_wait_for_element_timeout_immediately() {
+        let request = WaitRequest::new(
+            InteractionTarget::Window {
+                title: "NONEXISTENT_WINDOW_WAIT_TEST_XYZ".to_string(),
+            },
+            "some text",
+            1, // 1ms timeout — expires after first poll
+        );
+        let result = wait_for_element(&request);
+        match result {
+            Err(ElementError::WaitTimeoutElementNotFound { .. }) => {}
+            Err(ElementError::AccessibilityPermissionDenied) => {}
+            other => panic!(
+                "Expected WaitTimeoutElementNotFound or AccessibilityPermissionDenied, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_wait_for_element_until_gone_window_not_found_is_success() {
+        // Window doesn't exist = element is gone = success for until_gone
+        // Requires accessibility permissions to run
+        let request = WaitRequest::new(
+            InteractionTarget::Window {
+                title: "NONEXISTENT_WINDOW_WAIT_TEST_XYZ".to_string(),
+            },
+            "some text",
+            5000,
+        )
+        .with_until_gone();
+        let result = wait_for_element(&request).expect("Should succeed when window not found");
+        assert!(result.until_gone());
     }
 
     // Integration tests requiring accessibility permissions

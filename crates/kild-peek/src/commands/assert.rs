@@ -13,6 +13,7 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
     let app_name = matches.get_one::<String>("app");
     let exists_flag = matches.get_flag("exists");
     let visible_flag = matches.get_flag("visible");
+    let contains_text_flag = matches.get_one::<String>("contains-text").is_some();
     let similar_path = matches.get_one::<String>("similar");
     let threshold_percent = *matches.get_one::<u8>("threshold").unwrap_or(&95);
     let json_output = matches.get_flag("json");
@@ -29,9 +30,9 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
     } {
         Ok(title) => title,
         Err(e) => {
-            // For --exists/--visible, window-not-found is an assertion failure, not an error.
+            // For --exists/--visible/--contains-text, window-not-found is an assertion failure, not an error.
             // Print the failure output so agents and scripts get diagnostic info.
-            if exists_flag || visible_flag {
+            if exists_flag || visible_flag || contains_text_flag {
                 if json_output {
                     let result = AssertionResult::fail(e.to_string());
                     println!("{}", serde_json::to_string_pretty(&result)?);
@@ -67,8 +68,15 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
             wait_flag,
             timeout_ms,
         )?
+    } else if let Some(text) = matches.get_one::<String>("contains-text") {
+        if resolved_title.is_empty() {
+            return Err("--window or --app is required with --contains-text".into());
+        }
+        Assertion::element_exists(&resolved_title, text.as_str())
     } else {
-        return Err("One of --exists, --visible, or --similar must be specified".into());
+        return Err(
+            "One of --exists, --visible, --similar, or --contains-text must be specified".into(),
+        );
     };
 
     info!(event = "peek.cli.assert_started", assertion = ?assertion);
@@ -78,10 +86,7 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let status = match result.passed {
-                    true => "PASS",
-                    false => "FAIL",
-                };
+                let status = if result.passed { "PASS" } else { "FAIL" };
                 println!("Assertion: {}", status);
                 println!("  {}", result.message);
             }

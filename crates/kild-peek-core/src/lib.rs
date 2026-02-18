@@ -33,7 +33,7 @@ pub use screenshot::{CaptureRequest, CaptureResult, CaptureTarget, ImageFormat};
 pub use diff::{DiffRequest, DiffResult};
 
 // Re-export assert types
-pub use assert::{Assertion, AssertionResult, ElementQuery};
+pub use assert::{Assertion, AssertionResult};
 
 // Re-export interact types
 pub use interact::{
@@ -42,4 +42,7 @@ pub use interact::{
 };
 
 // Re-export element types
-pub use element::{ElementError, ElementInfo, ElementsRequest, ElementsResult, FindRequest};
+pub use element::{
+    ElementError, ElementInfo, ElementsRequest, ElementsResult, FindRequest, WaitRequest,
+    WaitResult,
+};

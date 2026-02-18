@@ -3,6 +3,9 @@ use tracing::{info, warn};
 use super::errors::AssertError;
 use super::types::{Assertion, AssertionResult};
 use crate::diff::{DiffRequest, compare_images};
+use crate::element::{ElementsRequest, list_elements};
+use crate::errors::PeekError;
+use crate::interact::InteractionTarget;
 use crate::window::{find_window_by_title, list_windows};
 
 /// Run an assertion and return the result
@@ -12,15 +15,8 @@ pub fn run_assertion(assertion: &Assertion) -> Result<AssertionResult, AssertErr
     let result = match assertion {
         Assertion::WindowExists { title } => assert_window_exists(title),
         Assertion::WindowVisible { title } => assert_window_visible(title),
-        Assertion::ElementExists {
-            window_title: _,
-            query: _,
-        } => {
-            // Element inspection requires accessibility APIs which we're deferring
-            // For now, return a failed assertion result explaining the limitation
-            Ok(AssertionResult::fail(
-                "Element assertions require accessibility APIs (not yet implemented)",
-            ))
+        Assertion::ElementExists { window_title, text } => {
+            assert_element_exists(window_title, text)
         }
         Assertion::ImageSimilar {
             image_path,
@@ -130,6 +126,66 @@ fn assert_window_visible(title: &str) -> Result<AssertionResult, AssertError> {
     }
 }
 
+fn assert_element_exists(window_title: &str, text: &str) -> Result<AssertionResult, AssertError> {
+    let request = ElementsRequest::new(InteractionTarget::Window {
+        title: window_title.to_string(),
+    });
+
+    let result = match list_elements(&request) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(
+                event = "peek.core.assert.list_elements_failed",
+                window = window_title,
+                error_code = e.error_code(),
+                error = %e
+            );
+            return Ok(AssertionResult::fail(format!(
+                "Could not list elements in window '{}': {}",
+                window_title, e
+            ))
+            .with_details(serde_json::json!({
+                "window": window_title,
+                "error": e.to_string(),
+            })));
+        }
+    };
+
+    let search_text = text;
+    let element_count = result.count();
+
+    let found = if search_text.is_empty() {
+        !result.elements().is_empty()
+    } else {
+        result
+            .elements()
+            .iter()
+            .any(|e| e.matches_text(search_text))
+    };
+
+    if found {
+        Ok(AssertionResult::pass(format!(
+            "Element with text '{}' found in window '{}'",
+            search_text, window_title
+        ))
+        .with_details(serde_json::json!({
+            "window": window_title,
+            "text": search_text,
+            "element_count": element_count,
+        })))
+    } else {
+        Ok(AssertionResult::fail(format!(
+            "No element with text '{}' found in window '{}' ({} elements checked)",
+            search_text, window_title, element_count,
+        ))
+        .with_details(serde_json::json!({
+            "window": window_title,
+            "text": search_text,
+            "element_count": element_count,
+        })))
+    }
+}
+
 fn assert_image_similar(
     image_path: &std::path::Path,
     baseline_path: &std::path::Path,
@@ -193,5 +249,23 @@ mod tests {
             Assertion::image_similar("/nonexistent/image.png", "/nonexistent/baseline.png", 0.95);
         let result = run_assertion(&assertion);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_assert_element_exists_not_found() {
+        let assertion = Assertion::element_exists(
+            "NONEXISTENT_WINDOW_12345_UNIQUE",
+            "DEFINITELY_NOT_THERE_XYZ",
+        );
+        let result = run_assertion(&assertion).unwrap();
+        // Either window-not-found fail or element-not-found fail — both are failures
+        assert!(!result.passed);
+    }
+
+    #[test]
+    fn test_assert_element_exists_empty_text_nonexistent_window() {
+        let assertion = Assertion::element_exists("NONEXISTENT_WINDOW_12345_UNIQUE", "");
+        let result = run_assertion(&assertion).unwrap();
+        assert!(!result.passed);
     }
 }
