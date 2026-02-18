@@ -192,7 +192,7 @@ fn keyboard_hints_for_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::views::main_view::keybindings::{ParsedJumpModifier, UiKeybindings};
+    use crate::views::main_view::keybindings::UiKeybindings;
     use kild_core::Session;
     use kild_core::sessions::SessionInfo;
 

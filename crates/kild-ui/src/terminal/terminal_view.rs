@@ -294,7 +294,10 @@ impl Render for TerminalView {
                     .bg(theme::ember())
                     .text_color(theme::text_white())
                     .text_size(px(theme::TEXT_SM))
-                    .child(format!("Terminal error: {msg}. Ctrl+Esc to return.")),
+                    .child(format!(
+                        "Terminal error: {msg}. {} to return.",
+                        self.keybindings.terminal.focus_escape.hint_str()
+                    )),
             );
         }
 

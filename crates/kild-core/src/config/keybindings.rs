@@ -180,17 +180,35 @@ pub fn load_hierarchy() -> Keybindings {
     let mut keybindings = Keybindings::default();
 
     // Load user keybindings (~/.kild/keybindings.toml)
-    if let Ok(paths) = kild_paths::KildPaths::resolve()
-        && let Some(user_kb) = try_load_keybindings_file(&paths.user_keybindings())
-    {
-        keybindings = Keybindings::merge(&keybindings, &user_kb);
+    match kild_paths::KildPaths::resolve() {
+        Ok(paths) => {
+            if let Some(user_kb) = try_load_keybindings_file(&paths.user_keybindings()) {
+                keybindings = Keybindings::merge(&keybindings, &user_kb);
+            }
+        }
+        Err(e) => {
+            warn!(
+                event = "core.keybindings.paths_resolve_failed",
+                error = %e,
+                "Could not determine home directory; user keybindings not loaded"
+            );
+        }
     }
 
     // Load project keybindings (./.kild/keybindings.toml)
-    if let Ok(project_root) = std::env::current_dir() {
-        let path = kild_paths::KildPaths::project_keybindings(&project_root);
-        if let Some(project_kb) = try_load_keybindings_file(&path) {
-            keybindings = Keybindings::merge(&keybindings, &project_kb);
+    match std::env::current_dir() {
+        Ok(project_root) => {
+            let path = kild_paths::KildPaths::project_keybindings(&project_root);
+            if let Some(project_kb) = try_load_keybindings_file(&path) {
+                keybindings = Keybindings::merge(&keybindings, &project_kb);
+            }
+        }
+        Err(e) => {
+            warn!(
+                event = "core.keybindings.cwd_failed",
+                error = %e,
+                "Could not determine current directory; project keybindings not loaded"
+            );
         }
     }
 

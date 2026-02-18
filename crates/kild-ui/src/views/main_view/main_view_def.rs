@@ -230,10 +230,8 @@ impl MainView {
         });
 
         // Load keybindings from hierarchy (~/.kild/keybindings.toml → ./.kild/keybindings.toml)
-        let keybindings = {
-            let raw = kild_core::Keybindings::load_hierarchy();
-            UiKeybindings::from_config(&raw)
-        };
+        let raw = kild_core::Keybindings::load_hierarchy();
+        let keybindings = UiKeybindings::from_config(&raw);
 
         let mut view = Self {
             state: AppState::new(),
