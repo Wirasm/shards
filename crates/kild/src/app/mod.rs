@@ -2,6 +2,7 @@ mod daemon;
 mod git;
 mod global;
 mod misc;
+mod project;
 mod query;
 mod session;
 
@@ -37,4 +38,5 @@ pub fn build_cli() -> Command {
         .subcommand(daemon::attach_command())
         .subcommand(misc::completions_command())
         .subcommand(misc::init_hooks_command())
+        .subcommand(project::project_command())
 }

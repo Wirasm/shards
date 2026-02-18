@@ -1464,3 +1464,142 @@ fn test_cli_init_hooks_no_install_flag() {
     assert_eq!(sub.get_one::<String>("agent").unwrap(), "opencode");
     assert!(sub.get_flag("no-install"));
 }
+
+// --- project command tests ---
+
+#[test]
+fn test_cli_project_add_command() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "add", "/some/path"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let add_matches = project_matches.subcommand_matches("add").unwrap();
+    assert_eq!(add_matches.get_one::<String>("path").unwrap(), "/some/path");
+    assert!(add_matches.get_one::<String>("name").is_none());
+}
+
+#[test]
+fn test_cli_project_add_with_name() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec![
+        "kild",
+        "project",
+        "add",
+        "/some/path",
+        "--name",
+        "My Repo",
+    ]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let add_matches = project_matches.subcommand_matches("add").unwrap();
+    assert_eq!(add_matches.get_one::<String>("path").unwrap(), "/some/path");
+    assert_eq!(add_matches.get_one::<String>("name").unwrap(), "My Repo");
+}
+
+#[test]
+fn test_cli_project_add_requires_path() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "add"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_project_list_command() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "list"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let list_matches = project_matches.subcommand_matches("list").unwrap();
+    assert!(!list_matches.get_flag("json"));
+}
+
+#[test]
+fn test_cli_project_list_json_flag() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "list", "--json"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let list_matches = project_matches.subcommand_matches("list").unwrap();
+    assert!(list_matches.get_flag("json"));
+}
+
+#[test]
+fn test_cli_project_remove_command() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "remove", "abc123"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let remove_matches = project_matches.subcommand_matches("remove").unwrap();
+    assert_eq!(
+        remove_matches.get_one::<String>("identifier").unwrap(),
+        "abc123"
+    );
+}
+
+#[test]
+fn test_cli_project_remove_requires_identifier() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "remove"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_project_info_command() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "info", "abc123"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let info_matches = project_matches.subcommand_matches("info").unwrap();
+    assert_eq!(
+        info_matches.get_one::<String>("identifier").unwrap(),
+        "abc123"
+    );
+}
+
+#[test]
+fn test_cli_project_info_requires_identifier() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "info"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_project_default_command() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "default", "abc123"]);
+    assert!(matches.is_ok());
+
+    let matches = matches.unwrap();
+    let project_matches = matches.subcommand_matches("project").unwrap();
+    let default_matches = project_matches.subcommand_matches("default").unwrap();
+    assert_eq!(
+        default_matches.get_one::<String>("identifier").unwrap(),
+        "abc123"
+    );
+}
+
+#[test]
+fn test_cli_project_default_requires_identifier() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project", "default"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_project_requires_subcommand() {
+    let app = build_cli();
+    let matches = app.try_get_matches_from(vec!["kild", "project"]);
+    assert!(matches.is_err());
+}
