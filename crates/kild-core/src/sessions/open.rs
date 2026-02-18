@@ -332,6 +332,7 @@ pub fn open_session(
         // Early exit detection: poll with exponential backoff until Running or Stopped.
         // Fast-failing processes (bad resume session, missing binary, env issues)
         // typically exit within 50ms of spawn. Exit early on Running confirmation.
+        // Worst-case window: 350ms (50+100+200) before falling through with None (assume alive).
         let maybe_early_exit: Option<Option<i32>> = {
             let mut result = None;
             for delay_ms in [50u64, 100, 200] {
