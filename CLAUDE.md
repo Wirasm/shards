@@ -149,7 +149,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `errors.rs` - ShimError type
 
 **Key modules in kild (CLI):**
-- `app/` - CLI command implementations (daemon.rs, git.rs, global.rs, misc.rs, query.rs, session.rs, tests.rs)
+- `app/` - CLI command implementations (daemon.rs, git.rs, global.rs, misc.rs, project.rs, query.rs, session.rs, tests.rs)
 - `main.rs` - CLI entry point with clap argument parsing
 - `color.rs` - Tallinn Night palette output formatting
 
