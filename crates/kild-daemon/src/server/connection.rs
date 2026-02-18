@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use base64::Engine;
+use bytes::Bytes;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::Mutex;
@@ -418,7 +419,7 @@ async fn dispatch_message(
 
 /// Stream PTY output to a client until detach, shutdown, or channel close.
 async fn stream_pty_output(
-    mut rx: tokio::sync::broadcast::Receiver<Vec<u8>>,
+    mut rx: tokio::sync::broadcast::Receiver<Bytes>,
     session_id: &str,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     shutdown: tokio_util::sync::CancellationToken,
