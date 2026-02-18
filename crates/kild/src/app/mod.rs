@@ -20,6 +20,7 @@ pub fn build_cli() -> Command {
         .subcommand(session::complete_command())
         .subcommand(session::open_command())
         .subcommand(session::stop_command())
+        .subcommand(session::teammates_command())
         .subcommand(misc::code_command())
         .subcommand(misc::focus_command())
         .subcommand(misc::hide_command())

@@ -510,6 +510,7 @@ impl Render for MainView {
                                         &self.state,
                                         &self.terminal_tabs,
                                         self.active_pane_grid(),
+                                        &self.team_manager,
                                         cx,
                                     ))
                                     // Main area (flex-1)

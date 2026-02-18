@@ -20,20 +20,46 @@ pub(crate) fn handle_attach_command(
     // 1. Look up session to get daemon_session_id
     let session = helpers::require_session(branch, "cli.attach_failed")?;
 
-    let daemon_session_id = match session.latest_agent().and_then(|a| a.daemon_session_id()) {
-        Some(id) => id.to_string(),
-        None => {
-            let msg = format!(
-                "'{}' is not daemon-managed. Use 'kild focus {}' for terminal sessions.",
-                branch, branch
-            );
-            eprintln!("{}", msg);
-            error!(
-                event = "cli.attach_failed",
-                branch = branch,
-                error = msg.as_str()
-            );
-            return Err(msg.into());
+    // If --pane is specified, look up that pane's daemon session ID
+    let daemon_session_id = if let Some(pane_id) = matches.get_one::<String>("pane") {
+        match kild_teams::discovery::discover_teammates(&session.id) {
+            Ok(Some(members)) => members
+                .into_iter()
+                .find(|m| m.pane_id == *pane_id)
+                .and_then(|m| m.daemon_session_id)
+                .ok_or_else(|| {
+                    format!(
+                        "Pane '{}' not found in '{}'. Use 'kild teammates {}' to list panes.",
+                        pane_id, branch, branch
+                    )
+                })?,
+            Ok(None) => {
+                return Err(format!(
+                    "'{}' has no agent team. Session is not daemon-managed or has no teammates.",
+                    branch
+                )
+                .into());
+            }
+            Err(e) => {
+                return Err(format!("Failed to read pane registry: {}", e).into());
+            }
+        }
+    } else {
+        match session.latest_agent().and_then(|a| a.daemon_session_id()) {
+            Some(id) => id.to_string(),
+            None => {
+                let msg = format!(
+                    "'{}' is not daemon-managed. Use 'kild focus {}' for terminal sessions.",
+                    branch, branch
+                );
+                eprintln!("{}", msg);
+                error!(
+                    event = "cli.attach_failed",
+                    branch = branch,
+                    error = msg.as_str()
+                );
+                return Err(msg.into());
+            }
         }
     };
 

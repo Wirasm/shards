@@ -32,6 +32,7 @@ mod stats;
 mod status;
 mod stop;
 mod sync;
+mod teammates;
 
 pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
     events::log_app_startup();
@@ -63,6 +64,7 @@ pub fn run_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error
         Some(("health", sub_matches)) => health::handle_health_command(sub_matches),
         Some(("daemon", sub_matches)) => daemon::handle_daemon_command(sub_matches),
         Some(("attach", sub_matches)) => attach::handle_attach_command(sub_matches),
+        Some(("teammates", sub_matches)) => teammates::handle_teammates_command(sub_matches),
         Some(("init-hooks", sub_matches)) => init_hooks::handle_init_hooks_command(sub_matches),
         Some(("project", sub_matches)) => project::handle_project_command(sub_matches),
         _ => {

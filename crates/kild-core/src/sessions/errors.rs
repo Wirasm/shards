@@ -101,6 +101,14 @@ pub enum SessionError {
         "No previous session ID found for '{branch}'. Cannot resume — this kild was created before resume support was added."
     )]
     ResumeNoSessionId { branch: String },
+
+    #[error("No agent team found for '{name}'. Session is not daemon-managed or has no teammates.")]
+    NoTeammates { name: String },
+
+    #[error(
+        "Pane '{pane_id}' not found in session '{branch}'. Use 'kild teammates {branch}' to list panes."
+    )]
+    PaneNotFound { pane_id: String, branch: String },
 }
 
 impl KildError for SessionError {
@@ -131,6 +139,8 @@ impl KildError for SessionError {
             SessionError::DaemonAutoStartFailed { .. } => "DAEMON_AUTO_START_FAILED",
             SessionError::ResumeUnsupported { .. } => "RESUME_UNSUPPORTED",
             SessionError::ResumeNoSessionId { .. } => "RESUME_NO_SESSION_ID",
+            SessionError::NoTeammates { .. } => "SESSION_NO_TEAMMATES",
+            SessionError::PaneNotFound { .. } => "SESSION_PANE_NOT_FOUND",
         }
     }
 
@@ -156,6 +166,8 @@ impl KildError for SessionError {
                 | SessionError::NoPrFound { .. }
                 | SessionError::ResumeUnsupported { .. }
                 | SessionError::ResumeNoSessionId { .. }
+                | SessionError::NoTeammates { .. }
+                | SessionError::PaneNotFound { .. }
         )
     }
 }

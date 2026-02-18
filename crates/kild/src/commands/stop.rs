@@ -9,7 +9,59 @@ use super::helpers::{FailedOperation, format_count, format_partial_failure_error
 use crate::color;
 
 pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
-    // Check for --all flag first
+    // Check for --pane flag (selective teammate stop)
+    if let Some(pane_id) = matches.get_one::<String>("pane") {
+        let branch = matches
+            .get_one::<String>("branch")
+            .ok_or("Branch argument is required with --pane")?;
+
+        info!(
+            event = "cli.stop_teammate_started",
+            branch = branch,
+            pane_id = pane_id
+        );
+
+        match session_ops::stop_teammate(branch, pane_id) {
+            Ok(()) => {
+                println!(
+                    "{} Pane {} stopped.",
+                    color::muted("Teammate"),
+                    color::ice(pane_id)
+                );
+                println!(
+                    "  {} kild attach {} --pane {}",
+                    color::muted("Reattach:"),
+                    color::ice(branch),
+                    pane_id
+                );
+                info!(
+                    event = "cli.stop_teammate_completed",
+                    branch = branch,
+                    pane_id = pane_id
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} pane {} in '{}': {}",
+                    color::error("Could not stop"),
+                    pane_id,
+                    branch,
+                    e
+                );
+                error!(
+                    event = "cli.stop_teammate_failed",
+                    branch = branch,
+                    pane_id = pane_id,
+                    error = %e
+                );
+                events::log_app_error(&e);
+                return Err(e.into());
+            }
+        }
+    }
+
+    // Check for --all flag
     if matches.get_flag("all") {
         return handle_stop_all();
     }
