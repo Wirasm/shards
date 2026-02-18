@@ -273,6 +273,26 @@ kild attach <branch>
 
 **Note**: Daemon mode is experimental (Phase 1b). The daemon runtime supports background and foreground modes, auto-start via config, scrollback replay on attach, PTY exit notification with automatic session state updates, and works with both `kild create` and `kild open` commands. When creating or opening daemon sessions, KILD automatically spawns a terminal attach window for immediate visual feedback. Daemon sessions automatically enable Claude Code agent teams by injecting a tmux-compatible shim.
 
+### Manage the project registry
+```bash
+# Register a git repo in the project registry
+kild project add <path>
+kild project add <path> --name "My Repo"
+
+# List all registered projects (* marks active)
+kild project list
+kild project list --json
+
+# Show details for a project (accepts path or hex project ID)
+kild project info <id|path>
+
+# Set the active project
+kild project default <id|path>
+
+# Remove a project from the registry
+kild project remove <id|path>
+```
+
 ### Stop a kild
 ```bash
 # Stop agent, preserve worktree
