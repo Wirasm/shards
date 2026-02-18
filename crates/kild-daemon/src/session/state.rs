@@ -1,6 +1,7 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
+use bytes::Bytes;
 use tokio::sync::broadcast;
 use tracing::error;
 
@@ -41,10 +42,10 @@ pub struct DaemonSession {
     state: SessionState,
     /// Broadcast sender for PTY output distribution to attached clients.
     /// Only present when Running.
-    output_tx: Option<broadcast::Sender<Vec<u8>>>,
+    output_tx: Option<broadcast::Sender<Bytes>>,
     /// Ring buffer of recent PTY output for replay on attach.
     /// Shared with the PTY reader task so it can feed output into the buffer.
-    scrollback: Arc<Mutex<ScrollbackBuffer>>,
+    scrollback: Arc<RwLock<ScrollbackBuffer>>,
     /// Set of attached client IDs.
     attached_clients: HashSet<ClientId>,
     /// Child process PID (only when Running).
@@ -69,7 +70,7 @@ impl DaemonSession {
             created_at,
             state: SessionState::Creating,
             output_tx: None,
-            scrollback: Arc::new(Mutex::new(ScrollbackBuffer::new(scrollback_capacity))),
+            scrollback: Arc::new(RwLock::new(ScrollbackBuffer::new(scrollback_capacity))),
             attached_clients: HashSet::new(),
             pty_pid: None,
             exit_code: None,
@@ -115,7 +116,7 @@ impl DaemonSession {
     }
 
     /// Clone the output broadcast sender (for notification after state transitions).
-    pub fn output_tx(&self) -> Option<broadcast::Sender<Vec<u8>>> {
+    pub fn output_tx(&self) -> Option<broadcast::Sender<Bytes>> {
         self.output_tx.clone()
     }
 
@@ -127,7 +128,7 @@ impl DaemonSession {
     /// Returns `InvalidStateTransition` if the session is not in Creating state.
     pub fn set_running(
         &mut self,
-        output_tx: broadcast::Sender<Vec<u8>>,
+        output_tx: broadcast::Sender<Bytes>,
         pty_pid: Option<u32>,
     ) -> Result<(), DaemonError> {
         if !matches!(self.state, SessionState::Creating) {
@@ -182,13 +183,13 @@ impl DaemonSession {
     }
 
     /// Subscribe to PTY output. Returns `None` if not running.
-    pub fn subscribe_output(&self) -> Option<broadcast::Receiver<Vec<u8>>> {
+    pub fn subscribe_output(&self) -> Option<broadcast::Receiver<Bytes>> {
         self.output_tx.as_ref().map(|tx| tx.subscribe())
     }
 
     /// Get scrollback buffer contents for replay on attach.
     pub fn scrollback_contents(&self) -> Vec<u8> {
-        match self.scrollback.lock() {
+        match self.scrollback.read() {
             Ok(sb) => sb.contents(),
             Err(poisoned) => {
                 error!(
@@ -201,7 +202,7 @@ impl DaemonSession {
     }
 
     /// Get a clone of the shared scrollback buffer for the PTY reader task.
-    pub fn shared_scrollback(&self) -> Arc<Mutex<ScrollbackBuffer>> {
+    pub fn shared_scrollback(&self) -> Arc<RwLock<ScrollbackBuffer>> {
         self.scrollback.clone()
     }
 

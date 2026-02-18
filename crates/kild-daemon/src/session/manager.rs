@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
@@ -139,7 +140,7 @@ impl SessionManager {
         &mut self,
         session_id: &str,
         client_id: ClientId,
-    ) -> Result<broadcast::Receiver<Vec<u8>>, DaemonError> {
+    ) -> Result<broadcast::Receiver<Bytes>, DaemonError> {
         let session = self
             .sessions
             .get_mut(session_id)
@@ -349,7 +350,7 @@ impl SessionManager {
     /// Handle a PTY exit event: transition the session to Stopped and clean up PTY.
     /// Returns the session_id and output_tx if the session had attached clients
     /// (so the caller can broadcast a session_event notification).
-    pub fn handle_pty_exit(&mut self, session_id: &str) -> Option<broadcast::Sender<Vec<u8>>> {
+    pub fn handle_pty_exit(&mut self, session_id: &str) -> Option<broadcast::Sender<Bytes>> {
         // Clean up PTY resources and capture exit code
         let exit_code = match self.pty_manager.remove(session_id) {
             Some(mut pty) => {

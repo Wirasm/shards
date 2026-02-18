@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::io::Read;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
+use bytes::Bytes;
 use tokio::sync::broadcast;
 use tracing::{debug, error, warn};
 
@@ -63,7 +64,7 @@ impl ScrollbackBuffer {
 /// Holds the broadcast sender for PTY output distribution and the scrollback buffer.
 pub struct PtyOutputBroadcaster {
     /// Broadcast channel sender for live output distribution.
-    tx: broadcast::Sender<Vec<u8>>,
+    tx: broadcast::Sender<Bytes>,
     /// Ring buffer for scrollback replay.
     scrollback: ScrollbackBuffer,
 }
@@ -78,7 +79,7 @@ impl PtyOutputBroadcaster {
     }
 
     /// Subscribe to receive live PTY output.
-    pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         self.tx.subscribe()
     }
 
@@ -90,7 +91,7 @@ impl PtyOutputBroadcaster {
     /// Feed bytes into the broadcaster: stores in scrollback and sends to subscribers.
     pub fn feed(&mut self, data: &[u8]) {
         self.scrollback.push(data);
-        if self.tx.send(data.to_vec()).is_err() {
+        if self.tx.send(Bytes::copy_from_slice(data)).is_err() {
             debug!(
                 event = "daemon.pty.broadcast_no_receivers",
                 "No receivers attached, output buffered in scrollback only"
@@ -119,8 +120,8 @@ pub struct PtyExitEvent {
 pub fn spawn_pty_reader(
     session_id: String,
     mut reader: Box<dyn Read + Send>,
-    output_tx: broadcast::Sender<Vec<u8>>,
-    scrollback: Arc<Mutex<ScrollbackBuffer>>,
+    output_tx: broadcast::Sender<Bytes>,
+    scrollback: Arc<RwLock<ScrollbackBuffer>>,
     exit_tx: Option<tokio::sync::mpsc::UnboundedSender<PtyExitEvent>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
@@ -132,16 +133,16 @@ pub fn spawn_pty_reader(
                     break;
                 }
                 Ok(n) => {
-                    let data = buf[..n].to_vec();
+                    let data = Bytes::copy_from_slice(&buf[..n]);
                     // Feed scrollback buffer for replay on attach
-                    match scrollback.lock() {
+                    match scrollback.write() {
                         Ok(mut sb) => sb.push(&data),
                         Err(e) => {
                             error!(
                                 event = "daemon.pty.scrollback_lock_poisoned",
                                 session_id = session_id,
                                 error = %e,
-                                "Mutex poisoned, clearing scrollback to avoid corrupt data",
+                                "RwLock poisoned, clearing scrollback to avoid corrupt data",
                             );
                             let mut sb = e.into_inner();
                             sb.clear();
@@ -257,7 +258,7 @@ mod tests {
         broadcaster.feed(b"test data");
 
         let received = rx.try_recv().unwrap();
-        assert_eq!(received, b"test data");
+        assert_eq!(received.as_ref(), b"test data");
     }
 
     #[test]
@@ -269,8 +270,8 @@ mod tests {
 
         broadcaster.feed(b"shared data");
 
-        assert_eq!(rx1.try_recv().unwrap(), b"shared data");
-        assert_eq!(rx2.try_recv().unwrap(), b"shared data");
+        assert_eq!(rx1.try_recv().unwrap().as_ref(), b"shared data");
+        assert_eq!(rx2.try_recv().unwrap().as_ref(), b"shared data");
     }
 
     #[test]

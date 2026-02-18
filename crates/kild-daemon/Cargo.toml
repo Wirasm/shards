@@ -36,6 +36,9 @@ thiserror.workspace = true
 # Binary encoding for PTY data
 base64.workspace = true
 
+# Zero-copy byte buffer for broadcast channel
+bytes.workspace = true
+
 # TOML config parsing
 toml.workspace = true
 
