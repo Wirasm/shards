@@ -264,36 +264,35 @@ pub fn wait_for_element(request: &WaitRequest) -> Result<WaitResult, ElementErro
         };
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
+        let condition_met = (!request.until_gone() && found) || (request.until_gone() && !found);
 
-        if !request.until_gone() && found {
+        if condition_met {
+            let result = if request.until_gone() {
+                WaitResult::gone(request.text(), elapsed_ms)
+            } else {
+                WaitResult::appeared(request.text(), elapsed_ms)
+            };
             info!(
                 event = "peek.core.element.wait_completed",
                 text = request.text(),
                 elapsed_ms = elapsed_ms
             );
-            return Ok(WaitResult::appeared(request.text(), elapsed_ms));
-        }
-        if request.until_gone() && !found {
-            info!(
-                event = "peek.core.element.wait_completed",
-                text = request.text(),
-                elapsed_ms = elapsed_ms
-            );
-            return Ok(WaitResult::gone(request.text(), elapsed_ms));
+            return Ok(result);
         }
 
         if start.elapsed() >= timeout {
-            if request.until_gone() {
-                return Err(ElementError::WaitTimeoutElementStillExists {
+            let timeout_error = if request.until_gone() {
+                ElementError::WaitTimeoutElementStillExists {
                     text: request.text().to_string(),
                     timeout_ms: request.timeout_ms(),
-                });
+                }
             } else {
-                return Err(ElementError::WaitTimeoutElementNotFound {
+                ElementError::WaitTimeoutElementNotFound {
                     text: request.text().to_string(),
                     timeout_ms: request.timeout_ms(),
-                });
-            }
+                }
+            };
+            return Err(timeout_error);
         }
 
         thread::sleep(ELEMENT_POLL_INTERVAL);

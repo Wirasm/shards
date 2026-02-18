@@ -73,7 +73,7 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
         }
         Assertion::element_exists(
             &resolved_title,
-            ElementQuery::new().with_title(text.clone()),
+            ElementQuery::new().with_title(text.as_str()),
         )
     } else {
         return Err(
@@ -88,10 +88,7 @@ pub fn handle_assert_command(matches: &ArgMatches) -> Result<(), Box<dyn std::er
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                let status = match result.passed {
-                    true => "PASS",
-                    false => "FAIL",
-                };
+                let status = if result.passed { "PASS" } else { "FAIL" };
                 println!("Assertion: {}", status);
                 println!("  {}", result.message);
             }

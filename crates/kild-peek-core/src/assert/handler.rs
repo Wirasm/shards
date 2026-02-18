@@ -3,6 +3,8 @@ use tracing::{info, warn};
 use super::errors::AssertError;
 use super::types::{Assertion, AssertionResult, ElementQuery};
 use crate::diff::{DiffRequest, compare_images};
+use crate::element::{ElementsRequest, list_elements};
+use crate::interact::InteractionTarget;
 use crate::window::{find_window_by_title, list_windows};
 
 /// Run an assertion and return the result
@@ -128,9 +130,6 @@ fn assert_element_exists(
     window_title: &str,
     query: &ElementQuery,
 ) -> Result<AssertionResult, AssertError> {
-    use crate::element::{ElementsRequest, list_elements};
-    use crate::interact::InteractionTarget;
-
     let request = ElementsRequest::new(InteractionTarget::Window {
         title: window_title.to_string(),
     });
@@ -150,6 +149,7 @@ fn assert_element_exists(
     };
 
     let search_text = query.title.as_deref().unwrap_or("");
+    let element_count = result.count();
 
     let found = if search_text.is_empty() {
         !result.elements().is_empty()
@@ -168,19 +168,17 @@ fn assert_element_exists(
         .with_details(serde_json::json!({
             "window": window_title,
             "text": search_text,
-            "element_count": result.count(),
+            "element_count": element_count,
         })))
     } else {
         Ok(AssertionResult::fail(format!(
             "No element with text '{}' found in window '{}' ({} elements checked)",
-            search_text,
-            window_title,
-            result.count()
+            search_text, window_title, element_count,
         ))
         .with_details(serde_json::json!({
             "window": window_title,
             "text": search_text,
-            "element_count": result.count(),
+            "element_count": element_count,
         })))
     }
 }
