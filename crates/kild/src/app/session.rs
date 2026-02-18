@@ -161,6 +161,31 @@ pub fn stop_command() -> Command {
                 .action(ArgAction::SetTrue)
                 .conflicts_with("branch"),
         )
+        .arg(
+            Arg::new("pane")
+                .long("pane")
+                .help("Stop a specific teammate pane (e.g. %1, %2)")
+                .value_name("PANE_ID")
+                .conflicts_with("all")
+                .requires("branch"),
+        )
+}
+
+pub fn teammates_command() -> Command {
+    Command::new("teammates")
+        .about("List agent teammate panes within a daemon kild session")
+        .arg(
+            Arg::new("branch")
+                .help("Branch name of the kild session")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Output as JSON")
+                .action(ArgAction::SetTrue),
+        )
 }
 
 pub fn destroy_command() -> Command {

@@ -1546,6 +1546,57 @@ fn test_cli_project_remove_command() {
     );
 }
 
+// --- teammates command tests ---
+
+#[test]
+fn test_cli_teammates_command() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "teammates", "my-branch"])
+        .unwrap();
+    let sub = matches.subcommand_matches("teammates").unwrap();
+    assert_eq!(sub.get_one::<String>("branch").unwrap(), "my-branch");
+    assert!(!sub.get_flag("json"));
+}
+
+#[test]
+fn test_cli_teammates_json_flag() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "teammates", "my-branch", "--json"])
+        .unwrap();
+    let sub = matches.subcommand_matches("teammates").unwrap();
+    assert!(sub.get_flag("json"));
+}
+
+#[test]
+fn test_cli_teammates_requires_branch() {
+    let app = build_cli();
+    assert!(app.try_get_matches_from(vec!["kild", "teammates"]).is_err());
+}
+
+// --- stop --pane tests ---
+
+#[test]
+fn test_cli_stop_with_pane() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "stop", "my-branch", "--pane", "%1"])
+        .unwrap();
+    let sub = matches.subcommand_matches("stop").unwrap();
+    assert_eq!(sub.get_one::<String>("pane").unwrap(), "%1");
+    assert_eq!(sub.get_one::<String>("branch").unwrap(), "my-branch");
+}
+
+#[test]
+fn test_cli_stop_pane_conflicts_with_all() {
+    let app = build_cli();
+    assert!(
+        app.try_get_matches_from(vec!["kild", "stop", "--all", "--pane", "%1"])
+            .is_err()
+    );
+}
+
 #[test]
 fn test_cli_project_remove_requires_identifier() {
     let app = build_cli();
@@ -1602,4 +1653,43 @@ fn test_cli_project_requires_subcommand() {
     let app = build_cli();
     let matches = app.try_get_matches_from(vec!["kild", "project"]);
     assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_stop_pane_requires_branch() {
+    let app = build_cli();
+    // --pane without branch should fail because --pane requires branch
+    assert!(
+        app.try_get_matches_from(vec!["kild", "stop", "--pane", "%1"])
+            .is_err()
+    );
+}
+
+// --- attach --pane tests ---
+
+#[test]
+fn test_cli_attach_with_pane() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "attach", "my-branch", "--pane", "%1"])
+        .unwrap();
+    let sub = matches.subcommand_matches("attach").unwrap();
+    assert_eq!(sub.get_one::<String>("pane").unwrap(), "%1");
+    assert_eq!(sub.get_one::<String>("branch").unwrap(), "my-branch");
+}
+
+#[test]
+fn test_cli_attach_requires_branch() {
+    let app = build_cli();
+    assert!(app.try_get_matches_from(vec!["kild", "attach"]).is_err());
+}
+
+#[test]
+fn test_cli_attach_without_pane() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "attach", "my-branch"])
+        .unwrap();
+    let sub = matches.subcommand_matches("attach").unwrap();
+    assert!(sub.get_one::<String>("pane").is_none());
 }

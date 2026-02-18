@@ -50,20 +50,25 @@ impl TeamColor {
 pub struct TeamMember {
     /// Display name (e.g., "researcher").
     pub name: String,
-    /// Unique agent ID (e.g., "researcher@my-team").
-    pub agent_id: String,
-    /// Agent type (e.g., "general-purpose").
-    pub agent_type: String,
+    /// Unique agent ID (e.g., "researcher@my-team"). `None` when discovered via shim registry.
+    pub agent_id: Option<String>,
+    /// Agent type (e.g., "general-purpose"). `None` when discovered via shim registry.
+    pub agent_type: Option<String>,
     /// Color assigned by Claude Code.
     pub color: TeamColor,
-    /// Tmux pane ID (e.g., "%1").
+    /// Tmux pane ID (e.g., "%1"). Empty string or "%0" identifies the leader.
     pub pane_id: String,
     /// Daemon session ID resolved from shim registry.
     pub daemon_session_id: Option<String>,
     /// Whether the member is currently active.
     pub is_active: bool,
-    /// Whether this member is the team leader.
-    pub is_leader: bool,
+}
+
+impl TeamMember {
+    /// Whether this member is the team leader (pane %0 or empty pane ID).
+    pub fn is_leader(&self) -> bool {
+        self.pane_id.is_empty() || self.pane_id == "%0"
+    }
 }
 
 /// State of an agent team associated with a kild session.
@@ -80,12 +85,12 @@ pub struct TeamState {
 impl TeamState {
     /// Get all non-leader members (teammates).
     pub fn teammates(&self) -> impl Iterator<Item = &TeamMember> {
-        self.members.iter().filter(|m| !m.is_leader)
+        self.members.iter().filter(|m| !m.is_leader())
     }
 
     /// Get the leader, if any.
     pub fn leader(&self) -> Option<&TeamMember> {
-        self.members.iter().find(|m| m.is_leader)
+        self.members.iter().find(|m| m.is_leader())
     }
 }
 

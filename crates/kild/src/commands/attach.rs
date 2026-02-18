@@ -20,20 +20,25 @@ pub(crate) fn handle_attach_command(
     // 1. Look up session to get daemon_session_id
     let session = helpers::require_session(branch, "cli.attach_failed")?;
 
-    let daemon_session_id = match session.latest_agent().and_then(|a| a.daemon_session_id()) {
-        Some(id) => id.to_string(),
-        None => {
-            let msg = format!(
-                "'{}' is not daemon-managed. Use 'kild focus {}' for terminal sessions.",
-                branch, branch
-            );
-            eprintln!("{}", msg);
-            error!(
-                event = "cli.attach_failed",
-                branch = branch,
-                error = msg.as_str()
-            );
-            return Err(msg.into());
+    // If --pane is specified, look up that pane's daemon session ID
+    let daemon_session_id = if let Some(pane_id) = matches.get_one::<String>("pane") {
+        pane_daemon_session_id(&session.id, pane_id, branch)?
+    } else {
+        match session.latest_agent().and_then(|a| a.daemon_session_id()) {
+            Some(id) => id.to_string(),
+            None => {
+                let msg = format!(
+                    "'{}' is not daemon-managed. Use 'kild focus {}' for terminal sessions.",
+                    branch, branch
+                );
+                eprintln!("{}", msg);
+                error!(
+                    event = "cli.attach_failed",
+                    branch = branch,
+                    error = msg.as_str()
+                );
+                return Err(msg.into());
+            }
         }
     };
 
@@ -52,6 +57,61 @@ pub(crate) fn handle_attach_command(
 
     info!(event = "cli.attach_completed", branch = branch);
     Ok(())
+}
+
+/// Look up the daemon session ID for a specific pane within a session's team.
+///
+/// Returns an error if the session has no team or if the pane ID is not found.
+fn pane_daemon_session_id(
+    session_id: &str,
+    pane_id: &str,
+    branch: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let members = match kild_teams::discovery::discover_teammates(session_id) {
+        Ok(Some(members)) => members,
+        Ok(None) => {
+            let msg = format!(
+                "'{}' has no agent team. Session is not daemon-managed or has no teammates.",
+                branch
+            );
+            eprintln!("{}", msg);
+            error!(
+                event = "cli.attach_failed",
+                branch = branch,
+                pane_id = pane_id,
+                error = msg.as_str()
+            );
+            return Err(msg.into());
+        }
+        Err(e) => {
+            let msg = format!("Failed to read pane registry: {}", e);
+            eprintln!("{}", msg);
+            error!(event = "cli.attach_failed", branch = branch, pane_id = pane_id, error = %e);
+            return Err(msg.into());
+        }
+    };
+
+    match members
+        .into_iter()
+        .find(|m| m.pane_id == pane_id)
+        .and_then(|m| m.daemon_session_id)
+    {
+        Some(id) => Ok(id),
+        None => {
+            let msg = format!(
+                "Pane '{}' not found in '{}'. Use 'kild teammates {}' to list panes.",
+                pane_id, branch, branch
+            );
+            eprintln!("{}", msg);
+            error!(
+                event = "cli.attach_failed",
+                branch = branch,
+                pane_id = pane_id,
+                error = msg.as_str()
+            );
+            Err(msg.into())
+        }
+    }
 }
 
 fn attach_to_daemon_session(

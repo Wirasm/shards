@@ -9,7 +9,14 @@ use super::helpers::{FailedOperation, format_count, format_partial_failure_error
 use crate::color;
 
 pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn std::error::Error>> {
-    // Check for --all flag first
+    if let Some(pane_id) = matches.get_one::<String>("pane") {
+        let branch = matches
+            .get_one::<String>("branch")
+            .ok_or("Branch argument is required with --pane")?;
+        return handle_stop_teammate(branch, pane_id);
+    }
+
+    // Check for --all flag
     if matches.get_flag("all") {
         return handle_stop_all();
     }
@@ -35,6 +42,54 @@ pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn st
         Err(e) => {
             eprintln!("{} '{}': {}", color::error("Could not stop"), branch, e);
             error!(event = "cli.stop_failed", branch = branch, error = %e);
+            events::log_app_error(&e);
+            Err(e.into())
+        }
+    }
+}
+
+/// Handle `kild stop <branch> --pane <pane_id>` - stop a single teammate pane
+fn handle_stop_teammate(branch: &str, pane_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    info!(
+        event = "cli.stop_teammate_started",
+        branch = branch,
+        pane_id = pane_id
+    );
+
+    match session_ops::stop_teammate(branch, pane_id) {
+        Ok(()) => {
+            println!(
+                "{} Pane {} stopped.",
+                color::muted("Teammate"),
+                color::ice(pane_id)
+            );
+            println!(
+                "  {} kild attach {} --pane {}",
+                color::muted("Reattach:"),
+                color::ice(branch),
+                pane_id
+            );
+            info!(
+                event = "cli.stop_teammate_completed",
+                branch = branch,
+                pane_id = pane_id
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "{} pane {} in '{}': {}",
+                color::error("Could not stop"),
+                pane_id,
+                branch,
+                e
+            );
+            error!(
+                event = "cli.stop_teammate_failed",
+                branch = branch,
+                pane_id = pane_id,
+                error = %e
+            );
             events::log_app_error(&e);
             Err(e.into())
         }

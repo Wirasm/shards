@@ -27,6 +27,7 @@ pub fn render_sidebar(
     state: &AppState,
     terminal_tabs: &HashMap<String, TerminalTabs>,
     pane_grid: &super::pane_grid::PaneGrid,
+    team_manager: &crate::teams::TeamManager,
     cx: &mut Context<MainView>,
 ) -> impl IntoElement {
     let active_project_name = state
@@ -115,6 +116,8 @@ pub fn render_sidebar(
                             cx,
                         );
 
+                        let teammate_count = team_manager.teammates_for_session(&session_id).len();
+
                         let sid_for_add = session_id.to_string();
                         active_elements.push(
                             div()
@@ -126,6 +129,7 @@ pub fn render_sidebar(
                                     Status::Active,
                                     is_selected,
                                     &time_meta,
+                                    teammate_count,
                                     cx.listener(move |view, _, window, cx| {
                                         view.on_kild_select(&session_id_for_click, window, cx);
                                     }),
@@ -187,6 +191,7 @@ pub fn render_sidebar(
                                         status,
                                         is_selected,
                                         &time_meta,
+                                        0, // no badge for stopped kilds
                                         cx.listener(move |view, _, window, cx| {
                                             view.on_kild_select(&session_id_for_click, window, cx);
                                         }),
@@ -273,6 +278,7 @@ fn render_kild_row(
     status: Status,
     is_selected: bool,
     time_meta: &str,
+    teammate_count: usize,
     on_click: impl Fn(&gpui::MouseUpEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     div()
@@ -317,6 +323,16 @@ fn render_kild_row(
                 .text_color(theme::text_muted())
                 .child(time_meta.to_string()),
         )
+        // Teammate count badge (only when team is active)
+        .when(teammate_count > 0, |row| {
+            row.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(theme::TEXT_BADGE))
+                    .text_color(theme::aurora())
+                    .child(format!("[{}]", teammate_count)),
+            )
+        })
 }
 
 /// Collect terminal item elements for a kild's tabs.

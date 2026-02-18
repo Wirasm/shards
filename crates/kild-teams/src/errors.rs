@@ -7,7 +7,4 @@ pub enum TeamsError {
 
     #[error("JSON parse error: {0}")]
     Json(#[from] serde_json::Error),
-
-    #[error("teams error: {message}")]
-    Teams { message: String },
 }

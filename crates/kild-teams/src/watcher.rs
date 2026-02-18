@@ -32,17 +32,18 @@ impl TeamWatcher {
             && dir.is_dir()
         {
             match Self::create_watcher(dir, RecursiveMode::Recursive, tx.clone()) {
-                Some(w) => {
+                Ok(w) => {
                     tracing::info!(
                         event = "teams.watcher.watching_teams",
                         path = %dir.display()
                     );
                     watchers.push(w);
                 }
-                None => {
+                Err(e) => {
                     tracing::warn!(
                         event = "teams.watcher.teams_watch_failed",
-                        path = %dir.display()
+                        path = %dir.display(),
+                        error = %e
                     );
                 }
             }
@@ -52,17 +53,18 @@ impl TeamWatcher {
             && dir.is_dir()
         {
             match Self::create_watcher(dir, RecursiveMode::Recursive, tx.clone()) {
-                Some(w) => {
+                Ok(w) => {
                     tracing::info!(
                         event = "teams.watcher.watching_shim",
                         path = %dir.display()
                     );
                     watchers.push(w);
                 }
-                None => {
+                Err(e) => {
                     tracing::warn!(
                         event = "teams.watcher.shim_watch_failed",
-                        path = %dir.display()
+                        path = %dir.display(),
+                        error = %e
                     );
                 }
             }
@@ -130,10 +132,10 @@ impl TeamWatcher {
         dir: &Path,
         mode: RecursiveMode,
         tx: mpsc::Sender<Result<Event, notify::Error>>,
-    ) -> Option<RecommendedWatcher> {
-        let mut watcher = notify::recommended_watcher(tx).ok()?;
-        watcher.watch(dir, mode).ok()?;
-        Some(watcher)
+    ) -> Result<RecommendedWatcher, notify::Error> {
+        let mut watcher = notify::recommended_watcher(tx)?;
+        watcher.watch(dir, mode)?;
+        Ok(watcher)
     }
 
     /// Check if an event is relevant (config.json or panes.json changes).

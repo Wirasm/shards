@@ -1,5 +1,7 @@
 use tracing::{error, info, warn};
 
+use kild_paths::KildPaths;
+
 use crate::config::Config;
 use crate::sessions::{errors::SessionError, persistence, types::*};
 use crate::terminal;
@@ -180,6 +182,81 @@ pub fn stop_session(name: &str) -> Result<(), SessionError> {
     info!(
         event = "core.session.stop_completed",
         session_id = %session.id
+    );
+
+    Ok(())
+}
+
+/// Stop a specific teammate PTY by pane ID within a session.
+///
+/// # Arguments
+/// * `branch` - Branch name of the parent kild session
+/// * `pane_id` - Pane ID to stop (e.g. "%1", "%2")
+pub fn stop_teammate(branch: &str, pane_id: &str) -> Result<(), SessionError> {
+    if pane_id == "%0" {
+        return Err(SessionError::LeaderPaneStop {
+            branch: branch.to_string(),
+        });
+    }
+
+    info!(
+        event = "core.session.stop_teammate_started",
+        branch = branch,
+        pane_id = pane_id
+    );
+
+    let config = Config::new();
+    let session =
+        persistence::find_session_by_name(&config.sessions_dir(), branch)?.ok_or_else(|| {
+            SessionError::NotFound {
+                name: branch.to_string(),
+            }
+        })?;
+
+    let paths = KildPaths::resolve().map_err(|e| SessionError::ConfigError {
+        message: e.to_string(),
+    })?;
+    let panes_path = paths.shim_panes_file(&session.id);
+
+    let content = match std::fs::read_to_string(&panes_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SessionError::NoTeammates {
+                name: branch.to_string(),
+            });
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let registry: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| SessionError::ConfigError {
+            message: format!("corrupt panes.json: {}", e),
+        })?;
+
+    let pane_not_found = || SessionError::PaneNotFound {
+        pane_id: pane_id.to_string(),
+        branch: branch.to_string(),
+    };
+
+    let panes = registry.get("panes").ok_or_else(pane_not_found)?;
+    let pane_entry = panes.get(pane_id).ok_or_else(pane_not_found)?;
+    let daemon_session_id = pane_entry
+        .get("daemon_session_id")
+        .and_then(|s| s.as_str())
+        .ok_or_else(pane_not_found)?
+        .to_string();
+
+    crate::daemon::client::destroy_daemon_session(&daemon_session_id, false).map_err(|e| {
+        SessionError::DaemonError {
+            message: e.to_string(),
+        }
+    })?;
+
+    info!(
+        event = "core.session.stop_teammate_completed",
+        branch = branch,
+        pane_id = pane_id,
+        daemon_session_id = daemon_session_id
     );
 
     Ok(())
@@ -625,5 +702,21 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_stop_teammate_not_found() {
+        let result = stop_teammate("non-existent-branch", "%1");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SessionError::NotFound { .. }));
+    }
+
+    #[test]
+    fn test_stop_teammate_rejects_leader_pane() {
+        let result = stop_teammate("my-branch", "%0");
+        assert!(
+            matches!(result.unwrap_err(), SessionError::LeaderPaneStop { .. }),
+            "Stopping leader pane %0 should return LeaderPaneStop error"
+        );
     }
 }

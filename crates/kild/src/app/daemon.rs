@@ -35,4 +35,10 @@ pub fn attach_command() -> Command {
                 .required(true)
                 .index(1),
         )
+        .arg(
+            Arg::new("pane")
+                .long("pane")
+                .help("Attach to a specific teammate pane (e.g. %1, %2)")
+                .value_name("PANE_ID"),
+        )
 }

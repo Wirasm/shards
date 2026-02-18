@@ -107,16 +107,15 @@ mod tests {
         }
     }
 
-    fn make_member(name: &str, pane_id: &str, is_leader: bool) -> TeamMember {
+    fn make_member(name: &str, pane_id: &str) -> TeamMember {
         TeamMember {
             name: name.to_string(),
-            agent_id: format!("{}@test-team", name),
-            agent_type: "general-purpose".to_string(),
+            agent_id: Some(format!("{}@test-team", name)),
+            agent_type: Some("general-purpose".to_string()),
             color: TeamColor::Blue,
             pane_id: pane_id.to_string(),
             daemon_session_id: None,
             is_active: true,
-            is_leader,
         }
     }
 
@@ -138,9 +137,9 @@ mod tests {
         .unwrap();
 
         let team = make_team(vec![
-            make_member("leader", "%0", true),
-            make_member("worker1", "%1", false),
-            make_member("worker2", "%2", false),
+            make_member("leader", "%0"),
+            make_member("worker1", "%1"),
+            make_member("worker2", "%2"),
         ]);
 
         let resolved = resolve_team_with_registry(team, &registry_path, "sess-123").unwrap();
@@ -172,8 +171,8 @@ mod tests {
         .unwrap();
 
         let team = make_team(vec![
-            make_member("leader", "%0", true),
-            make_member("ghost", "%99", false),
+            make_member("leader", "%0"),
+            make_member("ghost", "%99"),
         ]);
 
         let resolved = resolve_team_with_registry(team, &registry_path, "sess").unwrap();
@@ -204,7 +203,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let registry_path = dir.path().join("nonexistent.json");
 
-        let team = make_team(vec![make_member("a", "%0", true)]);
+        let team = make_team(vec![make_member("a", "%0")]);
         let resolved = resolve_team_with_registry(team, &registry_path, "sess").unwrap();
 
         // No daemon session IDs resolved, but no error
@@ -224,7 +223,7 @@ mod tests {
         .unwrap();
 
         // Leader with empty pane_id won't match any registry entry
-        let team = make_team(vec![make_member("leader", "", true)]);
+        let team = make_team(vec![make_member("leader", "")]);
         let resolved = resolve_team_with_registry(team, &registry_path, "sess").unwrap();
 
         assert!(resolved.members[0].daemon_session_id.is_none());

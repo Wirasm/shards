@@ -3396,6 +3396,7 @@ dependencies = [
  "clap_complete",
  "kild-core",
  "kild-protocol",
+ "kild-teams",
  "nix 0.29.0",
  "owo-colors",
  "serde",
