@@ -14,87 +14,22 @@ pub trait KildError: Error + Send + Sync + 'static {
 /// Common result type for the application
 pub type KildResult<T> = Result<T, Box<dyn KildError>>;
 
-#[derive(Debug)]
-pub enum ConfigError {
-    ConfigNotFound {
-        path: String,
-    },
-    ConfigParseError {
-        message: String,
-    },
-    InvalidAgent {
-        agent: String,
-        supported_agents: String,
-    },
-    InvalidConfiguration {
-        message: String,
-    },
-    IoError {
-        source: std::io::Error,
-    },
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConfigError::ConfigNotFound { path } => {
-                write!(f, "Config file not found at '{}'", path)
-            }
-            ConfigError::ConfigParseError { message } => {
-                write!(f, "Failed to parse config file: {}", message)
-            }
-            ConfigError::InvalidAgent {
-                agent,
-                supported_agents,
-            } => {
-                write!(
-                    f,
-                    "Invalid agent '{}'. Supported agents: {}",
-                    agent, supported_agents
-                )
-            }
-            ConfigError::InvalidConfiguration { message } => {
-                write!(f, "Invalid configuration: {}", message)
-            }
-            ConfigError::IoError { source } => {
-                write!(f, "IO error reading config: {}", source)
-            }
-        }
-    }
-}
-
-impl Error for ConfigError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            ConfigError::IoError { source } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for ConfigError {
-    fn from(source: std::io::Error) -> Self {
-        ConfigError::IoError { source }
-    }
-}
-
-impl KildError for ConfigError {
+impl KildError for kild_config::ConfigError {
     fn error_code(&self) -> &'static str {
         match self {
-            ConfigError::ConfigNotFound { .. } => "CONFIG_NOT_FOUND",
-            ConfigError::ConfigParseError { .. } => "CONFIG_PARSE_ERROR",
-            ConfigError::InvalidAgent { .. } => "INVALID_AGENT",
-            ConfigError::InvalidConfiguration { .. } => "INVALID_CONFIGURATION",
-            ConfigError::IoError { .. } => "CONFIG_IO_ERROR",
+            kild_config::ConfigError::ConfigParseError { .. } => "CONFIG_PARSE_ERROR",
+            kild_config::ConfigError::InvalidAgent { .. } => "INVALID_AGENT",
+            kild_config::ConfigError::InvalidConfiguration { .. } => "INVALID_CONFIGURATION",
+            kild_config::ConfigError::IoError { .. } => "CONFIG_IO_ERROR",
         }
     }
 
     fn is_user_error(&self) -> bool {
         matches!(
             self,
-            ConfigError::ConfigParseError { .. }
-                | ConfigError::InvalidAgent { .. }
-                | ConfigError::InvalidConfiguration { .. }
+            kild_config::ConfigError::ConfigParseError { .. }
+                | kild_config::ConfigError::InvalidAgent { .. }
+                | kild_config::ConfigError::InvalidConfiguration { .. }
         )
     }
 }
@@ -111,7 +46,7 @@ mod tests {
     #[test]
     fn test_config_error_display() {
         use crate::agents::supported_agents_string;
-        let error = ConfigError::InvalidAgent {
+        let error = kild_config::ConfigError::InvalidAgent {
             agent: "unknown".to_string(),
             supported_agents: supported_agents_string(),
         };
@@ -136,7 +71,7 @@ mod tests {
 
     #[test]
     fn test_config_parse_error() {
-        let error = ConfigError::ConfigParseError {
+        let error = kild_config::ConfigError::ConfigParseError {
             message: "invalid TOML syntax".to_string(),
         };
         assert_eq!(

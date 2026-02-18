@@ -3,9 +3,9 @@
 //! This module contains validation functions for configuration values,
 //! ensuring they are valid before being used by the application.
 
-use crate::agents;
-use crate::config::types::KildConfig;
+use crate::agent_data;
 use crate::errors::ConfigError;
+use crate::types::KildConfig;
 
 /// Valid terminal emulator names.
 pub const VALID_TERMINALS: [&str; 5] = ["iterm2", "iterm", "terminal", "ghostty", "native"];
@@ -14,7 +14,7 @@ pub const VALID_TERMINALS: [&str; 5] = ["iterm2", "iterm", "terminal", "ghostty"
 ///
 /// # Validation Rules
 ///
-/// - Agent name must be a known agent (see [`AgentType`](crate::agents::AgentType) for supported agents)
+/// - Agent name must be a known agent
 /// - Terminal preference, if set, should be a valid terminal name (warning only)
 /// - Include patterns, if configured, must be valid
 ///
@@ -24,10 +24,10 @@ pub const VALID_TERMINALS: [&str; 5] = ["iterm2", "iterm", "terminal", "ghostty"
 /// Returns `ConfigError::InvalidConfiguration` if include patterns are invalid.
 pub fn validate_config(config: &KildConfig) -> Result<(), ConfigError> {
     // Validate agent name
-    if !agents::is_valid_agent(&config.agent.default) {
+    if !agent_data::is_valid_agent(&config.agent.default) {
         return Err(ConfigError::InvalidAgent {
             agent: config.agent.default.clone(),
-            supported_agents: agents::supported_agents_string(),
+            supported_agents: agent_data::supported_agents_string(),
         });
     }
 
@@ -59,7 +59,7 @@ pub fn validate_config(config: &KildConfig) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::types::{AgentConfig, KildConfig};
+    use crate::types::{AgentConfig, KildConfig};
 
     #[test]
     fn test_config_validation_valid_agent() {
@@ -126,6 +126,35 @@ mod tests {
         let mut config = KildConfig::default();
         config.terminal.preferred = Some("ghostty".to_string());
 
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_config_validation_invalid_include_pattern() {
+        use crate::include_config::IncludeConfig;
+        let mut config = KildConfig::default();
+        config.include_patterns = Some(IncludeConfig {
+            patterns: vec!["[invalid-glob".to_string()],
+            enabled: true,
+            max_file_size: None,
+        });
+        let result = validate_config(&config);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigError::InvalidConfiguration { .. }
+        ));
+    }
+
+    #[test]
+    fn test_config_validation_valid_include_patterns() {
+        use crate::include_config::IncludeConfig;
+        let mut config = KildConfig::default();
+        config.include_patterns = Some(IncludeConfig {
+            patterns: vec![".env*".to_string(), "*.local.json".to_string()],
+            enabled: true,
+            max_file_size: None,
+        });
         assert!(validate_config(&config).is_ok());
     }
 }

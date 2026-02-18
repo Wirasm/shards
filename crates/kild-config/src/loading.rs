@@ -11,15 +11,14 @@
 //! 3. **Project config** - `./.kild/config.toml` (project-specific overrides)
 //! 4. **CLI arguments** - Command-line flags (highest priority)
 
-use crate::agents;
-use crate::config::types::{
+use crate::agent_data;
+use crate::include_config::IncludeConfig;
+use crate::types::{
     AgentConfig, DaemonRuntimeConfig, GitConfig, HealthConfig, KildConfig, TerminalConfig, UiConfig,
 };
-
-use crate::config::validation::validate_config;
-use crate::files::types::IncludeConfig;
+use crate::validation::validate_config;
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Check if an error is a "file not found" error.
 fn is_file_not_found(e: &(dyn std::error::Error + 'static)) -> bool {
@@ -77,9 +76,9 @@ fn load_project_config() -> Result<KildConfig, Box<dyn std::error::Error>> {
 }
 
 /// Load a configuration file from the given path.
-fn load_config_file(path: &PathBuf) -> Result<KildConfig, Box<dyn std::error::Error>> {
+fn load_config_file(path: &Path) -> Result<KildConfig, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read config file '{}': {}", path.display(), e))?;
+        .map_err(|e| std::io::Error::new(e.kind(), format!("'{}': {}", path.display(), e)))?;
     let config: KildConfig = toml::from_str(&content)
         .map_err(|e| format!("Failed to parse config file '{}': {}", path.display(), e))?;
     Ok(config)
@@ -220,13 +219,13 @@ fn resolve_base_command(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let base = agent_specific
         .or(global)
-        .or_else(|| agents::get_default_command(agent_name))
+        .or_else(|| agent_data::get_default_command(agent_name))
         .ok_or_else(|| {
             format!(
                 "No command found for agent '{}'. Configure a startup_command in your config file \
                 or use a known agent ({}).",
                 agent_name,
-                agents::supported_agents_string()
+                agent_data::supported_agents_string()
             )
         })?;
 
@@ -244,7 +243,7 @@ fn build_command(base: &str, flags: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::types::AgentSettings;
+    use crate::types::AgentSettings;
     use std::env;
     use std::fs;
 
@@ -688,8 +687,6 @@ patterns = ["custom.txt"]
 
     #[test]
     fn test_include_patterns_empty_array_merges_with_base() {
-        // Document behavior: empty array in override does NOT clear base patterns
-        // This is intentional - to disable patterns entirely, set enabled = false
         let user_config: KildConfig = toml::from_str(
             r#"
 [include_patterns]
@@ -892,5 +889,64 @@ default = "claude"
         assert!(merged.editor.default().is_none());
         assert!(merged.editor.flags().is_none());
         assert!(!merged.editor.terminal());
+    }
+
+    #[test]
+    fn test_daemon_config_merge() {
+        let user_config: KildConfig = toml::from_str(
+            r#"
+[daemon]
+enabled = false
+auto_start = false
+"#,
+        )
+        .unwrap();
+
+        let project_config: KildConfig = toml::from_str(
+            r#"
+[daemon]
+enabled = true
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_configs(user_config, project_config);
+        assert!(merged.daemon.enabled()); // project override wins
+        assert!(!merged.daemon.auto_start()); // user value preserved
+    }
+
+    #[test]
+    fn test_daemon_config_defaults() {
+        let config = KildConfig::default();
+        assert!(!config.daemon.enabled());
+        assert!(config.daemon.auto_start());
+    }
+
+    #[test]
+    fn test_load_config_file_parse_error_returns_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "invalid = toml [[[").unwrap();
+        let result = load_config_file(&path);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Failed to parse config file"),
+            "Expected parse error message, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_load_config_file_not_found_is_io_error() {
+        let result = load_config_file(std::path::Path::new("/nonexistent/path/config.toml"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // The error should be a boxed io::Error (not an erased String) so that
+        // is_file_not_found() can correctly classify it via downcast_ref.
+        assert!(
+            err.downcast_ref::<std::io::Error>().is_some(),
+            "io::Error should be preserved as io::Error, not erased to String"
+        );
     }
 }

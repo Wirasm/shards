@@ -157,4 +157,28 @@ mod tests {
         assert!(err.contains("claude"));
         assert!(err.contains("kiro"));
     }
+
+    /// Verify that every AgentType variant is recognized by kild_config's agent validator.
+    ///
+    /// agent_data::AGENT_DATA in kild-config is a manually-maintained duplicate of
+    /// AgentType variants. This test catches any drift between the two lists.
+    #[test]
+    fn test_all_agent_types_recognized_by_config_validator() {
+        use kild_config::{AgentConfig, KildConfig};
+        for agent_type in AgentType::all() {
+            let mut config = KildConfig::default();
+            config.agent = AgentConfig {
+                default: agent_type.as_str().to_string(),
+                startup_command: None,
+                flags: None,
+            };
+            assert!(
+                kild_config::validate_config(&config).is_ok(),
+                "AgentType::{:?} (name: '{}') is not recognized by kild_config::validate_config — \
+                 update crates/kild-config/src/agent_data.rs to add it",
+                agent_type,
+                agent_type.as_str()
+            );
+        }
+    }
 }
