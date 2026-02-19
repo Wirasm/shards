@@ -18,6 +18,7 @@ fn test_config(dir: &std::path::Path) -> DaemonConfig {
         pty_output_batch_ms: 4,
         client_buffer_size: 65536,
         shutdown_timeout_secs: 2,
+        ..DaemonConfig::default()
     }
 }
 
