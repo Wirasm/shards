@@ -57,6 +57,7 @@ cargo build --all              # Clean build
 ```
 
 **Tooling:**
+
 - `cargo fmt` - Rustfmt with default settings
 - `cargo clippy` - Strict linting, warnings treated as errors
 - `thiserror` - For error type definitions
@@ -108,6 +109,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 ## Architecture
 
 **Workspace structure:**
+
 - `crates/kild-paths` - Centralized path construction for ~/.kild/ directory layout (KildPaths struct with typed methods for all paths). Single source of truth for KILD filesystem layout.
 - `crates/kild-config` - TOML configuration types, loading, validation, and keybindings for ~/.kild/config.toml. Depends only on kild-paths and kild-protocol. Single source of truth for all KildConfig/Config/Keybindings types. Extracted from kild-core to enable fast incremental compilation of config-only changes.
 - `crates/kild-protocol` - Shared IPC protocol types (ClientMessage, DaemonMessage, SessionInfo, SessionStatus, ErrorCode), domain newtypes (SessionId, BranchName, ProjectId), and serde-only domain enums (ForgeType). Also provides `IpcConnection` for JSONL-over-Unix-socket client used by both kild-core and kild-tmux-shim with connection health checking via `is_alive()`, and `AsyncIpcClient<R, W>` — a generic async JSONL client over any `AsyncBufRead + AsyncWrite` pair used by kild-ui. All public enums are `#[non_exhaustive]` for forward compatibility. Newtypes defined via `newtype_string!` macro for compile-time type safety. Deps: serde, serde_json, futures (tempfile, smol for tests). No tokio, no kild-core. Single source of truth for daemon wire format and IPC client.
@@ -121,6 +123,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `crates/kild-peek` - CLI for visual verification of native macOS applications
 
 **Key modules in kild-core:**
+
 - `sessions/` - Session lifecycle (create, open, stop, destroy, complete, list)
 - `terminal/` - Multi-backend terminal abstraction (Ghostty, iTerm, Terminal.app, Alacritty)
 - `agents/` - Agent backend system (amp, claude, kiro, gemini, codex, opencode, resume.rs for session continuity)
@@ -139,6 +142,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `state/` - Command pattern for business operations (Command enum, Event enum, Store trait returns events, RuntimeMode enum)
 
 **Key modules in kild-ui:**
+
 - `theme.rs` - Centralized color palette, typography, and spacing constants (Tallinn Night brand system)
 - `theme_bridge.rs` - Maps Tallinn Night colors to gpui-component theme tokens
 - `components/` - Custom UI components (StatusIndicator only; Button, TextInput, Modal from gpui-component library)
@@ -151,6 +155,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `refresh.rs` - Background refresh logic with hybrid file watching + slow poll fallback
 
 **Key modules in kild-daemon:**
+
 - `protocol/` - JSONL IPC protocol (ClientMessage, DaemonMessage, codec with flush/no-flush variants)
 - `pty/` - PTY lifecycle management (PtyManager, ManagedPty via portable-pty, output broadcasting)
 - `session/` - Daemon session state machine (SessionManager, DaemonSession, SessionState enum)
@@ -158,6 +163,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `client/` - Daemon client for typed IPC operations (DaemonClient)
 
 **Key modules in kild-peek-core:**
+
 - `window/` - Window and monitor enumeration via macOS APIs (handler/ contains builders.rs, find.rs, list.rs, monitors.rs, tests.rs)
 - `screenshot/` - Screenshot capture with multiple targets (window, monitor, base64 output)
 - `diff/` - Image comparison using SSIM algorithm
@@ -168,6 +174,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `events/` - App lifecycle event helpers
 
 **Key modules in kild-tmux-shim:**
+
 - `parser/` - Hand-rolled tmux argument parser for ~15 subcommands + aliases (parse.rs, types.rs, tests.rs)
 - `commands.rs` - Command handlers dispatching to daemon IPC or local state
 - `state.rs` - File-based pane registry with flock concurrency control
@@ -176,6 +183,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `errors.rs` - ShimError type
 
 **Key modules in kild-teams:**
+
 - `discovery.rs` - Fallback teammate discovery from shim pane registry (leader + teammates from `panes.json`)
 - `parser.rs` - JSON parsing for shim pane registry format
 - `types.rs` - Domain types: `TeamMember`, `TeamState`, `TeamColor`, `TeamEvent`
@@ -185,12 +193,14 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 - `errors.rs` - `TeamsError` type
 
 **Key modules in kild (CLI):**
+
 - `app/` - CLI command implementations (daemon.rs, git.rs, global.rs, misc.rs, project.rs, query.rs, session.rs, tests.rs)
 - `commands/` - Individual command handler modules (teammates.rs, stop.rs, attach.rs, and others)
 - `main.rs` - CLI entry point with clap argument parsing
 - `color.rs` - Tallinn Night palette output formatting
 
 **Key modules in kild-peek (CLI):**
+
 - `app/` - CLI app logic (assert.rs, diff.rs, elements.rs, interact.rs, list.rs, screenshot.rs, tests.rs)
 - `commands/` - Command implementations (assert.rs, diff.rs, elements.rs, interact.rs, list.rs, screenshot.rs, window_resolution.rs)
 - `main.rs` - CLI entry point
@@ -202,6 +212,7 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 **Command pattern:** Business operations are defined as `Command` enum variants in `kild-core/state/types.rs`. The `Store` trait in `kild-core/state/store.rs` provides the dispatch contract, returning `Vec<Event>` on success to describe state changes. The `Event` enum in `kild-core/state/events.rs` defines all business state changes (kild lifecycle, project management).
 
 **Dispatch vs direct-call guidance:**
+
 - **UI state-mutating operations**: Always dispatch through Store. All operations use `Command` → `CoreStore::dispatch` → `Event` → `apply_events`. This ensures consistent event-driven state updates.
 - **CLI operations**: Call handler functions directly (e.g., `session_ops::create_session`). The CLI is synchronous and doesn't need event-driven updates.
 - **Read-only queries**: Call handler functions directly from both CLI and UI. Queries like `list_sessions`, `get_session`, `get_destroy_safety_info` don't mutate state and don't need dispatch.
@@ -236,15 +247,15 @@ Enable verbose logs with the verbose flag: `cargo run -- -v list`
 
 All events follow: `{layer}.{domain}.{action}_{state}`
 
-| Layer | Crate | Description |
-|-------|-------|-------------|
-| `cli` | `crates/kild/` | User-facing CLI commands |
-| `core` | `crates/kild-core/` | Core library logic |
-| `daemon` | `crates/kild-daemon/` | Daemon server and PTY management |
-| `shim` | `crates/kild-tmux-shim/` | tmux shim binary operations |
-| `ui` | `crates/kild-ui/` | GPUI native GUI |
-| `peek.cli` | `crates/kild-peek/` | kild-peek CLI commands |
-| `peek.core` | `crates/kild-peek-core/` | kild-peek core library |
+| Layer       | Crate                    | Description                      |
+| ----------- | ------------------------ | -------------------------------- |
+| `cli`       | `crates/kild/`           | User-facing CLI commands         |
+| `core`      | `crates/kild-core/`      | Core library logic               |
+| `daemon`    | `crates/kild-daemon/`    | Daemon server and PTY management |
+| `shim`      | `crates/kild-tmux-shim/` | tmux shim binary operations      |
+| `ui`        | `crates/kild-ui/`        | GPUI native GUI                  |
+| `peek.cli`  | `crates/kild-peek/`      | kild-peek CLI commands           |
+| `peek.core` | `crates/kild-peek-core/` | kild-peek core library           |
 
 **Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `notify`, `watcher`, `teams`, `discovery`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `capture_pane`, `ipc`
 
@@ -261,85 +272,24 @@ Daemon server sub-domains: `session`, `pty`, `server`, `connection`, `client`, `
 ### Logging Examples
 
 ```rust
-// CLI layer - simple events
+// CLI layer
 info!(event = "cli.create_started", branch = branch, agent = config.agent.default);
-info!(event = "cli.create_completed", session_id = session.id, branch = session.branch);
 error!(event = "cli.create_failed", error = %e);
 
-// Core layer - domain-prefixed events
+// Core layer - domain-prefixed
 info!(event = "core.session.create_started", branch = request.branch, agent = agent);
-info!(event = "core.session.create_completed", session_id = session.id);
 warn!(event = "core.session.agent_not_available", agent = agent);
 
 // Sub-domains for nested concepts
-info!(event = "core.git.worktree.create_started", branch = branch);
 info!(event = "core.git.worktree.create_completed", path = %worktree_path.display());
-info!(event = "core.git.branch.create_completed", branch = branch);
 
-// Forge domain for PR operations
-info!(event = "core.forge.pr_merge_check_started", branch = branch);
-info!(event = "core.forge.pr_merge_check_completed", merged = true);
-info!(event = "core.forge.pr_info_fetch_completed", pr_number = pr.number, state = ?pr.state);
-
-// Notify domain for desktop notifications
-info!(event = "core.notify.send_started", title = title, message = message);
-info!(event = "core.notify.send_completed", title = title);
-warn!(event = "core.notify.send_failed", title = title, error = %e);
-
-// Debug level for internal operations
-debug!(event = "core.pid_file.read_attempt", attempt = attempt, path = %pid_file.display());
-debug!(event = "core.terminal.applescript_executing", terminal = terminal_name);
-
-// UI layer - watcher domain for file system events
+// UI layer
 info!(event = "ui.watcher.started", path = %sessions_dir.display());
 warn!(event = "ui.watcher.create_failed", error = %e, "File watcher unavailable");
-debug!(event = "ui.watcher.event_detected", kind = ?event.kind, paths = ?event.paths);
-
-// Daemon auto-start (core layer)
-info!(event = "core.daemon.auto_start_started");
-info!(event = "core.daemon.auto_start_completed");
-error!(event = "core.daemon.auto_start_failed", reason = "child_exited", status = %status);
-warn!(event = "core.daemon.ping_check_failed", error = %e);
-
-// CLI daemon operations
-info!(event = "cli.daemon.start_started", foreground = foreground);
-info!(event = "cli.attach_started", branch = branch);
-
-// Teammates CLI operations
-info!(event = "cli.teammates_started", branch = branch);
-info!(event = "cli.teammates_completed", branch = branch, count = n);
-error!(event = "cli.teammates_failed", branch = branch, error = %e);
-info!(event = "cli.stop_teammate_started", branch = branch, pane_id = pane_id);
-info!(event = "cli.stop_teammate_completed", branch = branch, pane_id = pane_id);
-error!(event = "cli.stop_teammate_failed", branch = branch, pane_id = pane_id, error = %e);
-
-// Core session teammate operations
-info!(event = "core.session.stop_teammate_started", branch = branch, pane_id = pane_id);
-info!(event = "core.session.stop_teammate_completed", branch = branch, pane_id = pane_id, daemon_session_id = id);
-
-// Claude Code status hook integration
-info!(event = "core.session.claude_status_hook_installed", path = %hook_path.display());
-debug!(event = "core.session.claude_status_hook_already_exists", path = %hook_path.display());
-warn!(event = "core.session.claude_status_hook_failed", error = %msg);
-info!(event = "core.session.claude_settings_patched", path = %settings_path.display());
-info!(event = "core.session.claude_settings_already_configured");
-warn!(event = "core.session.claude_settings_patch_failed", error = %msg);
-
-// Codex notify hook integration
-info!(event = "core.session.codex_notify_hook_installed", path = %hook_path.display());
-warn!(event = "core.session.codex_notify_hook_failed", error = %msg);
-info!(event = "core.session.codex_config_patched", path = %config_path.display());
-info!(event = "core.session.codex_config_already_configured");
-warn!(event = "core.session.codex_config_patch_failed", error = %msg);
-
-// Auto-attach for daemon sessions
-info!(event = "core.session.auto_attach_started", branch = branch);
-info!(event = "core.session.auto_attach_completed", branch = branch, window_id = ?window_id);
-warn!(event = "core.session.auto_attach_failed", branch = branch, error = %e);
 
 // Structured fields - use Display (%e) for errors, Debug (?val) for complex types
 error!(event = "core.session.destroy_kill_failed", pid = pid, error = %e);
-warn!(event = "core.files.walk.error", error = %e, path = %path.display());
+info!(event = "core.forge.pr_info_fetch_completed", pr_number = pr.number, state = ?pr.state);
 ```
 
 ### App Lifecycle Events
@@ -356,12 +306,12 @@ events::log_app_error(&error);       // core.app.error_occurred
 
 ### Log Level Guidelines
 
-| Level | Usage |
-|-------|-------|
-| `error!` | Operation failed, requires attention |
-| `warn!` | Degraded operation, fallback used, non-critical issues |
-| `info!` | Operation lifecycle (_started, _completed), user-relevant events |
-| `debug!` | Internal state, retry attempts, detailed flow |
+| Level    | Usage                                                              |
+| -------- | ------------------------------------------------------------------ |
+| `error!` | Operation failed, requires attention                               |
+| `warn!`  | Degraded operation, fallback used, non-critical issues             |
+| `info!`  | Operation lifecycle (\_started, \_completed), user-relevant events |
+| `debug!` | Internal state, retry attempts, detailed flow                      |
 
 ### Filtering Logs
 
@@ -424,6 +374,7 @@ pub trait TerminalBackend: Send + Sync {
 ```
 
 Backends registered in `terminal/registry.rs`. Detection preference varies by platform:
+
 - macOS: Ghostty > iTerm > Terminal.app
 - Linux: Alacritty (requires Hyprland window manager)
 
@@ -447,6 +398,7 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 **State management:** File-based pane registry at `~/.kild/shim/<session_id>/panes.json` with flock-based concurrency control. Each pane maps to a daemon session ID.
 
 **Environment variables:**
+
 - `$TMUX` - Set by kild-core, triggers Claude Code's tmux backend
 - `$TMUX_PANE` - Current pane ID (e.g., `%0` for leader, `%1`, `%2` for teammates)
 - `$KILD_SHIM_SESSION` - Session ID for shim state lookup
@@ -454,6 +406,7 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 - `$KILD_SESSION_BRANCH` - Branch name for Claude Code and Codex notify hook status reporting (fallback when `--self` PWD detection unavailable)
 
 **Integration points in kild-core:**
+
 - `daemon_helpers.rs:ensure_shim_binary()` - Symlinks shim as `~/.kild/bin/tmux` (best-effort, warns on failure)
 - `daemon_helpers.rs:ensure_codex_notify_hook()` - Installs `~/.kild/hooks/codex-notify` for Codex CLI integration (idempotent, best-effort)
 - `daemon_helpers.rs:ensure_codex_config()` - Patches `~/.codex/config.toml` with notify hook (respects existing config, best-effort)
@@ -481,12 +434,14 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 **Hook script:** `~/.kild/hooks/claude-status` (shell script, auto-generated, do not edit)
 
 **Settings patching behavior:**
+
 - Idempotent: runs on every `create/open --agent claude` but only patches if needed
 - Respects existing user hooks: if any hook event already references the claude-status script, skips patching
 - Creates `~/.claude/settings.json` if missing
 - Preserves all existing settings and hooks
 
 **Environment variables:**
+
 - `$KILD_SESSION_BRANCH` - Injected into Claude Code sessions as fallback for `--self` PWD-based detection
 
 **Manual setup:** Run `kild init-hooks claude` to install hook and patch settings without creating a session.
@@ -508,15 +463,15 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 **Hook script:** `~/.kild/hooks/codex-notify` (shell script, auto-generated, do not edit)
 
 **Config patching behavior:**
+
 - Idempotent: runs on every `create/open --agent codex` but only patches if needed
 - Respects existing user config: if `notify = [...]` is already set with a non-empty array, no changes are made
 - Creates `~/.codex/config.toml` if missing
 - Appends notify line if config exists but has missing or empty notify field
 
 **Environment variables:**
-- `$KILD_SESSION_BRANCH` - Injected into Codex sessions as fallback for `--self` PWD-based detection
 
-**Best-effort pattern:** All operations warn on failure but never block session creation. If hook install or config patch fails, user sees warnings with manual remediation steps.
+- `$KILD_SESSION_BRANCH` - Injected into Codex sessions as fallback for `--self` PWD-based detection
 
 ## Forge Backend Pattern
 
@@ -532,6 +487,7 @@ pub trait ForgeBackend: Send + Sync {
 ```
 
 Backends registered in `forge/registry.rs`. Forge detection via `detect_forge()` inspects git remote URL. Currently supports:
+
 - GitHub (via `gh` CLI)
 - Future: GitLab, Bitbucket, Gitea
 
@@ -552,12 +508,6 @@ Priority (highest wins): CLI args → project config (`./.kild/config.toml`) →
 **Agent teams:** Daemon sessions inject `$TMUX` and configure the tmux shim (see "tmux Shim for Agent Teams" section) to enable Claude Code agent teams without external tmux.
 
 **UI keyboard shortcuts:**
-- `<jump_modifier>+1-9`: Jump to Nth kild in sidebar (modifier configured by `[navigation] jump_modifier` in `keybindings.toml`, default: "ctrl")
-- `Cmd+Shift+[/]`: Cycle between Control workspaces
-- `Cmd+J/K`: Navigate next/previous kild
-- `Cmd+D`: Toggle Control/Dashboard view
-- `Ctrl+Escape`: Move focus from terminal to sidebar
-
 All UI shortcuts are configurable via `~/.kild/keybindings.toml` (user) or `./.kild/keybindings.toml` (project). See `crates/kild-config/src/keybindings.rs` for all available keys and defaults.
 
 ## Error Handling
