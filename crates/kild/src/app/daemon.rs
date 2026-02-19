@@ -26,6 +26,27 @@ pub fn daemon_command() -> Command {
         )
 }
 
+pub fn inject_command() -> Command {
+    Command::new("inject")
+        .about("Send text to a running daemon worker's stdin")
+        .long_about(
+            "Writes text to a daemon-managed kild's PTY stdin as the next user \
+             prompt turn. Only call when the worker is idle (Stop hook fired).",
+        )
+        .arg(
+            Arg::new("branch")
+                .help("Branch name of the target kild")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::new("text")
+                .help("Text to inject (a newline is appended automatically)")
+                .required(true)
+                .index(2),
+        )
+}
+
 pub fn attach_command() -> Command {
     Command::new("attach")
         .about("Attach to a daemon-managed kild session")

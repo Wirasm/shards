@@ -356,6 +356,16 @@ case "$EVENT" in
     esac
     ;;
 esac
+# Inject event into Honryū brain session if it is running.
+# Honryū receives a concise summary and decides what to do next.
+case "$EVENT" in
+  Stop|SubagentStop|TeammateIdle|TaskCompleted)
+    if kild list --json 2>/dev/null | grep -q '"honryu"'; then
+      LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null | head -c 200)
+      kild inject honryu "[EVENT] ${KILD_SESSION_BRANCH:-unknown} $EVENT: ${LAST_MSG:-no message}" 2>/dev/null || true
+    fi
+    ;;
+esac
 "#;
 
     std::fs::write(&hook_path, script)
