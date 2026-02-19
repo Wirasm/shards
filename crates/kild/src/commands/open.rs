@@ -17,6 +17,7 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
     let runtime_mode = resolve_explicit_runtime_mode(daemon_flag, no_daemon_flag);
     let resume = matches.get_flag("resume");
     let yolo = matches.get_flag("yolo");
+    let no_attach = matches.get_flag("no-attach");
 
     // Check for --all flag first
     if matches.get_flag("all") {
@@ -30,7 +31,7 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
 
     info!(event = "cli.open_started", branch = branch, mode = ?mode);
 
-    match session_ops::open_session(branch, mode.clone(), runtime_mode, resume, yolo) {
+    match session_ops::open_session(branch, mode.clone(), runtime_mode, resume, yolo, no_attach) {
         Ok(session) => {
             match mode {
                 kild_core::OpenMode::BareShell => {
@@ -102,6 +103,7 @@ fn handle_open_all(
             runtime_mode.clone(),
             resume,
             yolo,
+            false,
         ) {
             Ok(s) => {
                 info!(

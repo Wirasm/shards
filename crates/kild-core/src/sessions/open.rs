@@ -79,6 +79,7 @@ pub fn open_session(
     runtime_mode: Option<crate::state::types::RuntimeMode>,
     resume: bool,
     yolo: bool,
+    no_attach: bool,
 ) -> Result<Session, SessionError> {
     info!(
         event = "core.session.open_started",
@@ -485,8 +486,10 @@ pub fn open_session(
     // 6. Save session BEFORE spawning attach window so `kild attach` can find it
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
 
-    // 7. Spawn attach window (best-effort) and update session with terminal info
-    if is_daemon {
+    // 7. Spawn attach window (best-effort) and update session with terminal info.
+    // Skipped when no_attach is set — for programmatic opens (e.g. brain reopening workers)
+    // where a Ghostty window popping up is undesirable.
+    if is_daemon && !no_attach {
         spawn_and_save_attach_window(&mut session, name, &kild_config, &config.sessions_dir())?;
     }
 
@@ -509,6 +512,7 @@ mod tests {
             "non-existent",
             crate::state::types::OpenMode::DefaultAgent,
             Some(crate::state::types::RuntimeMode::Terminal),
+            false,
             false,
             false,
         );

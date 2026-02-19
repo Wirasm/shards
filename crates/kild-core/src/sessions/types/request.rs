@@ -25,6 +25,9 @@ pub struct CreateSessionRequest {
     pub no_fetch: bool,
     /// Whether to launch in an external terminal or daemon-owned PTY.
     pub runtime_mode: crate::state::types::RuntimeMode,
+    /// Use the main project root as working directory instead of creating a worktree.
+    /// Intended for the Honryū brain session and other supervisory agents that don't write code.
+    pub use_main_worktree: bool,
 }
 
 impl CreateSessionRequest {
@@ -41,6 +44,7 @@ impl CreateSessionRequest {
             base_branch: None,
             no_fetch: false,
             runtime_mode: crate::state::types::RuntimeMode::Terminal,
+            use_main_worktree: false,
         }
     }
 
@@ -59,7 +63,13 @@ impl CreateSessionRequest {
             base_branch: None,
             no_fetch: false,
             runtime_mode: crate::state::types::RuntimeMode::Terminal,
+            use_main_worktree: false,
         }
+    }
+
+    pub fn with_main_worktree(mut self, use_main: bool) -> Self {
+        self.use_main_worktree = use_main;
+        self
     }
 
     pub fn with_base_branch(mut self, base_branch: Option<String>) -> Self {

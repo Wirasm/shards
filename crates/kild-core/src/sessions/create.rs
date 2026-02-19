@@ -177,21 +177,42 @@ pub fn create_session(
         git_config.fetch_before_create = Some(false);
     }
 
-    let worktree = git::handler::create_worktree(
-        base_config.kild_dir(),
-        &project,
-        &validated.name,
-        Some(kild_config),
-        &git_config,
-    )
-    .map_err(|e| SessionError::GitError { source: e })?;
+    let worktree = if request.use_main_worktree {
+        // Skip worktree creation: run from the project root (main branch).
+        // Used for supervisory sessions (e.g. honryu brain) that don't write code.
+        let base_branch = git_config
+            .base_branch
+            .clone()
+            .unwrap_or_else(|| "main".to_string());
+        info!(
+            event = "core.session.main_worktree_used",
+            session_id = %session_id,
+            path = %project.path.display(),
+            branch = %base_branch,
+        );
+        git::types::WorktreeInfo {
+            path: project.path.clone(),
+            branch: base_branch,
+            project_id: project.id.clone(),
+        }
+    } else {
+        let wt = git::handler::create_worktree(
+            base_config.kild_dir(),
+            &project,
+            &validated.name,
+            Some(kild_config),
+            &git_config,
+        )
+        .map_err(|e| SessionError::GitError { source: e })?;
 
-    info!(
-        event = "core.session.worktree_created",
-        session_id = %session_id,
-        worktree_path = %worktree.path.display(),
-        branch = worktree.branch
-    );
+        info!(
+            event = "core.session.worktree_created",
+            session_id = %session_id,
+            worktree_path = %wt.path.display(),
+            branch = wt.branch
+        );
+        wt
+    };
 
     // 5. Launch agent — branch on runtime mode
     let spawn_id = compute_spawn_id(&session_id, 0);

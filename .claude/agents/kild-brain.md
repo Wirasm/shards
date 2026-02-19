@@ -60,18 +60,45 @@ cat ~/.claude/tasks/<branch>/*.json 2>/dev/null | jq '.'
 ls ~/.claude/projects/ | grep $(kild list --json | jq -r '.sessions[] | select(.branch=="<branch>") | .worktree_path | gsub("/"; "-") | ltrimstr("-")')
 ```
 
+### Spawning Workers
+
+Workers can be created in three modes depending on the task:
+
+**Mode 1 — Isolated worktree kild** (standard, for code changes)
+```bash
+# Creates kild/<branch> git branch + daemon PTY. Standard for all feature/fix work.
+kild create <branch> --daemon --agent claude --note "<task summary>"
+```
+
+**Mode 2 — Main-branch kild** (no isolation, for analysis/tooling that doesn't modify code)
+```bash
+# Runs from the project root on main. No worktree created.
+# Use for: background analysis, script runners, data gathering.
+kild create <branch> --daemon --agent claude --main --note "<task summary>"
+```
+
+**Mode 3 — Agent team inside a kild** (for parallelism within a single feature)
+```bash
+# Standard kild create — Claude Code's agent team support is built in.
+# Workers inside this kild can spawn their own teammates via the Task tool.
+kild create <branch> --daemon --agent claude --note "<complex task>"
+```
+
+Choose mode based on whether the task modifies code (Mode 1/3) or just reads/analyzes (Mode 2).
+
 ### Sending Instructions to Workers
 
 ```bash
-# Inject the next instruction into a running daemon worker
-# Worker receives this as the next user prompt turn
-# Only call when worker is idle (Stop hook fired = they're waiting)
+# Inject the next instruction into a running daemon worker.
+# Worker receives this as the next user prompt turn (~1s latency via inbox poll).
+# Only call when worker is idle (Stop hook fired = they're waiting).
 kild inject <branch> "Your next task: <clear, specific instruction>"
 
-# Resume a stopped worker with prior conversation context
-kild open <branch> --resume
-# Then inject once it's running:
-kild inject <branch> "<next instruction>"
+# Resume a stopped daemon worker without opening a terminal window.
+# Use --no-attach so Ghostty doesn't pop up a viewing window.
+kild open <branch> --no-attach
+# Then inject once the daemon PTY is running:
+sleep 2 && kild inject <branch> "<next instruction>"
 ```
 
 ### Reading Project Context
@@ -105,7 +132,7 @@ Events are injected as messages like:
 Response protocol:
 1. Acknowledge the event briefly
 2. Check if you need more context (`kild diff <branch>`, task list)
-3. Decide: inject next instruction / open+resume / rebase / escalate / destroy
+3. Decide: inject next instruction / `kild open --no-attach` / rebase / escalate / destroy
 4. Act
 5. Log the decision
 
@@ -116,7 +143,7 @@ Response protocol:
 3. Read conflict map: `kild overlaps`
 4. Read project constraints: `.kild/project.md` if it exists
 5. Reason about which issues can run in parallel (no file overlap, no dependency)
-6. Spawn: `kild create <branch> --daemon --agent claude --note "<issue title>"`
+6. Spawn: `kild create <branch> --daemon --agent claude --note "<issue title>"` (Mode 1 for code changes, `--main` for analysis-only tasks)
 
 **Wave rules:**
 - Never put issues that touch the same files in the same wave (`kild overlaps` tells you)
