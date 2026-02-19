@@ -182,6 +182,21 @@ impl DaemonRuntimeConfig {
         self.auto_start.unwrap_or(true)
     }
 
+    /// Validate the remote connection fields are consistent.
+    ///
+    /// Returns an error if `remote_host` is set without `remote_cert_fingerprint`.
+    /// Both must be present to establish a verified TLS connection.
+    pub fn validate_remote(&self) -> Result<(), String> {
+        if self.remote_host.is_some() && self.remote_cert_fingerprint.is_none() {
+            return Err(
+                "daemon.remote_host is set but daemon.remote_cert_fingerprint is missing — \
+                 pass --remote-fingerprint or set daemon.remote_cert_fingerprint in config"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     /// Merge two daemon runtime configs. Override takes precedence for set fields.
     pub fn merge(base: &Self, override_config: &Self) -> Self {
         Self {

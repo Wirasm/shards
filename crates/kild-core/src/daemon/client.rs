@@ -40,7 +40,18 @@ fn get_connection() -> Result<IpcConnection, DaemonClientError> {
     }
 
     // Config file remote_host takes precedence over local Unix socket.
-    let config = kild_config::KildConfig::load_hierarchy().unwrap_or_default();
+    let config = match kild_config::KildConfig::load_hierarchy() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                event = "core.daemon.config_load_failed",
+                error = %e,
+                "Failed to load config; falling back to defaults. \
+                 Remote daemon settings will not be applied."
+            );
+            kild_config::KildConfig::default()
+        }
+    };
     if let Some(ref remote_host) = config.daemon.remote_host {
         debug!(event = "core.daemon.tcp_connection_config", host = %remote_host);
         return get_tls_connection(
@@ -75,8 +86,10 @@ fn get_tls_connection(
     addr: &str,
     fingerprint_str: Option<&str>,
 ) -> Result<IpcConnection, DaemonClientError> {
-    let fp_str = fingerprint_str.ok_or_else(|| DaemonClientError::NotRunning {
-        path: "remote_host is set but remote_cert_fingerprint is missing in config".to_string(),
+    let fp_str = fingerprint_str.ok_or_else(|| DaemonClientError::ConnectionFailed {
+        message: "remote_host is set but remote_cert_fingerprint is missing — \
+                  pass --remote-fingerprint or set daemon.remote_cert_fingerprint in config"
+            .to_string(),
     })?;
 
     let fingerprint = crate::daemon::tofu::parse_fingerprint(fp_str)

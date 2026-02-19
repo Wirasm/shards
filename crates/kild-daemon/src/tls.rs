@@ -6,8 +6,9 @@
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use std::fs::{self, File};
-use std::io::BufReader;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufReader, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
@@ -17,11 +18,14 @@ use crate::errors::DaemonError;
 /// Load an existing PEM cert+key pair, or generate a self-signed one.
 ///
 /// If both files exist, reads and returns their contents.
-/// If either is missing, generates a new self-signed cert for "localhost",
+/// If either is missing, generates a new self-signed cert for "kild-daemon",
 /// writes both PEM files to disk, and returns the DER-encoded forms.
 ///
 /// The generated cert is self-signed. Clients authenticate via fingerprint
-/// pinning (TOFU), not via a CA.
+/// pinning (TOFU), not via a CA. Hostname validation is intentionally bypassed
+/// by `TofuVerifier`, so the SAN is informational only.
+///
+/// The key file is written with `0o600` permissions (owner read/write only).
 pub fn load_or_generate_cert(
     cert_path: &Path,
     key_path: &Path,
@@ -48,14 +52,22 @@ pub fn load_or_generate_cert(
     );
 
     let CertifiedKey { cert, signing_key } =
-        generate_simple_self_signed(vec!["localhost".to_string()])
+        generate_simple_self_signed(vec!["kild-daemon".to_string()])
             .map_err(|e| DaemonError::TlsConfig(e.to_string()))?;
 
     if let Some(parent) = cert_path.parent() {
         fs::create_dir_all(parent).map_err(DaemonError::Io)?;
     }
     fs::write(cert_path, cert.pem()).map_err(DaemonError::Io)?;
-    fs::write(key_path, signing_key.serialize_pem()).map_err(DaemonError::Io)?;
+    // Write key with 0o600 so only the daemon process owner can read it.
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(key_path)
+        .and_then(|mut f| f.write_all(signing_key.serialize_pem().as_bytes()))
+        .map_err(DaemonError::Io)?;
 
     info!(
         event = "daemon.tls.cert_generated",
@@ -146,21 +158,41 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_key_returns_error() {
+    fn test_missing_key_triggers_regeneration() {
         let dir = tempdir().unwrap();
         let cert_path = dir.path().join("daemon.crt");
         let key_path = dir.path().join("daemon.key");
 
         // Generate cert so cert_path exists
         let _ = load_or_generate_cert(&cert_path, &key_path).unwrap();
-        // Remove the key file
+        // Remove the key file — cert_path exists but key_path does not.
         fs::remove_file(&key_path).unwrap();
 
-        // Now key exists but cert exists too — both need to exist to load;
-        // missing key file means it falls through to generate, which should succeed
-        // since neither is a complete pair.
-        // Regenerate — should succeed.
+        // load_or_generate_cert requires both files to exist for the load path;
+        // since the pair is incomplete, it falls through to generate a fresh cert.
         let result = load_or_generate_cert(&cert_path, &key_path);
         assert!(result.is_ok(), "should regenerate when key is missing");
+    }
+
+    #[test]
+    fn test_corrupt_key_file_returns_error() {
+        let dir = tempdir().unwrap();
+        let cert_path = dir.path().join("daemon.crt");
+        let key_path = dir.path().join("daemon.key");
+
+        // Generate a valid cert+key pair first
+        let _ = load_or_generate_cert(&cert_path, &key_path).unwrap();
+
+        // Overwrite the key file with garbage — not a valid PEM block
+        fs::write(&key_path, b"this is not a PEM key\n").unwrap();
+
+        // Both files exist so the load branch runs, but the key parse fails
+        let result = load_or_generate_cert(&cert_path, &key_path);
+        assert!(result.is_err(), "corrupt key file should return an error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no private key"),
+            "expected 'no private key' in error, got: {err}"
+        );
     }
 }

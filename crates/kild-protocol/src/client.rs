@@ -1,8 +1,9 @@
-//! Shared synchronous JSONL-over-Unix-socket IPC client.
+//! Shared synchronous JSONL IPC client for Unix socket and TCP+TLS transports.
 //!
 //! Provides `IpcConnection` for connecting to the KILD daemon and sending
 //! typed `ClientMessage`/`DaemonMessage` requests. Used by both `kild-core`
-//! and `kild-tmux-shim` to avoid duplicating JSONL framing logic.
+//! (Unix + TCP/TLS) and `kild-tmux-shim` (Unix only) to avoid duplicating
+//! JSONL framing logic. TCP/TLS support requires the `tcp` Cargo feature.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -243,14 +244,14 @@ impl IpcConnection {
     /// Check if the connection is still usable (peer hasn't closed).
     ///
     /// For Unix streams: temporarily sets a 1ms read timeout (restored via RAII
-    /// guard, even on panic) and attempts a read.
+    /// guard, even on panic) and attempts a read. Returns `false` if the peer
+    /// has definitely closed, `true` otherwise.
     ///
-    /// For TLS streams: always returns `false`. A 1ms read probe on a
-    /// `StreamOwned<ClientConnection, TcpStream>` can corrupt the TLS state
-    /// machine. TLS connections are never cached — callers create fresh
-    /// connections per request.
-    ///
-    /// Returns `false` if the socket is definitely closed, `true` otherwise.
+    /// For TLS streams: always returns `false` regardless of actual socket state.
+    /// A 1ms read probe on a `StreamOwned<ClientConnection, TcpStream>` can
+    /// corrupt the TLS state machine. TLS connections are never cached — callers
+    /// create fresh connections per request. `false` here means "do not cache",
+    /// not "definitely closed".
     pub fn is_alive(&self) -> bool {
         match &self.stream {
             IpcStream::Unix(s) => Self::is_unix_alive(s),

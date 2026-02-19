@@ -71,7 +71,9 @@ impl ServerCertVerifier for TofuVerifier {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(TlsError::General(format!(
-                "TLS cert fingerprint mismatch — expected {} got {}",
+                "TLS cert fingerprint mismatch — expected {} got {}. \
+                 If the daemon regenerated its certificate, obtain the new fingerprint with: \
+                 openssl x509 -in ~/.kild/certs/daemon.crt -fingerprint -sha256 -noout",
                 hex::encode(self.pinned),
                 hex::encode(got)
             )))

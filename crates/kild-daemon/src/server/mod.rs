@@ -4,6 +4,8 @@ pub mod shutdown;
 use std::path::Path;
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
@@ -86,20 +88,24 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
     // Using a separate task keeps the main Unix accept loop simple and avoids
     // select! complexity for the optional TCP arm.
     if let Some(bind_addr) = config.bind_tcp {
-        let cert_path = config.tls_cert_path.clone().unwrap_or_else(|| {
-            kild_paths::KildPaths::resolve()
-                .unwrap_or_else(|_| {
-                    kild_paths::KildPaths::from_dir(std::path::PathBuf::from("/tmp/.kild"))
-                })
-                .tls_cert_path()
+        let kild_paths = kild_paths::KildPaths::resolve().unwrap_or_else(|e| {
+            error!(
+                event = "daemon.server.paths_resolve_failed",
+                error = %e,
+                "Cannot resolve ~/.kild path; TLS certs will be written to /tmp/.kild — \
+                 this path is ephemeral and certs will be lost on reboot, breaking \
+                 remote client fingerprint pinning."
+            );
+            kild_paths::KildPaths::from_dir(std::path::PathBuf::from("/tmp/.kild"))
         });
-        let key_path = config.tls_key_path.clone().unwrap_or_else(|| {
-            kild_paths::KildPaths::resolve()
-                .unwrap_or_else(|_| {
-                    kild_paths::KildPaths::from_dir(std::path::PathBuf::from("/tmp/.kild"))
-                })
-                .tls_key_path()
-        });
+        let cert_path = config
+            .tls_cert_path
+            .clone()
+            .unwrap_or_else(|| kild_paths.tls_cert_path());
+        let key_path = config
+            .tls_key_path
+            .clone()
+            .unwrap_or_else(|| kild_paths.tls_key_path());
 
         let (certs, key) = tls::load_or_generate_cert(&cert_path, &key_path)?;
         let tls_config = tls::build_server_config(certs, key)?;
@@ -213,6 +219,9 @@ async fn tcp_accept_loop(
                             event = "daemon.server.tcp_accept_failed",
                             error = %e,
                         );
+                        // Brief sleep to avoid tight spin on fatal accept errors
+                        // (EMFILE, ENOMEM) that cannot be resolved immediately.
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }

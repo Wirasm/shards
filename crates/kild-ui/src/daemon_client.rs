@@ -167,7 +167,18 @@ async fn connect_tcp(
 /// remote config exclusively from the config file.
 async fn connect_for_config() -> Result<ErasedUiClient, DaemonClientError> {
     // Check config file
-    let config = KildConfig::load_hierarchy().unwrap_or_default();
+    let config = match KildConfig::load_hierarchy() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                event = "ui.daemon.config_load_failed",
+                error = %e,
+                "Failed to load config; falling back to defaults. \
+                 Remote daemon settings will not be applied."
+            );
+            KildConfig::default()
+        }
+    };
     if let Some(ref remote_host) = config.daemon.remote_host {
         let fp_str = config
             .daemon
