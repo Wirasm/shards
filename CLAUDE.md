@@ -233,89 +233,19 @@ cargo run -p kild -- complete my-branch                # Complete kild (PR clean
 
 ## Structured Logging
 
-### Setup
+JSON output via tracing-subscriber. Silent by default — use `-v/--verbose` to emit `info` and above. `RUST_LOG` alone does not override quiet mode.
 
-Logging is initialized via `kild_core::init_logging(quiet)` in the CLI main.rs. Output is JSON format via tracing-subscriber.
+**Event format:** `{layer}.{domain}.{action}_{state}` — e.g. `core.session.create_started`, `cli.create_failed`, `daemon.pty.spawn_completed`. Layers map to crates (`cli`, `core`, `daemon`, `shim`, `ui`, `peek.cli`, `peek.core`). State suffixes: `_started`, `_completed`, `_failed`, `_skipped`.
 
-By default, all log output is suppressed (clean output). When `-v/--verbose` flag is used, info-level and above events are emitted.
+**Why:** Every user-visible operation needs a `_started`/`_completed` pair so failures can be triaged by scanning the event name alone. Each layer logs only its own concern — CLI logs intent and outcome, core logs domain logic, daemon logs PTY/server events.
 
-The `-v/--verbose` flag is required to see any logs. The `RUST_LOG` env var alone will not override the default quiet mode.
-
-Enable verbose logs with the verbose flag: `cargo run -- -v list`
-
-### Event Naming Convention
-
-All events follow: `{layer}.{domain}.{action}_{state}`
-
-| Layer       | Crate                    | Description                      |
-| ----------- | ------------------------ | -------------------------------- |
-| `cli`       | `crates/kild/`           | User-facing CLI commands         |
-| `core`      | `crates/kild-core/`      | Core library logic               |
-| `daemon`    | `crates/kild-daemon/`    | Daemon server and PTY management |
-| `shim`      | `crates/kild-tmux-shim/` | tmux shim binary operations      |
-| `ui`        | `crates/kild-ui/`        | GPUI native GUI                  |
-| `peek.cli`  | `crates/kild-peek/`      | kild-peek CLI commands           |
-| `peek.core` | `crates/kild-peek-core/` | kild-peek core library           |
-
-**Domains:** `session`, `terminal`, `daemon`, `git`, `forge`, `cleanup`, `health`, `files`, `process`, `pid_file`, `app`, `projects`, `state`, `notify`, `watcher`, `teams`, `discovery`, `window`, `screenshot`, `diff`, `assert`, `interact`, `element`, `pty`, `protocol`, `split_window`, `send_keys`, `list_panes`, `kill_pane`, `display_message`, `select_pane`, `set_option`, `select_layout`, `resize_pane`, `has_session`, `new_session`, `new_window`, `list_windows`, `break_pane`, `join_pane`, `capture_pane`, `ipc`
-
-UI-specific domains: `terminal` (for kild-ui terminal rendering), `input` (for keystroke translation)
-
-Note: `projects` domain events are `core.projects.*` (in kild-core), while UI-specific events use `ui.*` prefix.
-
-Note: `core.daemon.*` = daemon client IPC and auto-start (in kild-core), `daemon.*` = daemon server/PTY operations (in kild-daemon).
-
-Daemon server sub-domains: `session`, `pty`, `server`, `connection`, `client`, `pid`, `config`
-
-**State suffixes:** `_started`, `_completed`, `_failed`, `_skipped`
-
-### Logging Principles
-
-Every log event must include a structured `event` field following `{layer}.{domain}.{action}_{state}`. The event name alone should identify what happened and where — no prose message needed for normal operations.
-
-Emit `_started` and `_completed` pairs for every user-visible operation so log triage can measure duration and detect hangs. Emit `_failed` on any error path with the error attached. Skip `_started` only for trivially fast, non-blocking reads.
-
-Use `%e` (Display) for error values, `?val` (Debug) for complex types like enums and structs. Never log raw `{:?}` without the field name — always name your fields.
-
-Each layer logs only its own concern. CLI logs intent and outcome; core logs domain logic; daemon logs PTY and server events; shim logs IPC calls. Do not log across layer boundaries.
+**Field conventions:** Use `%e` (Display) for errors, `?val` (Debug) for enums/structs. Always name fields — never log bare `{:?}`.
 
 ```rust
 info!(event = "cli.create_started", branch = branch, agent = config.agent.default);
 error!(event = "cli.create_failed", error = %e);
 info!(event = "core.git.worktree.create_completed", path = %worktree_path.display());
-info!(event = "core.forge.pr_info_fetch_completed", pr_number = pr.number, state = ?pr.state);
-```
-
-### App Lifecycle Events
-
-Use helpers from `kild_core::events`:
-
-```rust
-use kild_core::events;
-
-events::log_app_startup();           // core.app.startup_completed
-events::log_app_shutdown();          // core.app.shutdown_started
-events::log_app_error(&error);       // core.app.error_occurred
-```
-
-### Log Level Guidelines
-
-| Level    | Usage                                                              |
-| -------- | ------------------------------------------------------------------ |
-| `error!` | Operation failed, requires attention                               |
-| `warn!`  | Degraded operation, fallback used, non-critical issues             |
-| `info!`  | Operation lifecycle (\_started, \_completed), user-relevant events |
-| `debug!` | Internal state, retry attempts, detailed flow                      |
-
-### Filtering Logs
-
-Filter by layer prefix or domain substring — the event name encodes both:
-
-```bash
-grep 'event":"core\.'     # all core events
-grep 'core\.session\.'    # session domain
-grep 'event":"daemon\.'   # daemon server events
-grep '_failed"'           # all failures across all layers
+// Filter: grep '_failed"' or grep 'core\.session\.'
 ```
 
 ## Terminal Backend Pattern
