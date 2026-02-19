@@ -309,47 +309,13 @@ events::log_app_error(&error);       // core.app.error_occurred
 
 ### Filtering Logs
 
+Filter by layer prefix or domain substring — the event name encodes both:
+
 ```bash
-# By layer
-grep 'event":"core\.'      # Core library events
-grep 'event":"cli\.'       # CLI events
-grep 'event":"ui\.'        # GUI events
-grep 'event":"peek\.core\.' # kild-peek core events
-grep 'event":"peek\.cli\.'  # kild-peek CLI events
-
-# By domain
-grep 'core\.session\.'  # Session events
-grep 'core\.terminal\.' # Terminal events
-grep 'core\.daemon\.'   # Daemon client events
-grep 'core\.git\.'      # Git events
-grep 'core\.forge\.'    # Forge/PR events
-grep 'core\.projects\.' # Project management events
-grep 'core\.notify\.'   # Desktop notification events
-grep 'ui\.watcher\.'    # File watcher events
-grep 'peek\.core\.window\.'     # Window enumeration events
-grep 'peek\.core\.screenshot\.' # Screenshot capture events
-grep 'peek\.core\.interact\.'   # UI interaction events
-grep 'peek\.core\.element\.'    # Element enumeration events
-
-# Daemon server events
-grep 'event":"daemon\.'   # Daemon server events
-grep 'daemon\.session\.'     # Session state machine events
-grep 'daemon\.pty\.'         # PTY lifecycle events
-grep 'daemon\.server\.'      # Server startup/shutdown
-grep 'daemon\.connection\.'  # Client connection events
-
-# tmux shim events
-grep 'event":"shim\.'        # All shim events
-grep 'shim\.split_window'    # Pane creation events
-grep 'shim\.send_keys'       # Stdin write events
-grep 'shim\.kill_pane'       # Pane destruction events
-grep 'shim\.capture_pane'    # Scrollback capture events
-grep 'shim\.ipc\.'           # IPC communication with daemon
-
-# By outcome
-grep '_failed"'         # All failures
-grep '_completed"'      # All completions
-grep '_started"'        # All operation starts
+grep 'event":"core\.'     # all core events
+grep 'core\.session\.'    # session domain
+grep 'event":"daemon\.'   # daemon server events
+grep '_failed"'           # all failures across all layers
 ```
 
 ## Terminal Backend Pattern
