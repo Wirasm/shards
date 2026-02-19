@@ -353,7 +353,7 @@ esac
 # Skip if this session IS the brain to prevent self-referential feedback loops.
 case "$EVENT" in
   Stop|SubagentStop|TeammateIdle|TaskCompleted)
-    if [ "$BRANCH" != "honryu" ] && kild list --json 2>/dev/null | grep -q '"honryu"'; then
+    if [ "$BRANCH" != "honryu" ] && [ "$BRANCH" != "unknown" ] && kild list --json 2>/dev/null | grep -q '"honryu"'; then
       LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null | head -c 200)
       kild inject honryu "[EVENT] $BRANCH $EVENT: ${LAST_MSG:-no message}" 2>/dev/null || true
     fi
