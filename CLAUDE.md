@@ -18,6 +18,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **No Silent Failures:** This is a developer tool. Developers need to know when something fails. Never swallow errors, never hide failures behind fallbacks without logging, never leave things "behind the curtain". If config is wrong, say so. If an operation fails, surface it. Explicit failure is better than silent misbehavior.
 
+## Codebase Realities
+
+These facts should drive every design decision:
+
+**Trait + factory architecture is the stability backbone.** Extension points are intentionally explicit and swappable. Most features should be added via trait implementation + factory registration, not cross-cutting rewrites.
+
+**Performance and binary size are product goals, not nice-to-have.** Cargo.toml release profile and dependency choices optimize for size and determinism. Convenience dependencies and broad abstractions can silently regress these goals.
+
+## Engineering Principles
+
+These are mandatory implementation constraints, not slogans.
+
+**KISS** — Prefer straightforward control flow over clever meta-programming. Prefer explicit match branches and typed structs over hidden dynamic behavior. Keep error paths obvious and localized.
+
+**YAGNI** — Do not add new config keys, trait methods, feature flags, or workflow branches without a concrete accepted use case. Do not introduce speculative abstractions without at least one current caller. Keep unsupported paths explicit (error out) rather than adding partial fake support.
+
+**DRY + Rule of Three** — Duplicate small, local logic when it preserves clarity. Extract shared utilities only after repeated, stable patterns (rule of three). When extracting, preserve module boundaries and avoid hidden coupling.
+
+**SRP + ISP** — Keep each module focused on one concern. Extend behavior by implementing existing narrow traits whenever possible. Avoid fat interfaces and "god modules" that mix policy + transport + storage.
+
+**Fail Fast + Explicit Errors** — Prefer explicit `bail!`/errors for unsupported or unsafe states. Never silently broaden permissions or capabilities. Document fallback behavior when fallback is intentional and safe.
+
+**Determinism + Reproducibility** — Prefer reproducible commands and locked dependency behavior in CI-sensitive paths. Keep tests deterministic (no flaky timing/network dependence without guardrails). Ensure local validation commands map to CI expectations.
+
+**Reversibility + Rollback-First** — Keep changes easy to revert (small scope, clear blast radius). For risky changes, define rollback path before merge. Avoid mixed mega-patches that block safe rollback.
+
 ## Git as First-Class Citizen
 
 KILD is built around git worktrees. Let git handle what git does best:
