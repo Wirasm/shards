@@ -98,7 +98,7 @@ cargo run -p kild -- open --all                        # Open all stopped kilds
 cargo run -p kild -- open my-branch --resume           # Resume previous conversation
 cargo run -p kild -- open my-branch --no-attach        # Open daemon session without attach window
 cargo run -p kild -- open my-branch --no-attach --resume  # Headless resume (brain reopening workers)
-cargo run -p kild -- inject my-branch "do the thing"  # Deliver message to running worker via inbox
+cargo run -p kild -- inject my-branch "do the thing"  # Deliver message to running worker (PTY stdin or Claude inbox)
 cargo run -p kild -- stop my-branch                    # Stop agent, preserve kild
 cargo run -p kild -- stop --all                        # Stop all kilds
 cargo run -p kild -- stop my-branch --pane %1          # Stop a single teammate pane
@@ -400,7 +400,7 @@ Status detection uses PID tracking by default. Ghostty uses window-based detecti
 - Fleet mode activates when `~/.claude/teams/honryu/` exists or when creating the `honryu` (brain) session itself
 - Daemon sessions with the `claude` agent get `--agent-id <branch>@honryu --agent-name <branch> --team-name honryu` appended to the agent command
 - The brain session (`honryu` branch) additionally loads `--agent kild-brain` as team lead
-- `kild inject <branch> "<text>"` writes to `~/.claude/teams/honryu/inboxes/<branch>.json`; Claude Code delivers it as a new user turn within ~1s
+- `kild inject <branch> "<text>"` routes via PTY stdin for non-claude agents; for claude sessions it writes to `~/.claude/teams/honryu/inboxes/<branch>.json` (Claude Code delivers it as a new user turn within ~1s). Use `--inbox` to force the inbox path.
 - `ensure_fleet_member()` in `fleet.rs` creates the inbox file and team config on every create/open (idempotent, best-effort)
 - Non-claude agents and terminal sessions are unaffected
 
