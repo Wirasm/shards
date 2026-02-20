@@ -233,7 +233,10 @@ mod tests {
         assert_eq!(get_yolo_flags("amp"), Some("--dangerously-allow-all"));
         assert_eq!(get_yolo_flags("kiro"), Some("--trust-all-tools"));
         assert_eq!(get_yolo_flags("codex"), Some("--yolo"));
-        assert_eq!(get_yolo_flags("gemini"), Some("--yolo --approval-mode yolo"));
+        assert_eq!(
+            get_yolo_flags("gemini"),
+            Some("--yolo --approval-mode yolo")
+        );
         assert_eq!(get_yolo_flags("opencode"), None);
         assert_eq!(get_yolo_flags("unknown"), None);
     }
