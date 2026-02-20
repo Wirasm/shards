@@ -7,6 +7,8 @@ use nix::fcntl::{Flock, FlockArg};
 use serde_json::json;
 use tracing::{error, info};
 
+use kild_core::agents::{InjectMethod, get_inject_method};
+
 use super::helpers;
 
 /// Default team name for fleet mode. Will become a config key.
@@ -21,21 +23,64 @@ pub(crate) fn handle_inject_command(
     let text = matches
         .get_one::<String>("text")
         .ok_or("Text argument is required")?;
+    let force_inbox = matches.get_flag("inbox");
 
     info!(event = "cli.inject_started", branch = branch);
 
-    // Validate the session exists.
-    let _session = helpers::require_session(branch, "cli.inject_failed")?;
+    let session = helpers::require_session(branch, "cli.inject_failed")?;
 
-    let team = DEFAULT_TEAM;
-    if let Err(e) = write_to_inbox(team, branch, text) {
+    // Determine inject method: --inbox forces inbox protocol; otherwise use agent default.
+    let method = if force_inbox {
+        InjectMethod::ClaudeInbox
+    } else {
+        get_inject_method(&session.agent)
+    };
+
+    let result = match method {
+        InjectMethod::Pty => write_to_pty(&session, text),
+        InjectMethod::ClaudeInbox => write_to_inbox(DEFAULT_TEAM, branch, text),
+    };
+
+    if let Err(e) = result {
         eprintln!("{}", crate::color::error(&format!("Inject failed: {}", e)));
         error!(event = "cli.inject_failed", branch = branch, error = %e);
         return Err(e);
     }
 
-    info!(event = "cli.inject_completed", branch = branch, team = team);
+    info!(event = "cli.inject_completed", branch = branch);
     Ok(())
+}
+
+/// Write text to the agent's PTY stdin via the daemon WriteStdin IPC.
+///
+/// Works for all agents. The text is sent as raw bytes with a trailing newline.
+/// PTY stdin is kernel-buffered — the agent reads it when its input handler is ready.
+/// This is the universal inject path and works on cold start.
+fn write_to_pty(
+    session: &kild_core::Session,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let daemon_session_id = session
+        .latest_agent()
+        .and_then(|a| a.daemon_session_id())
+        .ok_or_else(|| {
+            format!(
+                "Session '{}' has no active daemon PTY. Is it a daemon session? \
+                 Use `kild create --daemon` or `kild open --daemon`.",
+                session.branch
+            )
+        })?;
+
+    // Two separate writes: text then Enter (\r), with a brief pause between.
+    // TUI agents need the text and Enter in separate read() cycles to correctly
+    // submit the input rather than treating \r as a literal character.
+    kild_core::daemon::client::write_stdin(daemon_session_id, text.as_bytes())
+        .map_err(|e| format!("PTY write failed (text): {}", e))?;
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    kild_core::daemon::client::write_stdin(daemon_session_id, b"\r")
+        .map_err(|e| format!("PTY write failed (enter): {}", e).into())
 }
 
 /// Write a message to a Claude Code inbox file.

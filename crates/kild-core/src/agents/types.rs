@@ -2,6 +2,21 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How `kild inject` delivers a message to a running agent session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectMethod {
+    /// Write `text + "\n"` to the agent's PTY stdin via the daemon `WriteStdin` IPC.
+    ///
+    /// This is the universal default — works for all agents, works on cold start
+    /// (PTY stdin is kernel-buffered until the process reads it), works headlessly.
+    Pty,
+    /// Write to the Claude Code inbox file (`~/.claude/teams/honryu/inboxes/<branch>.json`).
+    ///
+    /// Only effective after Claude Code has completed its first interactive turn
+    /// and started polling the inbox. Use `--inbox` to force this path explicitly.
+    ClaudeInbox,
+}
+
 /// Supported agent types in KILD.
 ///
 /// Each variant represents a known AI coding assistant that can be

@@ -91,10 +91,7 @@ pub fn ensure_fleet_member(branch: &str, cwd: &Path, agent: &str) {
     }
 
     let Some(dir) = team_dir() else {
-        warn!(
-            event = "core.session.fleet.home_missing",
-            branch = branch,
-        );
+        warn!(event = "core.session.fleet.home_missing", branch = branch,);
         return;
     };
     let inbox_dir = dir.join("inboxes");

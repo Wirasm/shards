@@ -9,6 +9,98 @@ use crate::terminal;
 use crate::terminal::types::TerminalType;
 use kild_config::KildConfig;
 
+/// Deliver an initial prompt to a daemon session's PTY stdin (best-effort).
+///
+/// Waits for the agent's TUI to fully settle before injecting — both text and Enter
+/// are written after the scrollback stabilizes, not before startup. This is necessary
+/// because most agents flush PTY stdin during TUI initialization, and some (gemini, amp)
+/// continue loading after the first render before their input loop is truly ready.
+///
+/// Detection: scrollback must exceed 50 bytes AND stop growing for 500ms.
+/// Write order: text → 50ms pause → `\r` (same cadence as `kild inject`).
+/// Never blocks the caller beyond 20s. Never fails — logs and returns on any error.
+pub(super) fn deliver_initial_prompt(daemon_session_id: &str, prompt: &str) {
+    let timeout = std::time::Duration::from_secs(20);
+    let poll_interval = std::time::Duration::from_millis(200);
+    let stable_window = std::time::Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    let mut last_scrollback_len: usize = 0;
+    let mut last_change = std::time::Instant::now();
+    let mut tui_ready = false;
+
+    while start.elapsed() < timeout {
+        std::thread::sleep(poll_interval);
+
+        if matches!(
+            crate::daemon::client::get_session_info(daemon_session_id),
+            Ok(Some((kild_protocol::SessionStatus::Stopped, _)))
+        ) {
+            break;
+        }
+
+        let scrollback_len = crate::daemon::client::read_scrollback(daemon_session_id)
+            .ok()
+            .flatten()
+            .map(|b| b.len())
+            .unwrap_or(0);
+
+        if scrollback_len > 50 {
+            if scrollback_len != last_scrollback_len {
+                last_scrollback_len = scrollback_len;
+                last_change = std::time::Instant::now();
+            } else if last_change.elapsed() >= stable_window {
+                tui_ready = true;
+                break;
+            }
+        }
+    }
+
+    if !tui_ready {
+        warn!(
+            event = "core.session.initial_prompt_tui_timeout",
+            daemon_session_id = daemon_session_id,
+            elapsed_ms = start.elapsed().as_millis(),
+        );
+    }
+
+    let text_ok = match crate::daemon::client::write_stdin(daemon_session_id, prompt.as_bytes()) {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(
+                event = "core.session.initial_prompt_failed",
+                daemon_session_id = daemon_session_id,
+                phase = "text",
+                error = %e,
+            );
+            false
+        }
+    };
+
+    if text_ok {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        match crate::daemon::client::write_stdin(daemon_session_id, b"\r") {
+            Ok(()) => {
+                info!(
+                    event = "core.session.initial_prompt_sent",
+                    daemon_session_id = daemon_session_id,
+                    bytes = prompt.len(),
+                    tui_ready = tui_ready,
+                    wait_ms = start.elapsed().as_millis(),
+                );
+            }
+            Err(e) => {
+                warn!(
+                    event = "core.session.initial_prompt_failed",
+                    daemon_session_id = daemon_session_id,
+                    phase = "enter",
+                    error = %e,
+                );
+            }
+        }
+    }
+}
+
 /// Compute a unique spawn ID for a given session and spawn index.
 ///
 /// Each agent spawn within a session gets its own spawn ID, which is used for
@@ -245,9 +337,15 @@ fn ensure_codex_config_with_home(home: &Path, paths: &KildPaths) -> Result<(), S
             )
         })?;
 
-        if let Some(toml::Value::Array(arr)) = parsed.get("notify")
-            && !arr.is_empty()
-        {
+        // Check top-level notify first. Also check raw content for the hook path to handle
+        // cases where a previous append landed under a table (e.g. [notice.model_migrations])
+        // rather than at the top level.
+        let top_level_ok = matches!(
+            parsed.get("notify"),
+            Some(toml::Value::Array(arr)) if !arr.is_empty()
+        );
+        let raw_has_hook = content.contains(hook_path_str.as_str());
+        if top_level_ok || raw_has_hook {
             info!(event = "core.session.codex_config_already_configured");
             return Ok(());
         }
