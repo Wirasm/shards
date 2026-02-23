@@ -49,12 +49,12 @@ pub(crate) fn handle_inject_command(
         get_inject_method(&session.agent)
     };
 
-    // Block inbox writes to non-active sessions — the message would queue in the
-    // JSON file but nobody polls it, leaving the caller (e.g. the brain) waiting
-    // indefinitely. PTY path already fails naturally with "no active daemon PTY".
-    if session.status != kild_core::SessionStatus::Active && method == InjectMethod::ClaudeInbox {
+    // Block inject to non-active sessions. Inbox writes would queue with nobody polling;
+    // PTY writes would fail with a confusing "no daemon PTY" error. Provide a clear,
+    // actionable message for both paths.
+    if session.status != kild_core::SessionStatus::Active {
         let msg = format!(
-            "Session '{}' is {:?} — inbox message would not be delivered. \
+            "Session '{}' is {:?} — cannot inject. \
              Start the session first with `kild open {}`.",
             branch, session.status, branch
         );

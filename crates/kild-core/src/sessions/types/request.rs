@@ -28,11 +28,11 @@ pub struct CreateSessionRequest {
     /// Use the main project root as working directory instead of creating a worktree.
     /// Intended for the Honryū brain session and other supervisory agents that don't write code.
     pub use_main_worktree: bool,
-    /// Optional prompt written to PTY stdin immediately after the session confirms Running.
+    /// Optional prompt written to PTY stdin after the session is saved and the TUI settles.
     ///
     /// Only effective for daemon sessions (no `daemon_session_id` available for terminal sessions).
     /// Best-effort: session creation succeeds even if prompt delivery fails.
-    /// No sleep is needed — PTY stdin is kernel-buffered until the agent reads it.
+    /// May block up to 20s waiting for the agent's TUI to stabilize before injecting.
     pub initial_prompt: Option<String>,
 }
 

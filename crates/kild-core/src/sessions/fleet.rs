@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
+use crate::agents::types::AgentType;
+
 /// Branch name reserved for the Honryū brain session.
 pub const BRAIN_BRANCH: &str = "honryu";
 
@@ -35,7 +37,7 @@ fn team_dir() -> Option<PathBuf> {
 ///
 /// Only claude sessions participate in fleet mode; all other agents are unaffected.
 fn is_fleet_capable_agent(agent: &str) -> bool {
-    agent == "claude"
+    AgentType::parse(agent) == Some(AgentType::Claude)
 }
 
 /// Returns true if fleet mode should apply to a new daemon session.
@@ -99,6 +101,11 @@ pub fn ensure_fleet_member(branch: &str, cwd: &Path, agent: &str) {
 
     let Some(dir) = team_dir() else {
         warn!(event = "core.session.fleet.home_missing", branch = branch,);
+        eprintln!(
+            "Warning: Fleet setup skipped for '{}' — HOME not set.",
+            branch
+        );
+        eprintln!("Brain messages will not be delivered to this session.");
         return;
     };
     let inbox_dir = dir.join("inboxes");
@@ -109,6 +116,8 @@ pub fn ensure_fleet_member(branch: &str, cwd: &Path, agent: &str) {
             branch = branch,
             error = %e,
         );
+        eprintln!("Warning: Fleet inbox setup failed for '{}': {}", branch, e);
+        eprintln!("Brain messages will not be delivered to this session.");
         return;
     }
 
@@ -124,6 +133,11 @@ pub fn ensure_fleet_member(branch: &str, cwd: &Path, agent: &str) {
                     branch = branch,
                     error = %e,
                 );
+                eprintln!(
+                    "Warning: Fleet inbox creation failed for '{}': {}",
+                    branch, e
+                );
+                eprintln!("Brain messages will not be delivered to this session.");
             }
         }
         Err(e) => {
@@ -132,6 +146,7 @@ pub fn ensure_fleet_member(branch: &str, cwd: &Path, agent: &str) {
                 branch = branch,
                 error = %e,
             );
+            eprintln!("Warning: Fleet inbox check failed for '{}': {}", branch, e);
             // Do not write — do not risk overwriting an existing inbox on FS error.
         }
     }

@@ -467,7 +467,7 @@ case "$EVENT" in
   Stop|SubagentStop|TeammateIdle|TaskCompleted)
     if [ "$BRANCH" != "honryu" ] && [ "$BRANCH" != "unknown" ] && \
        kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
-      LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null | head -c 200)
+      LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null | tr -d '"' | tr -d "'" | tr -d '`' | head -c 200)
       kild inject honryu "[EVENT] $BRANCH $EVENT: ${LAST_MSG:-no message}" || true
     fi
     ;;

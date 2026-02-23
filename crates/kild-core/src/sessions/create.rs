@@ -392,11 +392,6 @@ pub fn create_session(
                 });
             }
 
-            // Deliver initial prompt after the TUI has settled (best-effort).
-            if let Some(ref prompt) = request.initial_prompt {
-                deliver_initial_prompt(&daemon_result.daemon_session_id, prompt);
-            }
-
             // Initialize tmux shim state directory
             let shim_init_result = (|| -> Result<(), String> {
                 let shim_dir = KildPaths::resolve()
@@ -487,6 +482,14 @@ pub fn create_session(
 
     // 7. Save session BEFORE spawning attach window so `kild attach` can find it
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
+
+    // 7b. Deliver initial prompt after session is on disk (best-effort, may block up to 20s).
+    // Must run after save so `kild list/inject/attach` can find the session during the wait.
+    if let Some(ref prompt) = request.initial_prompt
+        && let Some(dsid) = session.latest_agent().and_then(|a| a.daemon_session_id())
+    {
+        deliver_initial_prompt(dsid, prompt);
+    }
 
     // 8. Spawn attach window (best-effort) and update session with terminal info
     if request.runtime_mode == crate::state::types::RuntimeMode::Daemon {
