@@ -35,14 +35,6 @@ pub(crate) fn handle_inject_command(
 
     let session = helpers::require_session(branch, "cli.inject_failed")?;
 
-    // Warn when injecting to a stopped session — the message will queue but nobody reads it.
-    if session.status != kild_core::SessionStatus::Active {
-        eprintln!(
-            "Warning: session '{}' is {:?} — message may not be delivered.",
-            branch, session.status
-        );
-    }
-
     // Determine inject method: --inbox forces inbox protocol; otherwise use agent default.
     let method = if force_inbox {
         if get_inject_method(&session.agent) != InjectMethod::ClaudeInbox {
@@ -56,6 +48,24 @@ pub(crate) fn handle_inject_command(
     } else {
         get_inject_method(&session.agent)
     };
+
+    // Block inbox writes to non-active sessions — the message would queue in the
+    // JSON file but nobody polls it, leaving the caller (e.g. the brain) waiting
+    // indefinitely. PTY path already fails naturally with "no active daemon PTY".
+    if session.status != kild_core::SessionStatus::Active && method == InjectMethod::ClaudeInbox {
+        let msg = format!(
+            "Session '{}' is {:?} — inbox message would not be delivered. \
+             Start the session first with `kild open {}`.",
+            branch, session.status, branch
+        );
+        eprintln!("{}", crate::color::error(&msg));
+        error!(
+            event = "cli.inject_failed",
+            branch = branch,
+            reason = "session_not_active"
+        );
+        return Err(msg.into());
+    }
 
     let result = match method {
         InjectMethod::Pty => write_to_pty(&session, text),

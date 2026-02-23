@@ -504,10 +504,7 @@ pub fn detect_sessions_older_than(
         };
 
         // Only consider stopped sessions for age-based cleanup.
-        let status = session
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let status = session.get("status").and_then(|v| v.as_str()).unwrap_or("");
         if status != "stopped" {
             continue;
         }
@@ -531,16 +528,16 @@ pub fn detect_sessions_older_than(
             continue;
         };
 
-        if parsed < cutoff {
-            if let Some(session_id) = session.get("id").and_then(|v| v.as_str()) {
-                info!(
-                    event = "core.cleanup.session_older_than",
-                    session_id = session_id,
-                    days = days,
-                    last_activity = ts,
-                );
-                old_sessions.push(session_id.to_string());
-            }
+        if parsed < cutoff
+            && let Some(session_id) = session.get("id").and_then(|v| v.as_str())
+        {
+            info!(
+                event = "core.cleanup.session_older_than",
+                session_id = session_id,
+                days = days,
+                last_activity = ts,
+            );
+            old_sessions.push(session_id.to_string());
         }
     }
 

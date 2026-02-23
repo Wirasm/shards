@@ -74,7 +74,10 @@ fn handle_single_stats(
             branch
         );
         if json_output {
-            return Err(super::helpers::print_json_error(&msg, "MAIN_WORKTREE_SESSION"));
+            return Err(super::helpers::print_json_error(
+                &msg,
+                "MAIN_WORKTREE_SESSION",
+            ));
         }
         eprintln!("{}", msg);
         return Err(msg.into());
