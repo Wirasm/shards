@@ -78,7 +78,17 @@ pub(crate) fn handle_inject_command(
         return Err(e);
     }
 
-    info!(event = "cli.inject_completed", branch = branch);
+    let via = match method {
+        InjectMethod::ClaudeInbox => "inbox",
+        InjectMethod::Pty => "pty",
+    };
+    println!(
+        "{} {} (via {})",
+        crate::color::muted("Sent to"),
+        crate::color::ice(branch),
+        via
+    );
+    info!(event = "cli.inject_completed", branch = branch, via = via);
     Ok(())
 }
 
