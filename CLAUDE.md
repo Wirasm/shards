@@ -91,6 +91,7 @@ cargo run -p kild -- create my-branch                  # Create kild with defaul
 cargo run -p kild -- create my-branch --note "Auth"    # Create with description
 cargo run -p kild -- create my-branch --yolo           # Create with autonomous mode
 cargo run -p kild -- create my-branch --main           # Run from project root (no worktree)
+cargo run -p kild -- create my-branch --initial-prompt "Start with auth"  # Inject prompt on startup
 cargo run -p kild -- list                              # List all kilds
 cargo run -p kild -- list --json                       # JSON output
 cargo run -p kild -- open my-branch                    # Reopen agent in existing kild
@@ -98,7 +99,9 @@ cargo run -p kild -- open --all                        # Open all stopped kilds
 cargo run -p kild -- open my-branch --resume           # Resume previous conversation
 cargo run -p kild -- open my-branch --no-attach        # Open daemon session without attach window
 cargo run -p kild -- open my-branch --no-attach --resume  # Headless resume (brain reopening workers)
-cargo run -p kild -- inject my-branch "do the thing"  # Deliver message to running worker (PTY stdin or Claude inbox)
+cargo run -p kild -- open my-branch --initial-prompt "Next task: ..."  # Inject prompt on reopen
+cargo run -p kild -- inject my-branch "do the thing"  # Send to worker (inbox for claude, PTY for others)
+cargo run -p kild -- inject my-branch "msg" --inbox   # Force Claude Code inbox protocol
 cargo run -p kild -- stop my-branch                    # Stop agent, preserve kild
 cargo run -p kild -- stop --all                        # Stop all kilds
 cargo run -p kild -- stop my-branch --pane %1          # Stop a single teammate pane

@@ -1,18 +1,17 @@
 //! Cleanup operations for detecting and managing orphaned resources.
 //!
-//! Current cleanup strategies focus on:
+//! Current cleanup strategies:
 //! - detect_stale_sessions: Sessions with missing/invalid worktrees
+//! - detect_sessions_older_than: Stopped sessions older than N days
 //! - detect_orphaned_branches: Git branches without corresponding sessions
 //! - detect_orphaned_worktrees: Worktrees without corresponding sessions
-//!
-//! Note: Session-based detection strategies (PID-based, age-based) were
-//! considered but not integrated into the cleanup workflow as of 2026-01-20.
 
 use crate::cleanup::errors::CleanupError;
+use chrono::Utc;
 use git2::{BranchType, Repository};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 pub fn validate_cleanup_request() -> Result<(), CleanupError> {
     // Check if we're in a git repository
@@ -456,6 +455,98 @@ pub fn detect_stale_sessions(sessions_dir: &Path) -> Result<Vec<String>, Cleanup
     Ok(stale_sessions)
 }
 
+/// Detect stopped sessions whose last activity is older than `days` days.
+///
+/// Uses `last_activity` if present, falling back to `created_at`. Only returns
+/// sessions with status "stopped" — active sessions are never candidates for
+/// age-based cleanup.
+pub fn detect_sessions_older_than(
+    sessions_dir: &Path,
+    days: u64,
+) -> Result<Vec<String>, CleanupError> {
+    let mut old_sessions = Vec::new();
+
+    if !sessions_dir.exists() {
+        return Ok(old_sessions);
+    }
+
+    let cutoff = Utc::now() - chrono::Duration::days(days as i64);
+
+    let entries =
+        std::fs::read_dir(sessions_dir).map_err(|e| CleanupError::IoError { source: e })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| CleanupError::IoError { source: e })?;
+        let path = entry.path();
+
+        // Support both storage formats
+        let session_file_path = if path.is_dir() {
+            let kild_json = path.join("kild.json");
+            if kild_json.exists() {
+                kild_json
+            } else {
+                continue;
+            }
+        } else if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+            path.clone()
+        } else {
+            continue;
+        };
+
+        let content = match std::fs::read_to_string(&session_file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let session: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Only consider stopped sessions for age-based cleanup.
+        let status = session
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if status != "stopped" {
+            continue;
+        }
+
+        // Use last_activity if present, otherwise created_at.
+        let timestamp_str = session
+            .get("last_activity")
+            .and_then(|v| v.as_str())
+            .or_else(|| session.get("created_at").and_then(|v| v.as_str()));
+
+        let Some(ts) = timestamp_str else {
+            continue;
+        };
+
+        let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(ts) else {
+            warn!(
+                event = "core.cleanup.unparseable_timestamp",
+                file_path = %session_file_path.display(),
+                timestamp = ts,
+            );
+            continue;
+        };
+
+        if parsed < cutoff {
+            if let Some(session_id) = session.get("id").and_then(|v| v.as_str()) {
+                info!(
+                    event = "core.cleanup.session_older_than",
+                    session_id = session_id,
+                    days = days,
+                    last_activity = ts,
+                );
+                old_sessions.push(session_id.to_string());
+            }
+        }
+    }
+
+    Ok(old_sessions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,5 +889,80 @@ mod tests {
         let stale_sessions = detect_stale_sessions(test_path).unwrap();
         // Sessions without id field are skipped even if worktree is stale
         assert_eq!(stale_sessions.len(), 0);
+    }
+
+    // --- detect_sessions_older_than tests ---
+
+    fn write_session_json(dir: &Path, id: &str, status: &str, last_activity: Option<&str>) {
+        let created_at = "2025-01-01T00:00:00Z";
+        let activity_field = match last_activity {
+            Some(ts) => format!(r#""last_activity": "{}","#, ts),
+            None => String::new(),
+        };
+        let content = format!(
+            r#"{{"id": "{}", "status": "{}", "created_at": "{}", {} "worktree_path": "/tmp/kild-test-wt", "branch": "{}", "agent": "claude"}}"#,
+            id, status, created_at, activity_field, id
+        );
+        let session_dir = dir.join(id);
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(session_dir.join("kild.json"), content).unwrap();
+    }
+
+    #[test]
+    fn test_older_than_finds_old_stopped_sessions() {
+        let temp_dir = TempDir::new().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        // Stopped 30 days ago
+        let old_ts = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        write_session_json(sessions_dir, "old-session", "stopped", Some(&old_ts));
+
+        let results = detect_sessions_older_than(sessions_dir, 7).unwrap();
+        assert_eq!(results, vec!["old-session"]);
+    }
+
+    #[test]
+    fn test_older_than_skips_recent_stopped_sessions() {
+        let temp_dir = TempDir::new().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        // Stopped 2 days ago
+        let recent_ts = (chrono::Utc::now() - chrono::Duration::days(2)).to_rfc3339();
+        write_session_json(sessions_dir, "recent-session", "stopped", Some(&recent_ts));
+
+        let results = detect_sessions_older_than(sessions_dir, 7).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_older_than_skips_active_sessions() {
+        let temp_dir = TempDir::new().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        // Active but old — should NOT be cleaned up
+        let old_ts = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        write_session_json(sessions_dir, "active-old", "active", Some(&old_ts));
+
+        let results = detect_sessions_older_than(sessions_dir, 7).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_older_than_falls_back_to_created_at() {
+        let temp_dir = TempDir::new().unwrap();
+        let sessions_dir = temp_dir.path();
+
+        // No last_activity → falls back to created_at (2025-01-01, very old)
+        write_session_json(sessions_dir, "no-activity", "stopped", None);
+
+        let results = detect_sessions_older_than(sessions_dir, 7).unwrap();
+        assert_eq!(results, vec!["no-activity"]);
+    }
+
+    #[test]
+    fn test_older_than_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let results = detect_sessions_older_than(temp_dir.path(), 7).unwrap();
+        assert!(results.is_empty());
     }
 }
