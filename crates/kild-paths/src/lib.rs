@@ -64,6 +64,21 @@ impl KildPaths {
         self.kild_dir.join("health_history")
     }
 
+    // --- Fleet paths ---
+
+    pub fn fleet_dir(&self) -> PathBuf {
+        self.kild_dir.join("fleet")
+    }
+
+    pub fn fleet_project_dir(&self, project_id: &str) -> PathBuf {
+        self.fleet_dir().join(project_id)
+    }
+
+    pub fn fleet_dropbox_dir(&self, project_id: &str, branch: &str) -> PathBuf {
+        let safe_branch = branch.replace('/', "_");
+        self.fleet_project_dir(project_id).join(safe_branch)
+    }
+
     // --- Top-level files ---
 
     pub fn daemon_socket(&self) -> PathBuf {
@@ -483,6 +498,46 @@ mod tests {
         assert_eq!(
             KildPaths::project_keybindings(Path::new("/my/project")),
             PathBuf::from("/my/project/.kild/keybindings.toml")
+        );
+    }
+
+    #[test]
+    fn test_fleet_dir() {
+        assert_eq!(
+            test_paths().fleet_dir(),
+            PathBuf::from("/home/user/.kild/fleet")
+        );
+    }
+
+    #[test]
+    fn test_fleet_project_dir() {
+        assert_eq!(
+            test_paths().fleet_project_dir("abc123"),
+            PathBuf::from("/home/user/.kild/fleet/abc123")
+        );
+    }
+
+    #[test]
+    fn test_fleet_dropbox_dir() {
+        assert_eq!(
+            test_paths().fleet_dropbox_dir("abc123", "my-branch"),
+            PathBuf::from("/home/user/.kild/fleet/abc123/my-branch")
+        );
+    }
+
+    #[test]
+    fn test_fleet_dropbox_dir_sanitizes_slashes() {
+        assert_eq!(
+            test_paths().fleet_dropbox_dir("abc123", "feature/auth"),
+            PathBuf::from("/home/user/.kild/fleet/abc123/feature_auth")
+        );
+    }
+
+    #[test]
+    fn test_fleet_dropbox_dir_multiple_slashes() {
+        assert_eq!(
+            test_paths().fleet_dropbox_dir("abc123", "a/b/c"),
+            PathBuf::from("/home/user/.kild/fleet/abc123/a_b_c")
         );
     }
 }

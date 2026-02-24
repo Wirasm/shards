@@ -12,7 +12,7 @@ use super::daemon_helpers::{
     setup_claude_integration, setup_codex_integration, setup_opencode_integration,
     spawn_and_save_attach_window,
 };
-use super::fleet;
+use super::{dropbox, fleet};
 
 pub fn create_session(
     request: CreateSessionRequest,
@@ -287,6 +287,7 @@ pub fn create_session(
             setup_opencode_integration(&validated.agent, &worktree.path);
             setup_claude_integration(&validated.agent);
             fleet::ensure_fleet_member(&validated.name, &worktree.path, &validated.agent);
+            dropbox::ensure_dropbox(&project_id, &validated.name, &validated.agent);
 
             // Pre-emptive cleanup: remove stale daemon session if previous destroy failed.
             // Daemon-not-running and session-not-found are expected (normal case).
@@ -310,13 +311,19 @@ pub fn create_session(
                 Some(flags) => format!("{} {}", validated.command, flags),
                 None => validated.command.clone(),
             };
-            let (cmd, cmd_args, env_vars, use_login_shell) = build_daemon_create_request(
+            let (cmd, cmd_args, mut env_vars, use_login_shell) = build_daemon_create_request(
                 &fleet_command,
                 &validated.agent,
                 &session_id,
                 task_list_id.as_deref(),
                 &validated.name,
             )?;
+            dropbox::inject_dropbox_env_vars(
+                &mut env_vars,
+                &project_id,
+                &validated.name,
+                &validated.agent,
+            );
 
             let daemon_request = crate::daemon::client::DaemonCreateRequest {
                 request_id: &spawn_id,
@@ -482,6 +489,30 @@ pub fn create_session(
 
     // 7. Save session BEFORE spawning attach window so `kild attach` can find it
     persistence::save_session_to_file(&session, &config.sessions_dir())?;
+
+    // 7a. Write initial task to dropbox BEFORE delivering to PTY.
+    // Files exist before the agent process reads them — no race condition.
+    if let Some(ref prompt) = request.initial_prompt
+        && let Err(e) = dropbox::write_task(
+            &session.project_id,
+            &validated.name,
+            prompt,
+            &[
+                dropbox::DeliveryMethod::Dropbox,
+                dropbox::DeliveryMethod::InitialPrompt,
+            ],
+        )
+    {
+        warn!(
+            event = "core.session.dropbox.initial_task_write_failed",
+            branch = %validated.name,
+            error = %e,
+        );
+        eprintln!(
+            "Warning: Failed to write initial task to dropbox for '{}': {}",
+            validated.name, e,
+        );
+    }
 
     // 7b. Deliver initial prompt after session is on disk (best-effort, may block up to 20s).
     // Must run after save so `kild list/inject/attach` can find the session during the wait.

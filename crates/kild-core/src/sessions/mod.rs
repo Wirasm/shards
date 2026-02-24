@@ -3,6 +3,7 @@ pub mod complete;
 pub mod create;
 pub mod daemon_helpers;
 pub mod destroy;
+pub mod dropbox;
 pub mod env_cleanup;
 pub mod errors;
 pub(super) mod fleet;

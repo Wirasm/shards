@@ -5,7 +5,7 @@ use chrono::Utc;
 use clap::ArgMatches;
 use nix::fcntl::{Flock, FlockArg};
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::agents::{InjectMethod, get_inject_method};
 
@@ -67,6 +67,33 @@ pub(crate) fn handle_inject_command(
         return Err(msg.into());
     }
 
+    // Determine delivery methods that will be attempted.
+    use kild_core::sessions::dropbox::DeliveryMethod;
+    let delivery_methods: Vec<DeliveryMethod> = match method {
+        InjectMethod::ClaudeInbox => vec![DeliveryMethod::Dropbox, DeliveryMethod::ClaudeInbox],
+        InjectMethod::Pty => vec![DeliveryMethod::Dropbox, DeliveryMethod::Pty],
+    };
+
+    // Write task files to dropbox (fleet mode only — no-op otherwise).
+    // Runs before PTY/inbox dispatch so task.md exists when wake-up fires.
+    let dropbox_task_id = kild_core::sessions::dropbox::write_task(
+        &session.project_id,
+        &session.branch,
+        text,
+        &delivery_methods,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!(
+            "{}",
+            crate::color::warning(&format!(
+                "Warning: Dropbox write failed for '{}': {}",
+                branch, e
+            ))
+        );
+        warn!(event = "cli.inject.dropbox_write_failed", branch = branch, error = %e);
+        None
+    });
+
     let result = match method {
         InjectMethod::Pty => write_to_pty(&session, text),
         InjectMethod::ClaudeInbox => write_to_inbox(DEFAULT_TEAM, branch, text),
@@ -82,13 +109,23 @@ pub(crate) fn handle_inject_command(
         InjectMethod::ClaudeInbox => "inbox",
         InjectMethod::Pty => "pty",
     };
+
+    if let Some(task_id) = dropbox_task_id {
+        println!(
+            "{} task {} to {}",
+            crate::color::muted("Wrote"),
+            crate::color::aurora(&task_id.to_string()),
+            crate::color::ice(&format!("dropbox/{}", branch)),
+        );
+    }
+
     println!(
         "{} {} (via {})",
         crate::color::muted("Sent to"),
         crate::color::ice(branch),
         via
     );
-    info!(event = "cli.inject_completed", branch = branch, via = via);
+    info!(event = "cli.inject_completed", branch = branch, via = via, dropbox_task_id = ?dropbox_task_id);
     Ok(())
 }
 
