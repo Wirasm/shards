@@ -44,7 +44,7 @@ fn is_fleet_capable_agent(agent: &str) -> bool {
 ///
 /// Active when the session is the brain itself (team will be created by ensure_fleet_member)
 /// or when the team directory already exists (brain was created earlier).
-fn fleet_mode_active(branch: &str) -> bool {
+pub(super) fn fleet_mode_active(branch: &str) -> bool {
     if branch == BRAIN_BRANCH {
         return true;
     }
