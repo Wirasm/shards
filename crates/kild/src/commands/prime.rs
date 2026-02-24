@@ -7,7 +7,11 @@ use kild_core::sessions::dropbox::{self, FleetEntry, PrimeContext};
 
 use super::helpers;
 
-/// JSON output for the prime context.
+/// JSON output shape for `kild prime --json`.
+///
+/// Flattens `PrimeContext.dropbox_state` fields (task_id, task_content, ack, report)
+/// to the top level for a flatter JSON schema. If `dropbox_state` is None, these
+/// fields are all null. See `prime_output_from_context()` for the mapping.
 #[derive(Serialize)]
 struct PrimeOutput {
     branch: String,
@@ -15,6 +19,7 @@ struct PrimeOutput {
     task_id: Option<u64>,
     task_content: Option<String>,
     ack: Option<u64>,
+    acked: bool,
     report: Option<String>,
     fleet: Vec<FleetEntryOutput>,
 }
@@ -41,11 +46,15 @@ pub(crate) fn handle_prime_command(matches: &ArgMatches) -> Result<(), Box<dyn s
     info!(event = "cli.prime_started", branch = branch);
 
     let session = helpers::require_session_json(branch, "cli.prime_failed", json_output)?;
-    let sessions = session_ops::list_sessions().map_err(|e| {
+    let all_sessions = session_ops::list_sessions().map_err(|e| {
         error!(event = "cli.prime_failed", branch = branch, error = %e);
         let boxed: Box<dyn std::error::Error> = e.into();
         boxed
     })?;
+    let sessions: Vec<_> = all_sessions
+        .into_iter()
+        .filter(|s| s.project_id == session.project_id)
+        .collect();
 
     let context = dropbox::generate_prime_context(&session.project_id, &session.branch, &sessions)
         .map_err(|e| {
@@ -95,12 +104,15 @@ fn prime_output_from_context(ctx: &PrimeContext) -> PrimeOutput {
         None => (None, None, None, None),
     };
 
+    let acked = task_id.is_some() && task_id == ack;
+
     PrimeOutput {
         branch: ctx.branch.to_string(),
         protocol: ctx.protocol.clone(),
         task_id,
         task_content,
         ack,
+        acked,
         report,
         fleet: ctx.fleet.iter().map(fleet_entry_output).collect(),
     }
@@ -110,10 +122,7 @@ fn fleet_entry_output(entry: &FleetEntry) -> FleetEntryOutput {
     FleetEntryOutput {
         branch: entry.branch.to_string(),
         agent: entry.agent.clone(),
-        session_status: serde_json::to_value(&entry.session_status)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_else(|| "unknown".to_string()),
+        session_status: entry.session_status.to_string(),
         agent_status: entry.agent_status.map(|s| s.to_string()),
         task_id: entry.task_id,
         ack: entry.ack,
@@ -135,6 +144,7 @@ mod tests {
             task_id: Some(3),
             task_content: Some("# Task 3\n\nDo the thing.".to_string()),
             ack: Some(3),
+            acked: true,
             report: None,
             fleet: vec![FleetEntryOutput {
                 branch: "worker-a".to_string(),
@@ -152,6 +162,7 @@ mod tests {
 
         assert_eq!(parsed["branch"], "worker-a");
         assert_eq!(parsed["task_id"], 3);
+        assert_eq!(parsed["acked"], true);
         assert_eq!(parsed["fleet"][0]["agent"], "claude");
         assert_eq!(parsed["fleet"][0]["agent_status"], "idle");
         assert_eq!(parsed["fleet"][0]["is_brain"], false);
@@ -188,6 +199,7 @@ mod tests {
         assert_eq!(output.task_id, Some(2));
         assert_eq!(output.task_content.as_deref(), Some("task body"));
         assert_eq!(output.ack, Some(1));
+        assert!(!output.acked, "ack != task_id means not acked");
         assert_eq!(output.report.as_deref(), Some("done"));
         assert_eq!(output.fleet.len(), 1);
         assert_eq!(output.fleet[0].branch, "honryu");
@@ -210,6 +222,7 @@ mod tests {
         assert_eq!(output.branch, "worker-a");
         assert!(output.protocol.is_none());
         assert!(output.task_id.is_none());
+        assert!(!output.acked, "no task means not acked");
         assert!(output.fleet.is_empty());
     }
 }
