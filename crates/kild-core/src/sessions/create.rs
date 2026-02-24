@@ -287,7 +287,7 @@ pub fn create_session(
             setup_opencode_integration(&validated.agent, &worktree.path);
             setup_claude_integration(&validated.agent);
             fleet::ensure_fleet_member(&validated.name, &worktree.path, &validated.agent);
-            dropbox::ensure_dropbox(&project_id, &validated.name);
+            dropbox::ensure_dropbox(&project_id, &validated.name, &validated.agent);
 
             // Pre-emptive cleanup: remove stale daemon session if previous destroy failed.
             // Daemon-not-running and session-not-found are expected (normal case).
@@ -318,7 +318,12 @@ pub fn create_session(
                 task_list_id.as_deref(),
                 &validated.name,
             )?;
-            dropbox::inject_dropbox_env_vars(&mut env_vars, &project_id, &validated.name);
+            dropbox::inject_dropbox_env_vars(
+                &mut env_vars,
+                &project_id,
+                &validated.name,
+                &validated.agent,
+            );
 
             let daemon_request = crate::daemon::client::DaemonCreateRequest {
                 request_id: &spawn_id,

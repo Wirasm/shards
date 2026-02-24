@@ -36,7 +36,7 @@ fn team_dir() -> Option<PathBuf> {
 /// Returns true if the agent supports the fleet inbox protocol.
 ///
 /// Only claude sessions participate in fleet mode; all other agents are unaffected.
-fn is_fleet_capable_agent(agent: &str) -> bool {
+pub(super) fn is_fleet_capable_agent(agent: &str) -> bool {
     AgentType::parse(agent) == Some(AgentType::Claude)
 }
 

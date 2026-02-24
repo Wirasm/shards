@@ -306,7 +306,7 @@ pub fn open_session(
         setup_opencode_integration(&agent, &session.worktree_path);
         setup_claude_integration(&agent);
         fleet::ensure_fleet_member(&session.branch, &session.worktree_path, &agent);
-        dropbox::ensure_dropbox(&session.project_id, &session.branch);
+        dropbox::ensure_dropbox(&session.project_id, &session.branch, &agent);
 
         // Daemon path: create new daemon PTY (uses shared helper with create_session)
         let fleet_command = match fleet::fleet_agent_flags(&session.branch, &agent) {
@@ -320,7 +320,12 @@ pub fn open_session(
             new_task_list_id.as_deref(),
             &session.branch,
         )?;
-        dropbox::inject_dropbox_env_vars(&mut env_vars, &session.project_id, &session.branch);
+        dropbox::inject_dropbox_env_vars(
+            &mut env_vars,
+            &session.project_id,
+            &session.branch,
+            &agent,
+        );
 
         let daemon_request = crate::daemon::client::DaemonCreateRequest {
             request_id: &spawn_id,
