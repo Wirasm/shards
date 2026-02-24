@@ -69,34 +69,30 @@ pub(crate) fn handle_inject_command(
 
     // Determine delivery methods that will be attempted.
     use kild_core::sessions::dropbox::DeliveryMethod;
-    let mut delivery_methods: Vec<DeliveryMethod> = vec![DeliveryMethod::Dropbox];
-    match method {
-        InjectMethod::ClaudeInbox => delivery_methods.push(DeliveryMethod::ClaudeInbox),
-        InjectMethod::Pty => delivery_methods.push(DeliveryMethod::Pty),
-    }
+    let delivery_methods: Vec<DeliveryMethod> = match method {
+        InjectMethod::ClaudeInbox => vec![DeliveryMethod::Dropbox, DeliveryMethod::ClaudeInbox],
+        InjectMethod::Pty => vec![DeliveryMethod::Dropbox, DeliveryMethod::Pty],
+    };
 
     // Write task files to dropbox (fleet mode only — no-op otherwise).
     // Runs before PTY/inbox dispatch so task.md exists when wake-up fires.
-    let dropbox_task_id = match kild_core::sessions::dropbox::write_task(
+    let dropbox_task_id = kild_core::sessions::dropbox::write_task(
         &session.project_id,
         &session.branch,
         text,
         &delivery_methods,
-    ) {
-        Ok(Some(id)) => Some(id),
-        Ok(None) => None,
-        Err(e) => {
-            eprintln!(
-                "{}",
-                crate::color::warning(&format!(
-                    "Warning: Dropbox write failed for '{}': {}",
-                    branch, e
-                ))
-            );
-            warn!(event = "cli.inject.dropbox_write_failed", branch = branch, error = %e);
-            None
-        }
-    };
+    )
+    .unwrap_or_else(|e| {
+        eprintln!(
+            "{}",
+            crate::color::warning(&format!(
+                "Warning: Dropbox write failed for '{}': {}",
+                branch, e
+            ))
+        );
+        warn!(event = "cli.inject.dropbox_write_failed", branch = branch, error = %e);
+        None
+    });
 
     let result = match method {
         InjectMethod::Pty => write_to_pty(&session, text),

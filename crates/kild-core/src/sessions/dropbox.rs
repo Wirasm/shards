@@ -185,19 +185,22 @@ pub fn write_task(
     // Read current task-id, distinguishing: missing (normal) vs corrupt (warn) vs unreadable (error).
     let task_id_path = dropbox_dir.join("task-id");
     let current_id: u64 = match std::fs::read_to_string(&task_id_path) {
-        Ok(s) => match s.trim().parse::<u64>() {
-            Ok(id) => id,
-            Err(e) => {
-                warn!(
-                    event = "core.session.dropbox.task_id_corrupt",
-                    branch = branch,
-                    path = %task_id_path.display(),
-                    content = s.trim(),
-                    error = %e,
-                );
-                0
+        Ok(s) => {
+            let trimmed = s.trim();
+            match trimmed.parse::<u64>() {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!(
+                        event = "core.session.dropbox.task_id_corrupt",
+                        branch = branch,
+                        path = %task_id_path.display(),
+                        content = trimmed,
+                        error = %e,
+                    );
+                    0
+                }
             }
-        },
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
         Err(e) => {
             error!(
@@ -251,27 +254,15 @@ pub fn write_task(
         summary,
         delivery: delivery.to_vec(),
     };
-    let mut file = OpenOptions::new()
+    let json_line = serde_json::to_string(&entry).map_err(|e| SessionError::IoError {
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+    })?;
+    let write_history_result = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&history_path)
-        .map_err(|e| {
-            error!(
-                event = "core.session.dropbox.write_history_failed",
-                branch = branch,
-                task_id = new_id,
-                path = %history_path.display(),
-                error = %e,
-            );
-            SessionError::IoError { source: e }
-        })?;
-    writeln!(
-        file,
-        "{}",
-        serde_json::to_string(&entry)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
-    )
-    .map_err(|e| {
+        .and_then(|mut file| writeln!(file, "{}", json_line));
+    if let Err(e) = write_history_result {
         error!(
             event = "core.session.dropbox.write_history_failed",
             branch = branch,
@@ -279,8 +270,8 @@ pub fn write_task(
             path = %history_path.display(),
             error = %e,
         );
-        SessionError::IoError { source: e }
-    })?;
+        return Err(SessionError::IoError { source: e });
+    }
 
     info!(
         event = "core.session.dropbox.write_task_completed",
@@ -323,37 +314,31 @@ pub(super) fn inject_dropbox_env_vars(
     };
 
     let dropbox = paths.fleet_dropbox_dir(project_id, branch);
-    let dropbox_str = match dropbox.to_str() {
-        Some(s) => s.to_string(),
-        None => {
-            warn!(
-                event = "core.session.dropbox.env_path_not_utf8",
-                branch = branch,
-                path = %dropbox.display(),
-            );
-            eprintln!(
-                "Warning: Dropbox path is not valid UTF-8, KILD_DROPBOX will not be set: {}",
-                dropbox.display(),
-            );
-            return;
-        }
+    let Some(dropbox_str) = dropbox.to_str() else {
+        warn!(
+            event = "core.session.dropbox.env_path_not_utf8",
+            branch = branch,
+            path = %dropbox.display(),
+        );
+        eprintln!(
+            "Warning: Dropbox path is not valid UTF-8, KILD_DROPBOX will not be set: {}",
+            dropbox.display(),
+        );
+        return;
     };
-    env_vars.push(("KILD_DROPBOX".to_string(), dropbox_str));
+    env_vars.push(("KILD_DROPBOX".to_string(), dropbox_str.to_string()));
 
     if branch == fleet::BRAIN_BRANCH {
         let fleet_dir = paths.fleet_project_dir(project_id);
-        let fleet_dir_str = match fleet_dir.to_str() {
-            Some(s) => s.to_string(),
-            None => {
-                warn!(
-                    event = "core.session.dropbox.env_fleet_dir_not_utf8",
-                    branch = branch,
-                    path = %fleet_dir.display(),
-                );
-                return;
-            }
+        let Some(fleet_dir_str) = fleet_dir.to_str() else {
+            warn!(
+                event = "core.session.dropbox.env_fleet_dir_not_utf8",
+                branch = branch,
+                path = %fleet_dir.display(),
+            );
+            return;
         };
-        env_vars.push(("KILD_FLEET_DIR".to_string(), fleet_dir_str));
+        env_vars.push(("KILD_FLEET_DIR".to_string(), fleet_dir_str.to_string()));
     }
 
     info!(
@@ -455,12 +440,12 @@ mod tests {
     /// Serialize tests that mutate HOME and CLAUDE_CONFIG_DIR — env vars are process-global.
     static DROPBOX_ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    /// Set up temp dirs with fleet mode active (team dir present + HOME overridden).
+    /// Set up temp dirs and override HOME + CLAUDE_CONFIG_DIR for a test.
     ///
-    /// Sets `CLAUDE_CONFIG_DIR` so `fleet_mode_active` returns true for non-brain branches,
-    /// and `HOME` so `KildPaths::resolve()` returns a temp-based path. The callback receives
-    /// the HOME dir; the dropbox will be created at `<home>/.kild/fleet/...`.
-    fn with_fleet_env(test_name: &str, f: impl FnOnce(&std::path::Path)) {
+    /// When `fleet_active` is true, creates the Honryū team directory so
+    /// `fleet_mode_active` returns true for non-brain branches. The callback
+    /// receives the HOME dir; the dropbox will be at `<home>/.kild/fleet/...`.
+    fn with_env(test_name: &str, fleet_active: bool, f: impl FnOnce(&std::path::Path)) {
         let _lock = DROPBOX_ENV_LOCK.lock().unwrap();
         let base = std::env::temp_dir().join(format!(
             "kild_dropbox_test_{}_{}",
@@ -469,40 +454,14 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&base);
 
-        // Create the team dir so fleet_mode_active returns true.
         let claude_dir = base.join("claude_config");
-        let team_dir = claude_dir.join("teams").join(fleet::BRAIN_BRANCH);
-        std::fs::create_dir_all(&team_dir).unwrap();
-
-        let home_dir = base.join("home");
-        std::fs::create_dir_all(&home_dir).unwrap();
-
-        // SAFETY: DROPBOX_ENV_LOCK serializes all env mutations in this module.
-        unsafe {
-            std::env::set_var("CLAUDE_CONFIG_DIR", &claude_dir);
-            std::env::set_var("HOME", &home_dir);
+        if fleet_active {
+            // Create the team dir so fleet_mode_active returns true.
+            let team_dir = claude_dir.join("teams").join(fleet::BRAIN_BRANCH);
+            std::fs::create_dir_all(&team_dir).unwrap();
+        } else {
+            std::fs::create_dir_all(&claude_dir).unwrap();
         }
-        f(&home_dir);
-        let _ = std::fs::remove_dir_all(&base);
-        // SAFETY: restoring env; lock still held.
-        unsafe {
-            std::env::remove_var("CLAUDE_CONFIG_DIR");
-            std::env::remove_var("HOME");
-        }
-    }
-
-    /// Set up temp dirs WITHOUT fleet mode active (no team dir).
-    fn without_fleet_env(test_name: &str, f: impl FnOnce(&std::path::Path)) {
-        let _lock = DROPBOX_ENV_LOCK.lock().unwrap();
-        let base = std::env::temp_dir().join(format!(
-            "kild_dropbox_no_fleet_{}_{}",
-            test_name,
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&base);
-
-        let claude_dir = base.join("claude_config");
-        std::fs::create_dir_all(&claude_dir).unwrap();
 
         let home_dir = base.join("home");
         std::fs::create_dir_all(&home_dir).unwrap();
@@ -546,7 +505,7 @@ mod tests {
 
     #[test]
     fn ensure_dropbox_creates_directory_and_protocol() {
-        with_fleet_env("creates_dir", |home| {
+        with_env("creates_dir", true, |home| {
             let paths = KildPaths::resolve().unwrap();
             let dropbox_dir = paths.fleet_dropbox_dir("proj123", "my-branch");
             assert!(!dropbox_dir.exists());
@@ -568,7 +527,7 @@ mod tests {
 
     #[test]
     fn ensure_dropbox_is_idempotent() {
-        with_fleet_env("idempotent", |_| {
+        with_env("idempotent", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
             ensure_dropbox("proj123", "my-branch", "claude");
 
@@ -580,7 +539,7 @@ mod tests {
 
     #[test]
     fn ensure_dropbox_noop_for_non_claude_agent() {
-        with_fleet_env("non_claude", |_| {
+        with_env("non_claude", true, |_| {
             ensure_dropbox("proj123", "my-branch", "codex");
 
             let paths = KildPaths::resolve().unwrap();
@@ -594,7 +553,7 @@ mod tests {
 
     #[test]
     fn ensure_dropbox_noop_when_fleet_not_active() {
-        without_fleet_env("no_fleet", |_| {
+        with_env("no_fleet", false, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             let paths = KildPaths::resolve().unwrap();
@@ -610,7 +569,7 @@ mod tests {
 
     #[test]
     fn cleanup_dropbox_removes_existing_directory() {
-        with_fleet_env("cleanup_removes", |_| {
+        with_env("cleanup_removes", true, |_| {
             // Create the dropbox first
             ensure_dropbox("proj123", "my-branch", "claude");
 
@@ -628,7 +587,7 @@ mod tests {
 
     #[test]
     fn cleanup_dropbox_noop_when_missing() {
-        with_fleet_env("cleanup_noop", |_| {
+        with_env("cleanup_noop", true, |_| {
             // Call cleanup on a session that never had a dropbox — should not panic
             cleanup_dropbox("proj123", "never-existed");
         });
@@ -638,7 +597,7 @@ mod tests {
 
     #[test]
     fn inject_env_vars_pushes_kild_dropbox_for_worker() {
-        with_fleet_env("inject_worker", |_| {
+        with_env("inject_worker", true, |_| {
             let mut env_vars: Vec<(String, String)> = vec![];
             inject_dropbox_env_vars(&mut env_vars, "proj123", "worker", "claude");
 
@@ -657,7 +616,7 @@ mod tests {
 
     #[test]
     fn inject_env_vars_brain_gets_fleet_dir() {
-        with_fleet_env("inject_brain", |_| {
+        with_env("inject_brain", true, |_| {
             let mut env_vars: Vec<(String, String)> = vec![];
             inject_dropbox_env_vars(&mut env_vars, "proj123", fleet::BRAIN_BRANCH, "claude");
 
@@ -673,7 +632,7 @@ mod tests {
 
     #[test]
     fn inject_env_vars_noop_for_non_claude_agent() {
-        with_fleet_env("inject_non_claude", |_| {
+        with_env("inject_non_claude", true, |_| {
             let mut env_vars: Vec<(String, String)> = vec![];
             inject_dropbox_env_vars(&mut env_vars, "proj123", "worker", "codex");
 
@@ -686,7 +645,7 @@ mod tests {
 
     #[test]
     fn inject_env_vars_noop_when_fleet_not_active() {
-        without_fleet_env("inject_no_fleet", |_| {
+        with_env("inject_no_fleet", false, |_| {
             let mut env_vars: Vec<(String, String)> = vec![];
             inject_dropbox_env_vars(&mut env_vars, "proj123", "worker", "claude");
 
@@ -701,7 +660,7 @@ mod tests {
 
     #[test]
     fn write_task_creates_all_three_files() {
-        with_fleet_env("wt_creates_files", |_| {
+        with_env("wt_creates_files", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             let result = write_task(
@@ -740,7 +699,7 @@ mod tests {
 
     #[test]
     fn write_task_increments_task_id() {
-        with_fleet_env("wt_increments", |_| {
+        with_env("wt_increments", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             let r1 = write_task(
@@ -780,7 +739,7 @@ mod tests {
 
     #[test]
     fn write_task_noop_when_fleet_not_active() {
-        without_fleet_env("wt_no_fleet", |_| {
+        with_env("wt_no_fleet", false, |_| {
             let result = write_task(
                 "proj123",
                 "my-branch",
@@ -797,7 +756,7 @@ mod tests {
 
     #[test]
     fn write_task_noop_when_dropbox_dir_missing() {
-        with_fleet_env("wt_no_dir", |_| {
+        with_env("wt_no_dir", true, |_| {
             // Fleet is active but ensure_dropbox was NOT called — dir doesn't exist.
             let result = write_task(
                 "proj123",
@@ -811,7 +770,7 @@ mod tests {
 
     #[test]
     fn write_task_handles_corrupt_task_id() {
-        with_fleet_env("wt_corrupt_id", |_| {
+        with_env("wt_corrupt_id", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             // Write garbage to task-id
@@ -834,7 +793,7 @@ mod tests {
 
     #[test]
     fn write_task_records_delivery_methods() {
-        with_fleet_env("wt_delivery", |_| {
+        with_env("wt_delivery", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             write_task(
@@ -859,7 +818,7 @@ mod tests {
 
     #[test]
     fn write_task_summary_truncates_long_text() {
-        with_fleet_env("wt_truncate", |_| {
+        with_env("wt_truncate", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             let long_text = "A".repeat(200);
@@ -883,7 +842,7 @@ mod tests {
 
     #[test]
     fn write_task_summary_uses_first_line_only() {
-        with_fleet_env("wt_summary_multiline", |_| {
+        with_env("wt_summary_multiline", true, |_| {
             ensure_dropbox("proj123", "my-branch", "claude");
 
             write_task(
