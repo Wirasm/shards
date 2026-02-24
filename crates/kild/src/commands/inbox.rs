@@ -41,7 +41,11 @@ fn handle_single_inbox(
     info!(event = "cli.inbox_started", branch = branch);
 
     let session = helpers::require_session_json(branch, "cli.inbox_failed", json_output)?;
-    let state = dropbox::read_dropbox_state(&session.project_id, &session.branch)?;
+    let state = dropbox::read_dropbox_state(&session.project_id, &session.branch).map_err(|e| {
+        error!(event = "cli.inbox_failed", branch = branch, error = %e);
+        let boxed: Box<dyn std::error::Error> = e.into();
+        boxed
+    })?;
 
     let state = match state {
         Some(s) => s,
@@ -62,6 +66,11 @@ fn handle_single_inbox(
             Some(content) => print!("{content}"),
             None => println!("No task assigned."),
         }
+        info!(
+            event = "cli.inbox_completed",
+            branch = branch,
+            mode = "task"
+        );
         return Ok(());
     }
 
@@ -70,12 +79,22 @@ fn handle_single_inbox(
             Some(content) => print!("{content}"),
             None => println!("No report yet."),
         }
+        info!(
+            event = "cli.inbox_completed",
+            branch = branch,
+            mode = "report"
+        );
         return Ok(());
     }
 
     if matches.get_flag("status") {
         print_status_line(&state);
         println!();
+        info!(
+            event = "cli.inbox_completed",
+            branch = branch,
+            mode = "status"
+        );
         return Ok(());
     }
 
@@ -93,7 +112,11 @@ fn handle_single_inbox(
 fn handle_all_inbox(json_output: bool) -> Result<(), Box<dyn std::error::Error>> {
     info!(event = "cli.inbox_all_started");
 
-    let sessions = session_ops::list_sessions()?;
+    let sessions = session_ops::list_sessions().map_err(|e| {
+        error!(event = "cli.inbox_all_failed", error = %e);
+        let boxed: Box<dyn std::error::Error> = e.into();
+        boxed
+    })?;
 
     if sessions.is_empty() {
         if json_output {
@@ -105,6 +128,7 @@ fn handle_all_inbox(json_output: bool) -> Result<(), Box<dyn std::error::Error>>
     }
 
     let mut states: Vec<DropboxState> = Vec::new();
+    let mut errors: Vec<(String, String)> = Vec::new();
     for session in &sessions {
         match dropbox::read_dropbox_state(&session.project_id, &session.branch) {
             Ok(Some(state)) => states.push(state),
@@ -115,6 +139,7 @@ fn handle_all_inbox(json_output: bool) -> Result<(), Box<dyn std::error::Error>>
                     branch = %session.branch,
                     error = %e,
                 );
+                errors.push((session.branch.to_string(), e.to_string()));
             }
         }
     }
@@ -136,7 +161,28 @@ fn handle_all_inbox(json_output: bool) -> Result<(), Box<dyn std::error::Error>>
         print_fleet_inbox_table(&states);
     }
 
-    info!(event = "cli.inbox_all_completed", count = states.len());
+    info!(
+        event = "cli.inbox_all_completed",
+        count = states.len(),
+        failed = errors.len(),
+    );
+
+    if !errors.is_empty() {
+        eprintln!();
+        for (branch, msg) in &errors {
+            eprintln!(
+                "{} '{}': {}",
+                color::error("Inbox read failed for"),
+                branch,
+                msg,
+            );
+        }
+        let total = states.len() + errors.len();
+        return Err(
+            helpers::format_partial_failure_error("read inbox", errors.len(), total).into(),
+        );
+    }
+
     Ok(())
 }
 
@@ -145,11 +191,11 @@ fn inbox_output_from_state(state: &DropboxState) -> InboxOutput {
     let delivery = state
         .latest_history
         .as_ref()
-        .map(|h| h.delivery.iter().map(delivery_display).collect())
+        .map(|h| h.delivery().iter().map(delivery_display).collect())
         .unwrap_or_default();
 
     InboxOutput {
-        branch: state.branch.clone(),
+        branch: state.branch.to_string(),
         task_id: state.task_id,
         ack: state.ack,
         acked,
@@ -169,7 +215,7 @@ fn print_single_inbox(state: &DropboxState) {
         .latest_history
         .as_ref()
         .map(|h| {
-            h.delivery
+            h.delivery()
                 .iter()
                 .map(delivery_display)
                 .collect::<Vec<_>>()
@@ -324,9 +370,72 @@ fn task_summary(text: &str, max_chars: usize) -> String {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         return s.to_string();
     }
     let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
     format!("{truncated}...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kild_core::BranchName;
+
+    fn make_state(task_id: Option<u64>, ack: Option<u64>) -> DropboxState {
+        DropboxState {
+            branch: BranchName::from("test"),
+            task_id,
+            task_content: None,
+            ack,
+            report: None,
+            latest_history: None,
+        }
+    }
+
+    #[test]
+    fn inbox_output_acked_true_only_when_ids_match() {
+        assert!(!inbox_output_from_state(&make_state(None, None)).acked);
+        assert!(!inbox_output_from_state(&make_state(Some(1), None)).acked);
+        assert!(inbox_output_from_state(&make_state(Some(1), Some(1))).acked);
+        assert!(!inbox_output_from_state(&make_state(Some(2), Some(1))).acked);
+    }
+
+    #[test]
+    fn task_summary_skips_task_heading_line() {
+        assert_eq!(
+            task_summary("# Task 3\n\nFix the auth flow.\n", 80),
+            "Fix the auth flow."
+        );
+    }
+
+    #[test]
+    fn task_summary_returns_empty_when_only_heading() {
+        assert_eq!(task_summary("# Task 1\n", 80), "");
+    }
+
+    #[test]
+    fn task_summary_truncates_long_body() {
+        let text = format!("# Task 1\n\n{}\n", "A".repeat(100));
+        let result = task_summary(&text, 40);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 40);
+    }
+
+    #[test]
+    fn first_line_skips_blank_lines() {
+        assert_eq!(
+            first_line("\n\nActual content here\nSecond line", 80),
+            "Actual content here"
+        );
+    }
+
+    #[test]
+    fn truncate_str_handles_multibyte_chars() {
+        // Em dash is 3 bytes but 1 char — should not be truncated at max_len=12
+        let s = "Fix — issue";
+        assert_eq!(truncate_str(s, 12), "Fix — issue");
+        // Should truncate when char count exceeds limit
+        assert_eq!(truncate_str("abcdefghij", 7), "abcd...");
+    }
 }

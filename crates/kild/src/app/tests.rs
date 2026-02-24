@@ -1913,3 +1913,27 @@ fn test_cli_inbox_task_conflicts_with_report() {
         app.try_get_matches_from(vec!["kild", "inbox", "test-branch", "--task", "--report"]);
     assert!(matches.is_err());
 }
+
+#[test]
+fn test_cli_inbox_task_conflicts_with_json() {
+    let app = build_cli();
+    let matches =
+        app.try_get_matches_from(vec!["kild", "inbox", "test-branch", "--task", "--json"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_inbox_report_conflicts_with_json() {
+    let app = build_cli();
+    let matches =
+        app.try_get_matches_from(vec!["kild", "inbox", "test-branch", "--report", "--json"]);
+    assert!(matches.is_err());
+}
+
+#[test]
+fn test_cli_inbox_status_conflicts_with_json() {
+    let app = build_cli();
+    let matches =
+        app.try_get_matches_from(vec!["kild", "inbox", "test-branch", "--status", "--json"]);
+    assert!(matches.is_err());
+}

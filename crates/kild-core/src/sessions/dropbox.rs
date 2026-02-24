@@ -15,13 +15,15 @@ use nix::fcntl::{Flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
+use kild_protocol::BranchName;
+
 use super::errors::SessionError;
 use super::fleet;
 
 /// Direction of a fleet message: brain→worker or worker→brain.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Direction {
+pub(crate) enum Direction {
     In,
     Out,
 }
@@ -44,29 +46,39 @@ pub enum DeliveryMethod {
 }
 
 /// A single entry in the append-only `history.jsonl` audit trail.
+///
+/// Fields are private — construction is internal via `write_task`.
+/// Read access is provided through accessor methods.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HistoryEntry {
     /// Direction: "in" = brain→worker, "out" = worker→brain.
-    pub dir: Direction,
+    dir: Direction,
     /// Sender identifier (e.g. "kild").
-    pub from: String,
+    from: String,
     /// Recipient branch name.
-    pub to: String,
+    to: String,
     /// Monotonically incrementing task number.
-    pub task_id: u64,
+    task_id: u64,
     /// ISO 8601 timestamp with milliseconds.
-    pub ts: String,
+    ts: String,
     /// First ~80 chars of the task text.
-    pub summary: String,
+    summary: String,
     /// Delivery methods attempted (e.g. ["dropbox", "claude_inbox"]).
-    pub delivery: Vec<DeliveryMethod>,
+    delivery: Vec<DeliveryMethod>,
+}
+
+impl HistoryEntry {
+    /// Delivery methods used for this task injection.
+    pub fn delivery(&self) -> &[DeliveryMethod] {
+        &self.delivery
+    }
 }
 
 /// Read-only snapshot of a session's dropbox protocol state.
 #[derive(Debug, Serialize)]
 pub struct DropboxState {
     /// Branch name (for display convenience).
-    pub branch: String,
+    pub branch: BranchName,
     /// Current task ID from `task-id` file. `None` if no task yet.
     pub task_id: Option<u64>,
     /// Full content of `task.md`. `None` if no task yet.
@@ -394,7 +406,7 @@ pub fn read_dropbox_state(
     let latest_history = read_latest_history(&dropbox_dir.join("history.jsonl"), branch);
 
     Ok(Some(DropboxState {
-        branch: branch.to_string(),
+        branch: BranchName::from(branch),
         task_id,
         task_content,
         ack,
@@ -421,7 +433,7 @@ fn read_optional_u64(path: &std::path::Path, branch: &str) -> Option<u64> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             warn!(
-                event = "core.session.dropbox.read_file_failed",
+                event = "core.session.dropbox.read_u64_failed",
                 branch = branch,
                 path = %path.display(),
                 error = %e,
@@ -439,7 +451,7 @@ fn read_optional_string(path: &std::path::Path, branch: &str) -> Option<String> 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             warn!(
-                event = "core.session.dropbox.read_file_failed",
+                event = "core.session.dropbox.read_string_failed",
                 branch = branch,
                 path = %path.display(),
                 error = %e,
@@ -1031,7 +1043,7 @@ mod tests {
                 .unwrap()
                 .expect("should return Some for existing dropbox");
 
-            assert_eq!(state.branch, "my-branch");
+            assert_eq!(&*state.branch, "my-branch");
             assert!(state.task_id.is_none());
             assert!(state.task_content.is_none());
             assert!(state.ack.is_none());

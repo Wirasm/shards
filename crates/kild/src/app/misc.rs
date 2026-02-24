@@ -102,21 +102,21 @@ pub fn inbox_command() -> Command {
                 .long("task")
                 .help("Show only the current task content")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(["report", "status", "all"]),
+                .conflicts_with_all(["report", "status", "all", "json"]),
         )
         .arg(
             Arg::new("report")
                 .long("report")
                 .help("Show only the latest report")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(["task", "status", "all"]),
+                .conflicts_with_all(["task", "status", "all", "json"]),
         )
         .arg(
             Arg::new("status")
                 .long("status")
                 .help("Show only task-id vs ack status")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(["task", "report", "all"]),
+                .conflicts_with_all(["task", "report", "all", "json"]),
         )
 }
 
