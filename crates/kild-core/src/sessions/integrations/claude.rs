@@ -42,19 +42,48 @@ esac
 # Skip if this session IS the brain to prevent self-referential feedback loops.
 # Gate file ($KILD_DROPBOX/.idle_sent) deduplicates: only the first idle event
 # per task cycle fires an inject. Cleared by `kild inject` when writing a new task.
+# Filtering (#553): only forward brain-actionable events.
+# - Stop: always (worker finished)
+# - Notification: always (permission prompts, idle prompts)
+# - SubagentStop: only on failure (error/fail/exception/panic in summary)
+# - TeammateIdle, TaskCompleted: never (internal worker lifecycle noise)
+LAST_MSG=$(echo "$INPUT" | grep -o '"transcript_summary":"[^"]*"' | head -1 | sed 's/"transcript_summary":"//;s/"//')
+FORWARD=""
+SKIP_GATE=""
 case "$EVENT" in
-  Stop|SubagentStop|TeammateIdle|TaskCompleted)
-    GATE="${KILD_DROPBOX:+$KILD_DROPBOX/.idle_sent}"
-    if [ "$BRANCH" != "honryu" ] && \
-       [ "$BRANCH" != "unknown" ] && \
-       { [ -z "$GATE" ] || [ ! -f "$GATE" ]; } && \
-       kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
-      if kild inject honryu "[DONE] $BRANCH" && [ -n "$GATE" ]; then
+  Stop)
+    FORWARD="[DONE] $BRANCH${LAST_MSG:+: $LAST_MSG}"
+    ;;
+  SubagentStop)
+    if echo "$LAST_MSG" | grep -qi 'error\|fail\|exception\|panic'; then
+      FORWARD="[ERROR] $BRANCH subagent failed${LAST_MSG:+: $LAST_MSG}"
+    fi
+    ;;
+  Notification)
+    case "$NTYPE" in
+      permission_prompt)
+        FORWARD="[WAITING] $BRANCH: needs approval"
+        SKIP_GATE=1
+        ;;
+      idle_prompt)
+        FORWARD="[IDLE] $BRANCH${LAST_MSG:+: $LAST_MSG}"
+        ;;
+    esac
+    ;;
+esac
+if [ -n "$FORWARD" ]; then
+  GATE="${KILD_DROPBOX:+$KILD_DROPBOX/.idle_sent}"
+  if [ "$BRANCH" != "honryu" ] && \
+     [ "$BRANCH" != "unknown" ] && \
+     { [ -n "$SKIP_GATE" ] || [ -z "$GATE" ] || [ ! -f "$GATE" ]; } && \
+     kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
+    if kild inject honryu "$FORWARD"; then
+      if [ -z "$SKIP_GATE" ] && [ -n "$GATE" ]; then
         touch "$GATE" || echo "[kild] Warning: failed to write idle gate $GATE" >&2
       fi
     fi
-    ;;
-esac
+  fi
+fi
 "#;
 
     std::fs::write(&hook_path, script)
@@ -306,6 +335,56 @@ mod tests {
         assert!(
             content.contains(r#"[ -z "$GATE" ]"#),
             "Script must allow inject when KILD_DROPBOX is not set (no-dropbox fallback)"
+        );
+
+        // Event filtering assertions (#553)
+        assert!(
+            content.contains("transcript_summary"),
+            "Script should extract transcript_summary from JSON payload"
+        );
+        assert!(
+            content.contains("[DONE] $BRANCH"),
+            "Script should forward Stop events with [DONE] tag"
+        );
+        assert!(
+            content.contains("[WAITING] $BRANCH"),
+            "Script should forward permission_prompt with [WAITING] tag"
+        );
+        assert!(
+            content.contains("[IDLE] $BRANCH"),
+            "Script should forward idle_prompt with [IDLE] tag"
+        );
+        assert!(
+            content.contains("[ERROR] $BRANCH subagent failed"),
+            "Script should forward SubagentStop failures with [ERROR] tag"
+        );
+        assert!(
+            content.contains("SKIP_GATE"),
+            "Script should bypass gate for permission_prompt events"
+        );
+        assert!(
+            content.contains("error\\|fail\\|exception\\|panic"),
+            "Script should check for failure indicators in SubagentStop"
+        );
+        // Verify TeammateIdle and TaskCompleted are NOT forwarded in the brain injection case
+        // branches (they should only appear in the agent-status block and comments)
+        let forward_block = content
+            .split("FORWARD=\"\"")
+            .nth(1)
+            .expect("Should have FORWARD assignment");
+        let case_branches: Vec<&str> = forward_block
+            .lines()
+            .filter(|l| l.trim_start().starts_with("Stop") || l.trim_start().starts_with("Subagent") || l.trim_start().starts_with("Teammate") || l.trim_start().starts_with("TaskCompleted"))
+            .collect();
+        assert!(
+            !case_branches.iter().any(|l| l.contains("TeammateIdle")),
+            "TeammateIdle must not be a forwarded case branch, got: {:?}",
+            case_branches
+        );
+        assert!(
+            !case_branches.iter().any(|l| l.contains("TaskCompleted")),
+            "TaskCompleted must not be a forwarded case branch, got: {:?}",
+            case_branches
         );
 
         #[cfg(unix)]
