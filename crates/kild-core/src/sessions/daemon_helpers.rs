@@ -463,12 +463,18 @@ case "$EVENT" in
 esac
 # Inject event into Honryū brain session if it is running.
 # Skip if this session IS the brain to prevent self-referential feedback loops.
+# Gate file ($KILD_DROPBOX/.idle_sent) deduplicates: only the first idle event
+# per task cycle fires an inject. Cleared by `kild inject` when writing a new task.
 case "$EVENT" in
   Stop|SubagentStop|TeammateIdle|TaskCompleted)
-    if [ "$BRANCH" != "honryu" ] && [ "$BRANCH" != "unknown" ] && \
-       kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
-      LAST_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null | tr -d '"' | tr -d "'" | tr -d '`' | head -c 200)
-      kild inject honryu "[EVENT] $BRANCH $EVENT: ${LAST_MSG:-no message}" || true
+    if [ "$BRANCH" != "honryu" ] && [ "$BRANCH" != "unknown" ]; then
+      GATE="${KILD_DROPBOX:+$KILD_DROPBOX/.idle_sent}"
+      if [ -z "$GATE" ] || [ ! -f "$GATE" ]; then
+        if kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
+          [ -n "$GATE" ] && touch "$GATE"
+          kild inject honryu "[DONE] $BRANCH" || true
+        fi
+      fi
     fi
     ;;
 esac
@@ -2153,6 +2159,18 @@ mod tests {
         assert!(
             content.contains(r#".status == "active""#),
             "Script must check that honryu session is active, not just present"
+        );
+        assert!(
+            content.contains(".idle_sent"),
+            "Script must use .idle_sent gate file for deduplication"
+        );
+        assert!(
+            content.contains(r#"[ ! -f "$GATE" ]"#),
+            "Script must check gate file before injecting"
+        );
+        assert!(
+            content.contains(r#"touch "$GATE""#),
+            "Script must create gate file after first inject"
         );
 
         #[cfg(unix)]

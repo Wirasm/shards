@@ -447,6 +447,26 @@ pub fn write_task(
         return Err(SessionError::IoError { source: e });
     }
 
+    // Clear the idle gate file so the next idle transition can fire a brain notification.
+    // The claude-status hook creates .idle_sent on the first idle event; we clear it here
+    // when a new task arrives to reset the dedup gate for the next task cycle.
+    let gate_path = dropbox_dir.join(".idle_sent");
+    if gate_path.exists() {
+        if let Err(e) = std::fs::remove_file(&gate_path) {
+            warn!(
+                event = "core.session.dropbox.idle_gate_clear_failed",
+                branch = branch,
+                path = %gate_path.display(),
+                error = %e,
+            );
+        } else {
+            info!(
+                event = "core.session.dropbox.idle_gate_cleared",
+                branch = branch,
+            );
+        }
+    }
+
     info!(
         event = "core.session.dropbox.write_task_completed",
         branch = branch,
@@ -1245,6 +1265,62 @@ mod tests {
                 entry["summary"].as_str().unwrap(),
                 "# Auth task",
                 "summary should use first line only, not full body"
+            );
+        });
+    }
+
+    #[test]
+    fn write_task_clears_idle_gate_file() {
+        with_env("wt_gate_clear", true, |_| {
+            ensure_dropbox("proj123", "my-branch", "claude");
+
+            // Simulate the hook creating the gate file (as it would after first idle event).
+            let paths = KildPaths::resolve().unwrap();
+            let dropbox_dir = paths.fleet_dropbox_dir("proj123", "my-branch");
+            let gate_path = dropbox_dir.join(".idle_sent");
+            std::fs::write(&gate_path, "").unwrap();
+            assert!(
+                gate_path.exists(),
+                "gate file should exist before write_task"
+            );
+
+            write_task(
+                "proj123",
+                "my-branch",
+                "new task",
+                &[DeliveryMethod::Dropbox],
+            )
+            .unwrap();
+
+            assert!(
+                !gate_path.exists(),
+                "write_task should clear .idle_sent gate file"
+            );
+        });
+    }
+
+    #[test]
+    fn write_task_succeeds_without_gate_file() {
+        with_env("wt_gate_absent", true, |_| {
+            ensure_dropbox("proj123", "my-branch", "claude");
+
+            let paths = KildPaths::resolve().unwrap();
+            let dropbox_dir = paths.fleet_dropbox_dir("proj123", "my-branch");
+            let gate_path = dropbox_dir.join(".idle_sent");
+            assert!(
+                !gate_path.exists(),
+                "gate file should not exist before write_task"
+            );
+
+            let result = write_task(
+                "proj123",
+                "my-branch",
+                "new task",
+                &[DeliveryMethod::Dropbox],
+            );
+            assert!(
+                result.is_ok(),
+                "write_task should succeed without gate file"
             );
         });
     }
