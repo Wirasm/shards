@@ -414,12 +414,14 @@ pub fn open_session(
 
         // Deliver initial prompt after the TUI has settled (best-effort).
         if let Some(prompt) = initial_prompt {
-            deliver_initial_prompt(&daemon_result.daemon_session_id, prompt);
+            let delivered = deliver_initial_prompt(&daemon_result.daemon_session_id, prompt);
             // Clear .idle_sent gate so the next idle event notifies the brain.
             // deliver_initial_prompt bypasses dropbox::write_task(), which normally
-            // handles this. Without clearing, the stale gate silently suppresses
-            // the brain notification when the worker finishes.
-            dropbox::clear_idle_gate(&session.project_id, &session.branch);
+            // handles this. Only clear when delivery succeeded — clearing on failure
+            // would cause a phantom brain notification on the next idle event.
+            if delivered {
+                dropbox::clear_idle_gate(&session.project_id, &session.branch);
+            }
         }
 
         AgentProcess::new(
@@ -1279,5 +1281,28 @@ mod tests {
             !json.contains("agent_session_id_history"),
             "Empty history should not appear in JSON"
         );
+    }
+
+    /// Legacy session files without `agent_session_id_history` must deserialize
+    /// cleanly with an empty vec (backward compatibility via #[serde(default)]).
+    #[test]
+    fn test_legacy_session_without_history_deserializes_cleanly() {
+        let legacy_json = r#"{
+            "id": "test-proj_my-branch",
+            "project_id": "test-proj",
+            "branch": "my-branch",
+            "worktree_path": "/tmp/worktree",
+            "agent": "claude",
+            "status": "stopped",
+            "created_at": "2025-01-01T00:00:00Z",
+            "agent_session_id": "aaaa-0000"
+        }"#;
+        let session: Session =
+            serde_json::from_str(legacy_json).expect("legacy format must deserialize");
+        assert!(
+            session.agent_session_id_history.is_empty(),
+            "Legacy sessions without the field must deserialize with empty history"
+        );
+        assert_eq!(session.agent_session_id.as_deref(), Some("aaaa-0000"));
     }
 }

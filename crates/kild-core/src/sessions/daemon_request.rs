@@ -23,7 +23,8 @@ pub(super) struct DaemonSpawnParams {
 /// Detection: scrollback must exceed 50 bytes AND stop growing for 500ms.
 /// Write order: text → 50ms pause → `\r` (same cadence as `kild inject`).
 /// Never blocks the caller beyond 20s. Never fails — logs and returns on any error.
-pub(super) fn deliver_initial_prompt(daemon_session_id: &str, prompt: &str) {
+/// Returns `true` if the prompt text was successfully written to the PTY.
+pub(super) fn deliver_initial_prompt(daemon_session_id: &str, prompt: &str) -> bool {
     let timeout = std::time::Duration::from_secs(20);
     let poll_interval = std::time::Duration::from_millis(200);
     let stable_window = std::time::Duration::from_millis(500);
@@ -116,6 +117,8 @@ pub(super) fn deliver_initial_prompt(daemon_session_id: &str, prompt: &str) {
             }
         }
     }
+
+    text_ok
 }
 
 /// Compute a unique spawn ID for a given session and spawn index.

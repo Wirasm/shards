@@ -420,22 +420,7 @@ pub fn write_task(
     // Must happen before history.jsonl (which can fail and return early).
     // Best-effort: if removal fails, the stale gate will suppress the next idle inject.
     // Logged at warn level — the task was delivered, so write_task returns Ok regardless.
-    let gate_path = dropbox_dir.join(".idle_sent");
-    if gate_path.exists() {
-        if let Err(e) = std::fs::remove_file(&gate_path) {
-            warn!(
-                event = "core.session.dropbox.idle_gate_clear_failed",
-                branch = branch,
-                path = %gate_path.display(),
-                error = %e,
-            );
-        } else {
-            info!(
-                event = "core.session.dropbox.idle_gate_cleared",
-                branch = branch,
-            );
-        }
-    }
+    remove_idle_gate_file(&dropbox_dir.join(".idle_sent"), branch);
 
     // Append history.jsonl — task delivery already succeeded via task.md;
     // log loudly on failure but do not roll back the task files.
@@ -478,6 +463,28 @@ pub fn write_task(
     Ok(Some(new_id))
 }
 
+/// Remove the `.idle_sent` gate file at the given path (best-effort).
+///
+/// No-op if the file does not exist. Warns on removal failure.
+/// Shared by `write_task` (inline gate clear) and `clear_idle_gate` (open-session path).
+fn remove_idle_gate_file(gate_path: &std::path::Path, branch: &str) {
+    if gate_path.exists() {
+        if let Err(e) = std::fs::remove_file(gate_path) {
+            warn!(
+                event = "core.session.dropbox.idle_gate_clear_failed",
+                branch = branch,
+                path = %gate_path.display(),
+                error = %e,
+            );
+        } else {
+            info!(
+                event = "core.session.dropbox.idle_gate_cleared",
+                branch = branch,
+            );
+        }
+    }
+}
+
 /// Clear the `.idle_sent` gate file in a session's dropbox directory.
 ///
 /// The gate file is created by the `claude-status` hook after the first idle event.
@@ -503,24 +510,12 @@ pub(super) fn clear_idle_gate(project_id: &str, branch: &str) {
         }
     };
 
-    let gate_path = paths
-        .fleet_dropbox_dir(project_id, branch)
-        .join(".idle_sent");
-    if gate_path.exists() {
-        if let Err(e) = std::fs::remove_file(&gate_path) {
-            warn!(
-                event = "core.session.dropbox.idle_gate_clear_failed",
-                branch = branch,
-                path = %gate_path.display(),
-                error = %e,
-            );
-        } else {
-            info!(
-                event = "core.session.dropbox.idle_gate_cleared",
-                branch = branch,
-            );
-        }
-    }
+    remove_idle_gate_file(
+        &paths
+            .fleet_dropbox_dir(project_id, branch)
+            .join(".idle_sent"),
+        branch,
+    );
 }
 
 /// Inject `KILD_DROPBOX` (and `KILD_FLEET_DIR` for brain) into daemon env vars.
