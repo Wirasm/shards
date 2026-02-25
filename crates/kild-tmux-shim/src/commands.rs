@@ -545,7 +545,14 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
                     daemon_session_id,
                 )
             } else {
-                expand_format(fmt, &pane_id, session_name, window_id, window_name, pane_title)
+                expand_format(
+                    fmt,
+                    &pane_id,
+                    session_name,
+                    window_id,
+                    window_name,
+                    pane_title,
+                )
             };
             println!("{}", output);
         }
