@@ -35,17 +35,8 @@ pub(super) struct AgentSpawnParams<'a> {
 
 /// Spawn an agent in a daemon-managed PTY.
 ///
-/// Covers the shared daemon spawn sequence:
-/// 1. Ensure daemon is running
-/// 2. Agent integration setup (codex, opencode, claude hooks)
-/// 3. Fleet member + dropbox setup
-/// 4. Fleet agent flags → command augmentation
-/// 5. Build daemon create request (env vars, shim, login shell)
-/// 6. Inject dropbox env vars
-/// 7. Create PTY session via daemon IPC
-/// 8. Early exit detection with exponential backoff
-/// 9. Scrollback capture on early exit
-/// 10. Construct `AgentProcess` result
+/// Handles the shared daemon spawn sequence: daemon startup, agent hook setup,
+/// fleet wiring, PTY creation, and early-exit detection.
 ///
 /// Create-only steps (shim binary, pre-emptive cleanup, pane registry init)
 /// and open-only steps (initial prompt delivery) remain in their respective callers.
@@ -112,31 +103,9 @@ pub(super) fn spawn_daemon_agent(
     // Fast-failing processes (bad resume session, missing binary, env issues)
     // typically exit within 50ms of spawn. Exit early on Running confirmation.
     // Worst-case window: 350ms (50+100+200) before falling through with None (assume alive).
-    let maybe_early_exit: Option<Option<i32>> = {
-        let mut result = None;
-        for delay_ms in [50u64, 100, 200] {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            match crate::daemon::client::get_session_info(&daemon_result.daemon_session_id) {
-                Ok(Some((kild_protocol::SessionStatus::Stopped, exit_code))) => {
-                    result = Some(exit_code);
-                    break;
-                }
-                Ok(Some((kild_protocol::SessionStatus::Running, _))) => break,
-                Ok(_) => {} // Creating or session not yet registered — keep polling
-                Err(e) => {
-                    warn!(
-                        event = "core.session.daemon_spawn_poll_failed",
-                        daemon_session_id = %daemon_result.daemon_session_id,
-                        error = %e,
-                    );
-                    break;
-                }
-            }
-        }
-        result
-    };
+    let maybe_early_exit = poll_for_early_exit(&daemon_result.daemon_session_id);
 
-    // 9. Handle early exit: read scrollback, clean up, return error
+    // 9. Handle early exit
     if let Some(exit_code) = maybe_early_exit {
         let scrollback_tail = read_scrollback_tail(&daemon_result.daemon_session_id);
 
@@ -156,7 +125,7 @@ pub(super) fn spawn_daemon_agent(
         });
     }
 
-    // 10. Construct AgentProcess result
+    // 10. Return AgentProcess
     AgentProcess::new(
         params.agent.to_string(),
         params.spawn_id.to_string(),
@@ -173,13 +142,8 @@ pub(super) fn spawn_daemon_agent(
 
 /// Spawn an agent in an external terminal window.
 ///
-/// Covers the shared terminal spawn sequence:
-/// 1. Agent integration setup (codex, opencode, claude hooks)
-/// 2. Build env prefix (task list, codex, claude env vars)
-/// 3. Construct terminal command with env cleanup
-/// 4. Spawn terminal window
-/// 5. Capture process metadata
-/// 6. Construct `AgentProcess` result
+/// Handles the shared terminal spawn sequence: agent hook setup, env prefix
+/// construction, terminal command wrapping, spawn, and process metadata capture.
 pub(super) fn spawn_terminal_agent(
     params: &AgentSpawnParams<'_>,
 ) -> Result<AgentProcess, SessionError> {
@@ -190,22 +154,20 @@ pub(super) fn spawn_terminal_agent(
     setup_opencode_integration(params.agent, params.worktree_path);
     setup_claude_integration(params.agent);
 
-    // 2–3. Build env prefix and terminal command
-    let terminal_command = {
-        let mut env_prefix: Vec<(String, String)> = Vec::new();
-        if let Some(tlid) = params.task_list_id {
-            env_prefix.extend(agents::resume::task_list_env_vars(params.agent, tlid));
-        }
-        env_prefix.extend(agents::resume::codex_env_vars(params.agent, params.branch));
-        env_prefix.extend(agents::resume::claude_env_vars(params.agent, params.branch));
-        super::env_cleanup::build_env_command(&env_prefix, params.agent_command)
-    };
+    // 2. Build env prefix (task list, agent-specific vars) and wrap in terminal command
+    let mut env_prefix: Vec<(String, String)> = Vec::new();
+    if let Some(tlid) = params.task_list_id {
+        env_prefix.extend(agents::resume::task_list_env_vars(params.agent, tlid));
+    }
+    env_prefix.extend(agents::resume::codex_env_vars(params.agent, params.branch));
+    env_prefix.extend(agents::resume::claude_env_vars(params.agent, params.branch));
+    let terminal_command = super::env_cleanup::build_env_command(&env_prefix, params.agent_command);
     debug!(
         event = "core.session.terminal_command_constructed",
         command = %terminal_command,
     );
 
-    // 4. Spawn terminal window
+    // 3. Spawn terminal window
     let base_config = Config::new();
     let spawn_result = terminal::handler::spawn_terminal(
         params.worktree_path,
@@ -216,10 +178,10 @@ pub(super) fn spawn_terminal_agent(
     )
     .map_err(|e| SessionError::TerminalError { source: e })?;
 
-    // 5. Capture process metadata (fresh from OS for PID reuse protection)
+    // 4. Capture process metadata (fresh from OS for PID reuse protection)
     let (process_name, process_start_time) = capture_process_metadata(&spawn_result);
 
-    // 6. Construct AgentProcess result
+    // 5. Construct AgentProcess result
     let command = if spawn_result.command_executed.trim().is_empty() {
         format!("{} (command not captured)", params.agent)
     } else {
@@ -238,6 +200,34 @@ pub(super) fn spawn_terminal_agent(
         now,
         None,
     )
+}
+
+/// Poll a freshly spawned daemon session for early exit using exponential backoff.
+///
+/// Returns `Some(exit_code)` if the session stopped before the backoff window
+/// expired, or `None` if it is running (or the status could not be determined).
+fn poll_for_early_exit(daemon_session_id: &str) -> Option<Option<i32>> {
+    let mut result = None;
+    for delay_ms in [50u64, 100, 200] {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        match crate::daemon::client::get_session_info(daemon_session_id) {
+            Ok(Some((kild_protocol::SessionStatus::Stopped, exit_code))) => {
+                result = Some(exit_code);
+                break;
+            }
+            Ok(Some((kild_protocol::SessionStatus::Running, _))) => break,
+            Ok(_) => {} // Creating or not yet registered — keep polling
+            Err(e) => {
+                warn!(
+                    event = "core.session.daemon_spawn_poll_failed",
+                    daemon_session_id = daemon_session_id,
+                    error = %e,
+                );
+                break;
+            }
+        }
+    }
+    result
 }
 
 /// Read the last 20 lines of scrollback from a daemon session (best-effort).

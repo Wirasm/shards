@@ -261,7 +261,6 @@ pub fn open_session(
     );
 
     let use_daemon = effective_runtime_mode == RuntimeMode::Daemon;
-    let now = chrono::Utc::now().to_rfc3339();
 
     let spawn_params = AgentSpawnParams {
         branch: &session.branch,
@@ -297,6 +296,7 @@ pub fn open_session(
         spawn_terminal_agent(&spawn_params)?
     };
 
+    let now = chrono::Utc::now().to_rfc3339();
     session.status = SessionStatus::Active;
     session.last_activity = Some(now);
     session.add_agent(new_agent);
