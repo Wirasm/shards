@@ -1,6 +1,7 @@
 use clap::ArgMatches;
 use tracing::{error, info};
 
+use kild_core::CompleteRequest;
 use kild_core::events;
 use kild_core::session_ops;
 
@@ -19,25 +20,64 @@ pub(crate) fn handle_complete_command(
         return Err("Invalid branch name".into());
     }
 
-    info!(event = "cli.complete_started", branch = branch);
+    let strategy_str = matches
+        .get_one::<String>("merge-strategy")
+        .map(|s| s.as_str())
+        .unwrap_or("squash");
+    let merge_strategy: kild_core::MergeStrategy = strategy_str
+        .parse()
+        .map_err(|e: String| -> Box<dyn std::error::Error> { e.into() })?;
 
-    match session_ops::complete_session(branch) {
+    let request = CompleteRequest {
+        name: branch.clone(),
+        merge_strategy,
+        no_merge: matches.get_flag("no-merge"),
+        force: matches.get_flag("force"),
+        dry_run: matches.get_flag("dry-run"),
+        skip_ci: matches.get_flag("skip-ci"),
+    };
+
+    info!(
+        event = "cli.complete_started",
+        branch = branch,
+        merge_strategy = %request.merge_strategy,
+        no_merge = request.no_merge,
+        force = request.force,
+        dry_run = request.dry_run,
+    );
+
+    match session_ops::complete_session(&request) {
         Ok(result) => {
             use kild_core::CompleteResult;
 
-            println!("Completed '{}'. Session destroyed.", branch);
             match result {
-                CompleteResult::RemoteDeleted => {
-                    println!("  Remote branch deleted. PR was merged.");
+                CompleteResult::Merged {
+                    strategy,
+                    remote_deleted,
+                } => {
+                    println!(
+                        "Merged '{}' via {} and destroyed session.",
+                        branch, strategy
+                    );
+                    if !remote_deleted {
+                        println!("  Warning: remote branch deletion failed.");
+                    }
                 }
-                CompleteResult::RemoteDeleteFailed => {
-                    println!("  Remote branch deletion failed. Check logs.");
+                CompleteResult::AlreadyMerged { remote_deleted } => {
+                    println!("Completed '{}'. PR was already merged.", branch);
+                    if remote_deleted {
+                        println!("  Remote branch deleted.");
+                    }
                 }
-                CompleteResult::PrNotMerged => {
-                    println!("  Remote branch preserved. Merge will clean up.");
+                CompleteResult::CleanupOnly => {
+                    println!("Completed '{}'. Session destroyed.", branch);
+                    println!("  PR not merged — remote branch preserved.");
                 }
-                CompleteResult::PrCheckUnavailable => {
-                    println!("  PR merge status unknown. Remote branch preserved.");
+                CompleteResult::DryRun { ref steps } => {
+                    println!("Dry run for '{}':", branch);
+                    for (i, step) in steps.iter().enumerate() {
+                        println!("  {}. {}", i + 1, step);
+                    }
                 }
             }
 

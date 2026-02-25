@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 
 use crate::forge::errors::ForgeError;
 use crate::forge::traits::ForgeBackend;
-use crate::forge::types::{CiStatus, PrCheckResult, PrInfo, PrState, ReviewStatus};
+use crate::forge::types::{CiStatus, MergeStrategy, PrCheckResult, PrInfo, PrState, ReviewStatus};
 use crate::git::naming::{KILD_BRANCH_PREFIX, kild_branch_name};
 
 /// GitHub forge backend using the `gh` CLI.
@@ -185,6 +185,54 @@ impl ForgeBackend for GitHubBackend {
                         ),
                     })
                 }
+            }
+            Err(e) => Err(ForgeError::from(e)),
+        }
+    }
+
+    fn merge_pr(
+        &self,
+        worktree_path: &Path,
+        branch: &str,
+        strategy: MergeStrategy,
+    ) -> Result<(), ForgeError> {
+        let branch = normalize_branch(branch);
+        info!(
+            event = "core.forge.merge_started",
+            branch = %branch,
+            strategy = %strategy,
+            worktree_path = %worktree_path.display()
+        );
+
+        let output = std::process::Command::new("gh")
+            .current_dir(worktree_path)
+            .args(["pr", "merge", &branch, strategy.gh_flag()])
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                info!(
+                    event = "core.forge.merge_completed",
+                    branch = %branch,
+                    strategy = %strategy
+                );
+                Ok(())
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                warn!(
+                    event = "core.forge.merge_failed",
+                    branch = %branch,
+                    exit_code = output.status.code(),
+                    stderr = %stderr
+                );
+                Err(ForgeError::CliError {
+                    message: format!(
+                        "gh pr merge failed (exit {}): {}",
+                        output.status.code().unwrap_or(-1),
+                        stderr
+                    ),
+                })
             }
             Err(e) => Err(ForgeError::from(e)),
         }
