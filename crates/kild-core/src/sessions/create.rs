@@ -142,6 +142,15 @@ pub fn create_session(
     // Ensure sessions directory exists
     persistence::ensure_sessions_directory(&config.sessions_dir())?;
 
+    // Check for existing session before hitting the git layer
+    if let Some(_existing) =
+        persistence::find_session_by_name(&config.sessions_dir(), &validated.name)?
+    {
+        return Err(SessionError::AlreadyExists {
+            name: validated.name.to_string(),
+        });
+    }
+
     // 4. Allocate port range (I/O)
     let (port_start, port_end) = ports::allocate_port_range(
         &config.sessions_dir(),
