@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use kild_paths::KildPaths;
-use kild_protocol::{ClientMessage, DaemonMessage, IpcConnection, SessionId};
+use kild_protocol::{
+    ClientMessage, DaemonMessage, ErrorCode, IpcConnection, SessionId, SessionStatus,
+};
 use tracing::{debug, warn};
 
 use crate::errors::ShimError;
@@ -217,6 +219,75 @@ pub fn read_scrollback(session_id: &str) -> Result<Vec<u8>, ShimError> {
                 error = %e,
             );
             Err(e.into())
+        }
+    }
+}
+
+/// Query session status and PID from the daemon.
+///
+/// Returns `(status, pty_pid, exit_code)`. On failure (daemon down, session not found),
+/// returns `(Stopped, None, None)` as a safe default — a missing session is effectively dead.
+pub fn get_session_status(session_id: &str) -> (SessionStatus, Option<u32>, Option<i32>) {
+    let request = ClientMessage::GetSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: SessionId::new(session_id),
+    };
+
+    let mut conn = match get_or_connect() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                event = "shim.ipc.get_session_status_failed",
+                session_id = session_id,
+                error = %e,
+            );
+            return (SessionStatus::Stopped, None, None);
+        }
+    };
+
+    match conn.send(&request) {
+        Ok(DaemonMessage::SessionInfo { session, .. }) => {
+            let result = (session.status, session.pty_pid, session.exit_code);
+            return_conn(conn);
+            result
+        }
+        Ok(DaemonMessage::Error { code, message, .. }) => {
+            // SessionNotFound is expected (session cleaned up) — debug only
+            if matches!(code, ErrorCode::SessionNotFound) {
+                debug!(
+                    event = "shim.ipc.get_session_status_not_found",
+                    session_id = session_id,
+                );
+            } else {
+                warn!(
+                    event = "shim.ipc.get_session_status_failed",
+                    session_id = session_id,
+                    error_code = %code,
+                    error = %message,
+                );
+            }
+            return_conn(conn);
+            (SessionStatus::Stopped, None, None)
+        }
+        Ok(unexpected) => {
+            // Unexpected response type — log and return healthy connection
+            warn!(
+                event = "shim.ipc.get_session_status_failed",
+                session_id = session_id,
+                reason = "unexpected_response_type",
+                response = ?unexpected,
+            );
+            return_conn(conn);
+            (SessionStatus::Stopped, None, None)
+        }
+        Err(e) => {
+            // IPC error — connection is broken, don't return it
+            warn!(
+                event = "shim.ipc.get_session_status_failed",
+                session_id = session_id,
+                error = %e,
+            );
+            (SessionStatus::Stopped, None, None)
         }
     }
 }

@@ -3,6 +3,7 @@ use std::env;
 use std::sync::OnceLock;
 
 use kild_paths::KildPaths;
+use kild_protocol::SessionStatus;
 use tracing::{debug, error};
 
 use crate::errors::ShimError;
@@ -123,6 +124,22 @@ fn shell_command() -> String {
     env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
+/// Resolve dynamic pane variables (pane_dead, pane_pid, pane_dead_status) by querying
+/// the daemon for the session status. Only called when the format string contains
+/// these variables, to avoid unnecessary IPC round-trips.
+fn resolve_pane_status(daemon_session_id: &str) -> (String, String, String) {
+    let (status, pid, exit_code) = ipc::get_session_status(daemon_session_id);
+    let pane_dead_str = match status {
+        SessionStatus::Running | SessionStatus::Creating => "0",
+        SessionStatus::Stopped => "1",
+        // #[non_exhaustive]: unknown future statuses default to alive
+        _ => "0",
+    };
+    let pane_pid = pid.map(|p| p.to_string()).unwrap_or_default();
+    let pane_dead_status = exit_code.map(|c| c.to_string()).unwrap_or_default();
+    (pane_dead_str.to_string(), pane_pid, pane_dead_status)
+}
+
 fn expand_format(
     format: &str,
     pane_id: &str,
@@ -139,39 +156,107 @@ fn expand_format(
         .replace("#{pane_title}", pane_title)
 }
 
+/// Expand format string with daemon-aware pane status variables.
+///
+/// Extends `expand_format` with `#{pane_dead}`, `#{pane_pid}`, and `#{pane_dead_status}`
+/// by querying the daemon for the session status. The daemon query is only performed
+/// when the format string actually contains these variables.
+fn expand_format_with_status(
+    format: &str,
+    pane_id: &str,
+    session_name: &str,
+    window_index: &str,
+    window_name: &str,
+    pane_title: &str,
+    daemon_session_id: &str,
+) -> String {
+    // Check the original format string before substitution to avoid spurious
+    // daemon queries if substituted values happen to contain format templates.
+    let needs_status = format.contains("#{pane_dead}")
+        || format.contains("#{pane_pid}")
+        || format.contains("#{pane_dead_status}");
+
+    let mut result = expand_format(
+        format,
+        pane_id,
+        session_name,
+        window_index,
+        window_name,
+        pane_title,
+    );
+
+    if needs_status {
+        let (pane_dead, pane_pid, pane_dead_status) = resolve_pane_status(daemon_session_id);
+        result = result
+            .replace("#{pane_dead}", &pane_dead)
+            .replace("#{pane_pid}", &pane_pid)
+            .replace("#{pane_dead_status}", &pane_dead_status);
+    }
+
+    result
+}
+
 /// Create a new PTY via the daemon and register it in the pane registry.
 /// Returns the new pane ID.
-fn create_pty_pane(registry: &mut PaneRegistry, window_id: &str) -> Result<String, ShimError> {
+///
+/// If `shell_command_parts` is non-empty, the daemon PTY runs that command directly
+/// (e.g. `["claude", "--agent-type", "researcher"]`). When the command exits, the
+/// daemon session transitions to `Stopped` and `#{pane_dead}` becomes `1`.
+/// If empty, falls back to the user's login shell (`$SHELL`).
+fn create_pty_pane(
+    registry: &mut PaneRegistry,
+    window_id: &str,
+    shell_command_parts: &[&str],
+) -> Result<String, ShimError> {
     let sid = session_id()?;
     let pane_id = state::allocate_pane_id(registry);
     let daemon_session_index = registry.next_pane_id - 1;
     let daemon_session_id = format!("{}_shim_{}", sid, daemon_session_index);
 
-    let cwd = env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+    let cwd = match env::current_dir() {
+        Ok(p) => p.to_string_lossy().to_string(),
+        Err(e) => {
+            let fallback = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+            debug!(
+                event = "shim.create_pty.cwd_fallback",
+                error = %e,
+                fallback = fallback.as_str(),
+            );
+            fallback
+        }
+    };
 
     let mut env_vars = build_child_env()?;
     // Set the new pane's TMUX_PANE
     env_vars.insert("TMUX_PANE".to_string(), pane_id.clone());
 
-    let shell = shell_command();
+    let (cmd, cmd_args, use_login_shell) = if shell_command_parts.is_empty() {
+        (shell_command(), vec![], true)
+    } else {
+        let cmd = shell_command_parts[0].to_string();
+        let cmd_args: Vec<String> = shell_command_parts[1..]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        (cmd, cmd_args, false)
+    };
 
     debug!(
         event = "shim.split_window.create_pty_started",
         daemon_session_id = daemon_session_id,
         pane_id = pane_id,
+        command = cmd.as_str(),
     );
 
     ipc::create_session(
         &daemon_session_id,
         &cwd,
-        &shell,
-        &[],
+        &cmd,
+        &cmd_args,
         &env_vars,
         24,
         80,
-        true,
+        use_login_shell,
     )?;
 
     registry.panes.insert(
@@ -206,7 +291,11 @@ fn handle_version() -> Result<i32, ShimError> {
 }
 
 fn handle_split_window(args: SplitWindowArgs<'_>) -> Result<i32, ShimError> {
-    debug!(event = "shim.split_window_started", target = ?args.target);
+    debug!(
+        event = "shim.split_window_started",
+        target = ?args.target,
+        has_command = !args.command.is_empty(),
+    );
 
     let sid = session_id()?;
     let mut registry = state::load(&sid)?;
@@ -219,7 +308,7 @@ fn handle_split_window(args: SplitWindowArgs<'_>) -> Result<i32, ShimError> {
         .map(|p| p.window_id.clone())
         .unwrap_or_else(|| "0".to_string());
 
-    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+    let pane_id = create_pty_pane(&mut registry, &window_id, &args.command)?;
     state::save(&sid, &registry)?;
 
     if args.print_info {
@@ -335,13 +424,14 @@ fn handle_list_panes(args: ListPanesArgs<'_>) -> Result<i32, ShimError> {
             .get(&pane.window_id)
             .map(|w| w.name.as_str())
             .unwrap_or("");
-        let output = expand_format(
+        let output = expand_format_with_status(
             fmt,
             pane_id,
             session_name,
             &pane.window_id,
             window_name,
             &pane.title,
+            &pane.daemon_session_id,
         );
         println!("{}", output);
     }
@@ -413,16 +503,20 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
     let fmt = args.format.unwrap_or("");
     let pane_id = current_pane_id();
 
+    let needs_registry = fmt.contains("#{session_name}")
+        || fmt.contains("#{window_index}")
+        || fmt.contains("#{window_name}")
+        || fmt.contains("#{pane_title}")
+        || fmt.contains("#{pane_dead}")
+        || fmt.contains("#{pane_pid}")
+        || fmt.contains("#{pane_dead_status}");
+
     // For simple format strings, expand directly without loading state
     match fmt {
         "#{pane_id}" => {
             println!("{}", pane_id);
         }
-        f if f.contains("#{session_name}")
-            || f.contains("#{window_index}")
-            || f.contains("#{window_name}")
-            || f.contains("#{pane_title}") =>
-        {
+        _ if needs_registry => {
             let sid = session_id()?;
             let registry = state::load_shared(&sid)?;
             let session_name = &registry.session_name;
@@ -434,14 +528,32 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
                 .map(|w| w.name.as_str())
                 .unwrap_or("main");
             let pane_title = pane_entry.map(|p| p.title.as_str()).unwrap_or("");
-            let output = expand_format(
-                f,
-                &pane_id,
-                session_name,
-                window_id,
-                window_name,
-                pane_title,
-            );
+            // Only query the daemon when the pane is in the registry.
+            // The leader pane (%0) is not registered, so its daemon_session_id
+            // would be empty — querying with an empty ID would misreport it as dead.
+            let daemon_session_id = pane_entry
+                .map(|p| p.daemon_session_id.as_str())
+                .filter(|id| !id.is_empty());
+            let output = if let Some(daemon_session_id) = daemon_session_id {
+                expand_format_with_status(
+                    fmt,
+                    &pane_id,
+                    session_name,
+                    window_id,
+                    window_name,
+                    pane_title,
+                    daemon_session_id,
+                )
+            } else {
+                expand_format(
+                    fmt,
+                    &pane_id,
+                    session_name,
+                    window_id,
+                    window_name,
+                    pane_title,
+                )
+            };
             println!("{}", output);
         }
         _ => {
@@ -564,7 +676,7 @@ fn handle_new_session(args: NewSessionArgs<'_>) -> Result<i32, ShimError> {
     );
 
     // Create initial pane in the new window
-    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+    let pane_id = create_pty_pane(&mut registry, &window_id, &[])?;
 
     // Register session
     registry.sessions.insert(
@@ -610,7 +722,7 @@ fn handle_new_window(args: NewWindowArgs<'_>) -> Result<i32, ShimError> {
         },
     );
 
-    let pane_id = create_pty_pane(&mut registry, &window_id)?;
+    let pane_id = create_pty_pane(&mut registry, &window_id, &[])?;
 
     // Add window to the target session (or default session)
     let session_key = args
