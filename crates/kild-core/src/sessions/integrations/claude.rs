@@ -372,9 +372,10 @@ mod tests {
             .split("FORWARD=\"\"")
             .nth(1)
             .expect("Should have FORWARD assignment");
+        let event_prefixes = ["Stop", "Subagent", "Teammate", "TaskCompleted"];
         let case_branches: Vec<&str> = forward_block
             .lines()
-            .filter(|l| l.trim_start().starts_with("Stop") || l.trim_start().starts_with("Subagent") || l.trim_start().starts_with("Teammate") || l.trim_start().starts_with("TaskCompleted"))
+            .filter(|l| event_prefixes.iter().any(|p| l.trim_start().starts_with(p)))
             .collect();
         assert!(
             !case_branches.iter().any(|l| l.contains("TeammateIdle")),
