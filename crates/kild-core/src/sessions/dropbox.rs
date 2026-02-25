@@ -280,7 +280,7 @@ pub(super) fn ensure_dropbox(project_id: &str, branch: &str, agent: &str) {
     }
 
     let protocol_path = dropbox_dir.join("protocol.md");
-    let protocol_content = generate_protocol(&dropbox_dir);
+    let protocol_content = generate_protocol(branch, &dropbox_dir);
 
     if let Err(e) = std::fs::write(&protocol_path, protocol_content) {
         warn!(
@@ -777,12 +777,55 @@ pub(super) fn cleanup_dropbox(project_id: &str, branch: &str) {
 }
 
 /// Generate protocol.md content with baked-in absolute paths.
-fn generate_protocol(dropbox_dir: &std::path::Path) -> String {
+///
+/// Produces a brain-specific template when `branch` matches `BRAIN_BRANCH`,
+/// otherwise produces the standard worker template.
+fn generate_protocol(branch: &str, dropbox_dir: &std::path::Path) -> String {
     let dropbox = dropbox_dir.display();
     // NOTE: Raw string content is flush-left to avoid embedding leading whitespace.
     // This matches the pattern in daemon_helpers.rs for hook script generation.
-    format!(
-        r##"# KILD Fleet Protocol
+    if branch == fleet::BRAIN_BRANCH {
+        // Brain gets the fleet project dir (parent of its own dropbox).
+        let fleet_dir = dropbox_dir
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "$KILD_FLEET_DIR".to_string());
+        format!(
+            r##"# KILD Fleet Protocol — Brain
+
+You are the Honryū fleet supervisor. You manage workers by writing tasks to their dropboxes and reading their reports.
+
+## Directing Workers
+
+Worker dropboxes: {fleet_dir}/<worker-branch>/
+
+To assign a task:
+1. Write task content to the worker's task.md
+2. The worker reads task.md and writes ack
+3. The worker executes and writes report.md
+4. Read report.md to get results
+
+## File Paths (per worker)
+
+- Task:   {fleet_dir}/<worker>/task.md
+- Ack:    {fleet_dir}/<worker>/ack
+- Report: {fleet_dir}/<worker>/report.md
+
+## Your Own Dropbox
+
+Your dropbox: {dropbox}
+
+## Rules
+
+- Write clear, actionable tasks to worker task.md files
+- Check ack to confirm the worker has picked up the task
+- Read report.md to get results before assigning the next task
+- Do not modify worker ack or report.md — those are written by workers
+"##
+        )
+    } else {
+        format!(
+            r##"# KILD Fleet Protocol
 
 You are a worker in a KILD fleet managed by the Honryu brain supervisor.
 
@@ -810,7 +853,8 @@ On startup and after completing each task:
 - Always write report.md when done
 - Do not modify task.md — it is written by the brain
 "##
-    )
+        )
+    }
 }
 
 #[cfg(test)]
@@ -862,12 +906,14 @@ mod tests {
         }
     }
 
-    // --- generate_protocol ---
+    // --- generate_protocol (worker) ---
 
     #[test]
-    fn generate_protocol_contains_baked_absolute_paths() {
-        let content =
-            generate_protocol(std::path::Path::new("/home/user/.kild/fleet/abc/my-branch"));
+    fn generate_protocol_worker_contains_baked_absolute_paths() {
+        let content = generate_protocol(
+            "my-branch",
+            std::path::Path::new("/home/user/.kild/fleet/abc/my-branch"),
+        );
         assert!(content.contains("/home/user/.kild/fleet/abc/my-branch"));
         assert!(content.contains("/home/user/.kild/fleet/abc/my-branch/task.md"));
         assert!(content.contains("/home/user/.kild/fleet/abc/my-branch/ack"));
@@ -875,12 +921,68 @@ mod tests {
     }
 
     #[test]
-    fn generate_protocol_contains_instructions() {
-        let content = generate_protocol(std::path::Path::new("/tmp/dropbox"));
+    fn generate_protocol_worker_contains_instructions() {
+        let content = generate_protocol("my-branch", std::path::Path::new("/tmp/dropbox"));
         assert!(content.contains("KILD Fleet Protocol"));
+        assert!(content.contains("You are a worker"));
         assert!(content.contains("Read task.md"));
         assert!(content.contains("Write your results to report.md"));
         assert!(content.contains("Do not modify task.md"));
+    }
+
+    // --- generate_protocol (brain) ---
+
+    #[test]
+    fn generate_protocol_brain_contains_supervisor_instructions() {
+        let content = generate_protocol(
+            fleet::BRAIN_BRANCH,
+            std::path::Path::new("/home/user/.kild/fleet/abc/honryu"),
+        );
+        assert!(
+            content.contains("Fleet Protocol — Brain"),
+            "brain should get brain-specific header"
+        );
+        assert!(
+            content.contains("fleet supervisor"),
+            "brain should be addressed as supervisor"
+        );
+        assert!(
+            !content.contains("You are a worker"),
+            "brain must NOT get worker instructions"
+        );
+    }
+
+    #[test]
+    fn generate_protocol_brain_contains_fleet_dir_paths() {
+        let content = generate_protocol(
+            fleet::BRAIN_BRANCH,
+            std::path::Path::new("/home/user/.kild/fleet/abc/honryu"),
+        );
+        // Fleet dir is the parent of the brain's dropbox dir.
+        assert!(
+            content.contains("/home/user/.kild/fleet/abc/<worker-branch>/"),
+            "brain template should reference fleet dir for worker dropboxes"
+        );
+        assert!(
+            content.contains("/home/user/.kild/fleet/abc/<worker>/task.md"),
+            "brain template should show per-worker task.md path"
+        );
+        assert!(
+            content.contains("/home/user/.kild/fleet/abc/<worker>/report.md"),
+            "brain template should show per-worker report.md path"
+        );
+    }
+
+    #[test]
+    fn generate_protocol_brain_rules_are_supervisor_oriented() {
+        let content = generate_protocol(
+            fleet::BRAIN_BRANCH,
+            std::path::Path::new("/tmp/fleet/honryu"),
+        );
+        assert!(content.contains("Write clear, actionable tasks"));
+        assert!(content.contains("Check ack"));
+        assert!(content.contains("Read report.md to get results"));
+        assert!(content.contains("Do not modify worker ack or report.md"));
     }
 
     // --- ensure_dropbox ---
