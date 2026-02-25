@@ -415,6 +415,27 @@ pub fn write_task(
         return Err(SessionError::IoError { source: e });
     }
 
+    // Clear the idle gate file immediately after task.md succeeds, since task delivery
+    // is now confirmed. The claude-status hook creates .idle_sent on the first idle event;
+    // we clear it here to reset the dedup gate for the next task cycle.
+    // Must happen before history.jsonl (which can fail and return early).
+    let gate_path = dropbox_dir.join(".idle_sent");
+    if gate_path.exists() {
+        if let Err(e) = std::fs::remove_file(&gate_path) {
+            warn!(
+                event = "core.session.dropbox.idle_gate_clear_failed",
+                branch = branch,
+                path = %gate_path.display(),
+                error = %e,
+            );
+        } else {
+            info!(
+                event = "core.session.dropbox.idle_gate_cleared",
+                branch = branch,
+            );
+        }
+    }
+
     // Append history.jsonl — task delivery already succeeded via task.md;
     // log loudly on failure but do not roll back the task files.
     let history_path = dropbox_dir.join("history.jsonl");
@@ -445,26 +466,6 @@ pub fn write_task(
             error = %e,
         );
         return Err(SessionError::IoError { source: e });
-    }
-
-    // Clear the idle gate file so the next idle transition can fire a brain notification.
-    // The claude-status hook creates .idle_sent on the first idle event; we clear it here
-    // when a new task arrives to reset the dedup gate for the next task cycle.
-    let gate_path = dropbox_dir.join(".idle_sent");
-    if gate_path.exists() {
-        if let Err(e) = std::fs::remove_file(&gate_path) {
-            warn!(
-                event = "core.session.dropbox.idle_gate_clear_failed",
-                branch = branch,
-                path = %gate_path.display(),
-                error = %e,
-            );
-        } else {
-            info!(
-                event = "core.session.dropbox.idle_gate_cleared",
-                branch = branch,
-            );
-        }
     }
 
     info!(

@@ -471,8 +471,9 @@ case "$EVENT" in
       GATE="${KILD_DROPBOX:+$KILD_DROPBOX/.idle_sent}"
       if [ -z "$GATE" ] || [ ! -f "$GATE" ]; then
         if kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
-          [ -n "$GATE" ] && touch "$GATE"
-          kild inject honryu "[DONE] $BRANCH" || true
+          if kild inject honryu "[DONE] $BRANCH" 2>/dev/null; then
+            [ -n "$GATE" ] && touch "$GATE"
+          fi
         fi
       fi
     fi
@@ -2170,7 +2171,11 @@ mod tests {
         );
         assert!(
             content.contains(r#"touch "$GATE""#),
-            "Script must create gate file after first inject"
+            "Script must create gate file after successful inject"
+        );
+        assert!(
+            content.contains(r#"[ -z "$GATE" ]"#),
+            "Script must allow inject when KILD_DROPBOX is not set (no-dropbox fallback)"
         );
 
         #[cfg(unix)]
