@@ -3,14 +3,13 @@ use std::env;
 use std::sync::OnceLock;
 
 use kild_paths::KildPaths;
+use kild_protocol::SessionStatus;
 use tracing::{debug, error};
 
 use crate::errors::ShimError;
 use crate::ipc;
 use crate::parser::*;
 use crate::state::{self, PaneEntry, PaneRegistry, SessionEntry, WindowEntry};
-
-use kild_protocol::SessionStatus;
 
 pub fn execute(cmd: TmuxCommand<'_>) -> Result<i32, ShimError> {
     match cmd {
@@ -130,16 +129,15 @@ fn shell_command() -> String {
 /// these variables, to avoid unnecessary IPC round-trips.
 fn resolve_pane_status(daemon_session_id: &str) -> (String, String, String) {
     let (status, pid, exit_code) = ipc::get_session_status(daemon_session_id);
-    let pane_dead = match status {
+    let pane_dead_str = match status {
         SessionStatus::Running | SessionStatus::Creating => "0",
         SessionStatus::Stopped => "1",
         // #[non_exhaustive]: unknown future statuses default to alive
         _ => "0",
-    }
-    .to_string();
+    };
     let pane_pid = pid.map(|p| p.to_string()).unwrap_or_default();
     let pane_dead_status = exit_code.map(|c| c.to_string()).unwrap_or_default();
-    (pane_dead, pane_pid, pane_dead_status)
+    (pane_dead_str.to_string(), pane_pid, pane_dead_status)
 }
 
 fn expand_format(
@@ -238,7 +236,7 @@ fn create_pty_pane(
         let cmd = shell_command_parts[0].to_string();
         let cmd_args: Vec<String> = shell_command_parts[1..]
             .iter()
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .collect();
         (cmd, cmd_args, false)
     };
@@ -412,10 +410,6 @@ fn handle_list_panes(args: ListPanesArgs<'_>) -> Result<i32, ShimError> {
         t.split(':').nth(1).map(|s| s.to_string())
     });
 
-    let needs_status = fmt.contains("#{pane_dead}")
-        || fmt.contains("#{pane_pid}")
-        || fmt.contains("#{pane_dead_status}");
-
     for (pane_id, pane) in &registry.panes {
         if pane.hidden {
             continue;
@@ -430,26 +424,15 @@ fn handle_list_panes(args: ListPanesArgs<'_>) -> Result<i32, ShimError> {
             .get(&pane.window_id)
             .map(|w| w.name.as_str())
             .unwrap_or("");
-        let output = if needs_status {
-            expand_format_with_status(
-                fmt,
-                pane_id,
-                session_name,
-                &pane.window_id,
-                window_name,
-                &pane.title,
-                &pane.daemon_session_id,
-            )
-        } else {
-            expand_format(
-                fmt,
-                pane_id,
-                session_name,
-                &pane.window_id,
-                window_name,
-                &pane.title,
-            )
-        };
+        let output = expand_format_with_status(
+            fmt,
+            pane_id,
+            session_name,
+            &pane.window_id,
+            window_name,
+            &pane.title,
+            &pane.daemon_session_id,
+        );
         println!("{}", output);
     }
 
@@ -533,7 +516,7 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
         "#{pane_id}" => {
             println!("{}", pane_id);
         }
-        f if needs_registry => {
+        _ if needs_registry => {
             let sid = session_id()?;
             let registry = state::load_shared(&sid)?;
             let session_name = &registry.session_name;
@@ -545,23 +528,15 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
                 .map(|w| w.name.as_str())
                 .unwrap_or("main");
             let pane_title = pane_entry.map(|p| p.title.as_str()).unwrap_or("");
+            // Only query the daemon when the pane is in the registry.
+            // The leader pane (%0) is not registered, so its daemon_session_id
+            // would be empty — querying with an empty ID would misreport it as dead.
             let daemon_session_id = pane_entry
                 .map(|p| p.daemon_session_id.as_str())
-                .unwrap_or("");
-            // Guard: skip daemon query if pane is not in registry (e.g. leader pane %0)
-            // to avoid querying with an empty session ID which would misreport as dead.
-            let output = if daemon_session_id.is_empty() {
-                expand_format(
-                    f,
-                    &pane_id,
-                    session_name,
-                    window_id,
-                    window_name,
-                    pane_title,
-                )
-            } else {
+                .filter(|id| !id.is_empty());
+            let output = if let Some(daemon_session_id) = daemon_session_id {
                 expand_format_with_status(
-                    f,
+                    fmt,
                     &pane_id,
                     session_name,
                     window_id,
@@ -569,6 +544,8 @@ fn handle_display_message(args: DisplayMsgArgs<'_>) -> Result<i32, ShimError> {
                     pane_title,
                     daemon_session_id,
                 )
+            } else {
+                expand_format(fmt, &pane_id, session_name, window_id, window_name, pane_title)
             };
             println!("{}", output);
         }

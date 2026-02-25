@@ -233,7 +233,7 @@ pub fn get_session_status(session_id: &str) -> (SessionStatus, Option<u32>, Opti
         session_id: SessionId::new(session_id),
     };
 
-    let conn = match get_or_connect() {
+    let mut conn = match get_or_connect() {
         Ok(c) => c,
         Err(e) => {
             warn!(
@@ -245,7 +245,6 @@ pub fn get_session_status(session_id: &str) -> (SessionStatus, Option<u32>, Opti
         }
     };
 
-    let mut conn = conn;
     match conn.send(&request) {
         Ok(DaemonMessage::SessionInfo { session, .. }) => {
             let result = (session.status, session.pty_pid, session.exit_code);
@@ -270,12 +269,13 @@ pub fn get_session_status(session_id: &str) -> (SessionStatus, Option<u32>, Opti
             return_conn(conn);
             (SessionStatus::Stopped, None, None)
         }
-        Ok(_) => {
-            // Unexpected response type — connection is still healthy
+        Ok(unexpected) => {
+            // Unexpected response type — log and return healthy connection
             warn!(
                 event = "shim.ipc.get_session_status_failed",
                 session_id = session_id,
                 reason = "unexpected_response_type",
+                response = ?unexpected,
             );
             return_conn(conn);
             (SessionStatus::Stopped, None, None)
