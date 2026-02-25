@@ -1,5 +1,5 @@
 pub mod agent_status;
-pub mod attach;
+mod attach;
 pub mod complete;
 pub mod create;
 pub mod daemon_helpers;
@@ -11,7 +11,7 @@ pub mod errors;
 pub(super) mod fleet;
 pub mod handler;
 pub mod info;
-pub mod integrations;
+mod integrations;
 pub mod list;
 pub mod open;
 pub mod persistence;

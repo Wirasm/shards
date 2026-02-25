@@ -18,7 +18,7 @@ use kild_config::KildConfig;
 /// Returns `Some((terminal_type, window_id))` on success for storage in
 /// `AgentProcess`, enabling cleanup during destroy. Returns `None` on failure.
 /// Failures are logged as warnings but never block session creation.
-pub fn spawn_attach_window(
+fn spawn_attach_window(
     branch: &str,
     spawn_id: &str,
     worktree_path: &Path,

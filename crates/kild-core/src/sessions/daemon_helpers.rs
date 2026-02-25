@@ -12,7 +12,7 @@ pub(super) use super::daemon_request::{
 };
 
 // Attach window
-pub use super::attach::{spawn_and_save_attach_window, spawn_attach_window};
+pub use super::attach::spawn_and_save_attach_window;
 
 // Shim setup
 pub(crate) use super::shim_setup::ensure_shim_binary;
