@@ -33,7 +33,12 @@ pub(crate) fn handle_inject_command(
 
     info!(event = "cli.inject_started", branch = branch);
 
-    let session = helpers::require_session(branch, "cli.inject_failed")?;
+    let mut session = helpers::require_session(branch, "cli.inject_failed")?;
+
+    // Sync daemon-managed sessions: if daemon is down, update status to Stopped
+    // before checking. Without this, a crashed daemon leaves sessions marked Active
+    // and inject silently writes to a dead inbox or fails confusingly.
+    kild_core::session_ops::sync_daemon_session_status(&mut session);
 
     // Determine inject method: --inbox forces inbox protocol; otherwise use agent default.
     let method = if force_inbox {

@@ -1,5 +1,6 @@
 use tracing::{error, info, warn};
 
+use crate::daemon::client::DaemonClientError;
 use crate::sessions::{errors::SessionError, persistence, types::*};
 use kild_config::Config;
 
@@ -62,16 +63,29 @@ pub fn sync_daemon_session_status(session: &mut Session) -> bool {
     let status = match crate::daemon::client::get_session_status(&daemon_sid) {
         Ok(s) => s,
         Err(e) => {
-            warn!(
-                event = "core.session.daemon_status_sync_failed",
-                session_id = %session.id,
-                daemon_session_id = daemon_sid,
-                error = %e,
-                "Failed to query daemon for session status"
-            );
-            // Treat unexpected errors as "unknown" — don't sync to Stopped
-            // since we can't confirm the session actually exited.
-            return false;
+            if is_daemon_unreachable(&e) {
+                // Connection failed, broken pipe, empty response, etc. — the daemon
+                // is not running or died mid-request. Treat as daemon down → sync to Stopped.
+                warn!(
+                    event = "core.session.daemon_status_sync_unreachable",
+                    session_id = %session.id,
+                    daemon_session_id = daemon_sid,
+                    error = %e,
+                    "Daemon unreachable — marking session as stopped"
+                );
+                None // Fall through to mark as Stopped below
+            } else {
+                // Daemon sent a structured error (DaemonError) — it's alive but
+                // returned something unexpected. Don't sync to avoid false positives.
+                warn!(
+                    event = "core.session.daemon_status_sync_failed",
+                    session_id = %session.id,
+                    daemon_session_id = daemon_sid,
+                    error = %e,
+                    "Daemon returned unexpected error, skipping sync"
+                );
+                return false;
+            }
         }
     };
 
@@ -120,6 +134,15 @@ pub fn sync_daemon_session_status(session: &mut Session) -> bool {
     }
 
     true
+}
+
+/// Check if a daemon client error indicates the daemon is unreachable.
+///
+/// Connection failures, IO errors, and protocol errors (e.g., empty response from
+/// a dying daemon) all indicate the daemon process is not functional. Only
+/// `DaemonError` (a structured error response) proves the daemon is alive.
+fn is_daemon_unreachable(e: &DaemonClientError) -> bool {
+    !matches!(e, DaemonClientError::DaemonError { .. })
 }
 
 #[cfg(test)]
@@ -235,5 +258,62 @@ mod tests {
         let changed = sync_daemon_session_status(&mut session);
         assert!(!changed, "Sessions with no agents should be skipped");
         assert_eq!(session.status, SessionStatus::Active);
+    }
+
+    #[test]
+    fn test_is_daemon_unreachable_connection_failed() {
+        let err = DaemonClientError::ConnectionFailed {
+            message: "connection reset".to_string(),
+        };
+        assert!(
+            is_daemon_unreachable(&err),
+            "ConnectionFailed should be treated as unreachable"
+        );
+    }
+
+    #[test]
+    fn test_is_daemon_unreachable_io_error() {
+        let err = DaemonClientError::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "broken",
+        ));
+        assert!(
+            is_daemon_unreachable(&err),
+            "IO errors should be treated as unreachable"
+        );
+    }
+
+    #[test]
+    fn test_is_daemon_unreachable_protocol_error() {
+        let err = DaemonClientError::ProtocolError {
+            message: "Empty response from daemon".to_string(),
+        };
+        assert!(
+            is_daemon_unreachable(&err),
+            "ProtocolError (empty response from dying daemon) should be treated as unreachable"
+        );
+    }
+
+    #[test]
+    fn test_is_daemon_unreachable_not_running() {
+        let err = DaemonClientError::NotRunning {
+            path: "/tmp/test.sock".to_string(),
+        };
+        assert!(
+            is_daemon_unreachable(&err),
+            "NotRunning should be treated as unreachable"
+        );
+    }
+
+    #[test]
+    fn test_is_daemon_unreachable_daemon_error_is_reachable() {
+        let err = DaemonClientError::DaemonError {
+            code: kild_protocol::ErrorCode::SessionNotFound,
+            message: "not found".to_string(),
+        };
+        assert!(
+            !is_daemon_unreachable(&err),
+            "DaemonError means daemon is alive — should NOT be treated as unreachable"
+        );
     }
 }
