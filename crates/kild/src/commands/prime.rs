@@ -154,6 +154,16 @@ fn handle_all_prime(
     }
 
     if contexts.is_empty() {
+        if !errors.is_empty() {
+            eprintln!();
+            for (branch, msg) in &errors {
+                eprintln!("{} '{}': {}", color::error("Prime failed for"), branch, msg,);
+            }
+            let total = errors.len();
+            return Err(
+                helpers::format_partial_failure_error("generate prime", total, total).into(),
+            );
+        }
         if json_output {
             println!("[]");
         } else {
@@ -167,8 +177,11 @@ fn handle_all_prime(
         let output: Vec<PrimeOutput> = contexts.iter().map(prime_output_from_context).collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else if status_only {
-        // All workers share the same fleet table — print it once from the first context.
-        print!("{}", contexts[0].to_status_markdown());
+        // Fleet table is shared across workers — print once with a fleet-wide header.
+        let inner = contexts[0].to_status_markdown();
+        // Strip the per-branch header line and replace with a fleet-wide one.
+        let body = inner.split_once('\n').map_or(inner.as_str(), |x| x.1);
+        print!("# Fleet Status{body}");
     } else {
         for (i, ctx) in contexts.iter().enumerate() {
             if i > 0 {
