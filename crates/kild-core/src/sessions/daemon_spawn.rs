@@ -122,7 +122,15 @@ pub(super) fn spawn_daemon_agent(
                     break;
                 }
                 Ok(Some((kild_protocol::SessionStatus::Running, _))) => break,
-                _ => {}
+                Ok(_) => {} // Creating or session not yet registered — keep polling
+                Err(e) => {
+                    warn!(
+                        event = "core.session.daemon_spawn_poll_failed",
+                        daemon_session_id = %daemon_result.daemon_session_id,
+                        error = %e,
+                    );
+                    break;
+                }
             }
         }
         result
@@ -242,14 +250,14 @@ fn read_scrollback_tail(daemon_session_id: &str) -> String {
             lines[start..].join("\n")
         }
         Ok(None) => {
-            debug!(
+            warn!(
                 event = "core.session.scrollback_empty",
                 daemon_session_id = daemon_session_id,
             );
             String::new()
         }
         Err(e) => {
-            debug!(
+            warn!(
                 event = "core.session.scrollback_read_failed",
                 daemon_session_id = daemon_session_id,
                 error = %e,
