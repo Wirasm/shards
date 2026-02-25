@@ -9,7 +9,7 @@ use super::daemon_helpers::{
     AgentSpawnParams, compute_spawn_id, deliver_initial_prompt, spawn_and_save_attach_window,
     spawn_daemon_agent, spawn_terminal_agent,
 };
-use super::dropbox;
+use super::{dropbox, fleet};
 
 /// Resolve the effective runtime mode for `open_session`.
 ///
@@ -277,17 +277,53 @@ pub fn open_session(
     let new_agent = if use_daemon {
         let agent_process = spawn_daemon_agent(&spawn_params)?;
 
-        // Open-only: deliver initial prompt after the TUI has settled (best-effort).
-        if let Some(prompt) = initial_prompt
-            && let Some(dsid) = agent_process.daemon_session_id()
-        {
-            let delivered = deliver_initial_prompt(dsid, prompt);
-            // Clear .idle_sent gate so the next idle event notifies the brain.
-            // deliver_initial_prompt bypasses dropbox::write_task(), which normally
-            // handles this. Only clear when delivery succeeded — clearing on failure
-            // would cause a phantom brain notification on the next idle event.
-            if delivered {
+        // Open-only: deliver initial prompt after spawn.
+        if let Some(prompt) = initial_prompt {
+            // Write task to dropbox first (mirrors create.rs step 7a).
+            let dropbox_wrote = match dropbox::write_task(
+                &session.project_id,
+                &session.branch,
+                prompt,
+                &[
+                    dropbox::DeliveryMethod::Dropbox,
+                    dropbox::DeliveryMethod::InitialPrompt,
+                ],
+            ) {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(e) => {
+                    warn!(
+                        event = "core.session.dropbox.initial_task_write_failed",
+                        branch = %session.branch,
+                        error = %e,
+                    );
+                    eprintln!(
+                        "Warning: Failed to write initial task to dropbox for '{}': {}",
+                        session.branch, e,
+                    );
+                    false
+                }
+            };
+
+            // Skip PTY delivery for fleet claude sessions: dropbox task.md + Claude
+            // inbox deliver reliably without PTY timing issues (#540). PTY delivery
+            // remains the only path for non-fleet sessions and non-claude agents.
+            let skip_pty = dropbox_wrote && fleet::is_claude_fleet_agent(&agent);
+            if !skip_pty {
+                if let Some(dsid) = agent_process.daemon_session_id() {
+                    let delivered = deliver_initial_prompt(dsid, prompt);
+                    if delivered {
+                        dropbox::clear_idle_gate(&session.project_id, &session.branch);
+                    }
+                }
+            } else {
                 dropbox::clear_idle_gate(&session.project_id, &session.branch);
+                info!(
+                    event = "core.session.initial_prompt_pty_skipped",
+                    branch = %session.branch,
+                    reason = "fleet_claude_session",
+                    "Skipping PTY delivery — dropbox task.md handles initial prompt for fleet claude sessions"
+                );
             }
         }
 
