@@ -786,10 +786,17 @@ fn generate_protocol(branch: &str, dropbox_dir: &std::path::Path) -> String {
     // This matches the pattern in daemon_helpers.rs for hook script generation.
     if branch == fleet::BRAIN_BRANCH {
         // Brain gets the fleet project dir (parent of its own dropbox).
-        let fleet_dir = dropbox_dir
-            .parent()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "$KILD_FLEET_DIR".to_string());
+        let fleet_dir = match dropbox_dir.parent() {
+            Some(p) => p.display().to_string(),
+            None => {
+                warn!(
+                    event = "core.session.dropbox.brain_fleet_dir_missing",
+                    branch = branch,
+                    dropbox = %dropbox_dir.display(),
+                );
+                "$KILD_FLEET_DIR".to_string()
+            }
+        };
         format!(
             r##"# KILD Fleet Protocol — Brain
 
@@ -800,7 +807,8 @@ You are the Honryū fleet supervisor. You manage workers by writing tasks to the
 Worker dropboxes: {fleet_dir}/<worker-branch>/
 
 To assign a task:
-1. Write task content to the worker's task.md
+1. Use `kild inject <worker> "your task description"` to write the task
+   (this updates task.md, task-id, and history.jsonl atomically)
 2. The worker reads task.md and writes ack
 3. The worker executes and writes report.md
 4. Read report.md to get results
@@ -817,7 +825,7 @@ Your dropbox: {dropbox}
 
 ## Rules
 
-- Write clear, actionable tasks to worker task.md files
+- Use `kild inject` to assign tasks — do not write task.md directly
 - Check ack to confirm the worker has picked up the task
 - Read report.md to get results before assigning the next task
 - Do not modify worker ack or report.md — those are written by workers
@@ -979,7 +987,7 @@ mod tests {
             fleet::BRAIN_BRANCH,
             std::path::Path::new("/tmp/fleet/honryu"),
         );
-        assert!(content.contains("Write clear, actionable tasks"));
+        assert!(content.contains("kild inject"));
         assert!(content.contains("Check ack"));
         assert!(content.contains("Read report.md to get results"));
         assert!(content.contains("Do not modify worker ack or report.md"));
@@ -1005,6 +1013,25 @@ mod tests {
                 written.contains(&dropbox_dir.display().to_string()),
                 "protocol.md should contain baked-in absolute paths under {}/",
                 home.display(),
+            );
+        });
+    }
+
+    #[test]
+    fn ensure_dropbox_brain_gets_brain_template() {
+        with_env("brain_template", true, |_| {
+            ensure_dropbox("proj123", fleet::BRAIN_BRANCH, "claude");
+
+            let paths = KildPaths::resolve().unwrap();
+            let dropbox_dir = paths.fleet_dropbox_dir("proj123", fleet::BRAIN_BRANCH);
+            let content = std::fs::read_to_string(dropbox_dir.join("protocol.md")).unwrap();
+            assert!(
+                content.contains("fleet supervisor"),
+                "brain must get supervisor template"
+            );
+            assert!(
+                !content.contains("You are a worker"),
+                "brain must not get worker template"
             );
         });
     }
@@ -1142,6 +1169,10 @@ mod tests {
             assert!(
                 keys.contains(&"KILD_DROPBOX"),
                 "non-claude agent should get KILD_DROPBOX"
+            );
+            assert!(
+                !keys.contains(&"KILD_FLEET_DIR"),
+                "non-brain worker should NOT get KILD_FLEET_DIR"
             );
         });
     }
