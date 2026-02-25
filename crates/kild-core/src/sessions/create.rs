@@ -227,7 +227,6 @@ pub fn create_session(
 
     // 5. Launch agent — branch on runtime mode
     let spawn_id = compute_spawn_id(&session_id, 0);
-    let now = chrono::Utc::now().to_rfc3339();
 
     let spawn_params = AgentSpawnParams {
         branch: &validated.name,
@@ -289,6 +288,7 @@ pub fn create_session(
     };
 
     // 6. Create session record
+    let now = chrono::Utc::now().to_rfc3339();
     let mut session = Session::new(
         session_id.clone(),
         project_id,
@@ -342,7 +342,14 @@ pub fn create_session(
     if let Some(ref prompt) = request.initial_prompt
         && let Some(dsid) = session.latest_agent().and_then(|a| a.daemon_session_id())
     {
-        deliver_initial_prompt(dsid, prompt);
+        let delivered = deliver_initial_prompt(dsid, prompt);
+        // Clear .idle_sent gate so the next idle event notifies the brain.
+        // deliver_initial_prompt bypasses dropbox::write_task(), which normally
+        // handles this. Only clear when delivery succeeded — clearing on failure
+        // would cause a phantom brain notification on the next idle event.
+        if delivered {
+            dropbox::clear_idle_gate(&session.project_id, &session.branch);
+        }
     }
 
     // 8. Spawn attach window (best-effort) and update session with terminal info
