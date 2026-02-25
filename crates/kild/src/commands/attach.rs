@@ -69,20 +69,20 @@ pub(crate) fn handle_attach_command(
         );
 
         let kild_config = helpers::load_config_with_warning();
-        let config = kild_config::Config::new();
+        let sessions_dir = kild_config::Config::new().sessions_dir();
 
         match kild_core::sessions::daemon_helpers::spawn_and_save_attach_window(
             &mut session,
             branch,
             &kild_config,
-            &config.sessions_dir(),
+            &sessions_dir,
         ) {
             Ok(true) => {
                 info!(event = "cli.attach_window_spawned", branch = branch);
                 return Ok(());
             }
             Ok(false) => {
-                // Window spawn failed (best-effort), fall through to direct attach
+                // Terminal backend returned no window ID (best-effort), fall through to direct attach
                 warn!(
                     event = "cli.attach_window_spawn_failed",
                     branch = branch,

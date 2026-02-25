@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use crate::forge::errors::ForgeError;
 use crate::forge::traits::ForgeBackend;
 use crate::forge::types::{CiStatus, PrCheckResult, PrInfo, PrState, ReviewStatus};
-use crate::git::naming::KILD_BRANCH_PREFIX;
+use crate::git::naming::{KILD_BRANCH_PREFIX, kild_branch_name};
 
 /// GitHub forge backend using the `gh` CLI.
 pub struct GitHubBackend;
@@ -22,7 +22,7 @@ fn normalize_branch(branch: &str) -> Cow<'_, str> {
     if branch.starts_with(KILD_BRANCH_PREFIX) {
         Cow::Borrowed(branch)
     } else {
-        Cow::Owned(crate::git::naming::kild_branch_name(branch))
+        Cow::Owned(kild_branch_name(branch))
     }
 }
 
