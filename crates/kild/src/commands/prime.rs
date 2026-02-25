@@ -1,6 +1,6 @@
 use clap::ArgMatches;
 use serde::Serialize;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::session_ops;
 use kild_core::sessions::dropbox::{self, FleetEntry, PrimeContext};
@@ -69,7 +69,7 @@ pub(crate) fn handle_prime_command(matches: &ArgMatches) -> Result<(), Box<dyn s
                 return Err(helpers::print_json_error(&msg, "NO_FLEET_CONTEXT"));
             }
             eprintln!("{}", msg);
-            error!(event = "cli.prime_no_fleet", branch = branch);
+            warn!(event = "cli.prime_no_fleet", branch = branch);
             return Err(msg.into());
         }
     };
