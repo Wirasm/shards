@@ -420,22 +420,7 @@ pub fn write_task(
     // Must happen before history.jsonl (which can fail and return early).
     // Best-effort: if removal fails, the stale gate will suppress the next idle inject.
     // Logged at warn level — the task was delivered, so write_task returns Ok regardless.
-    let gate_path = dropbox_dir.join(".idle_sent");
-    if gate_path.exists() {
-        if let Err(e) = std::fs::remove_file(&gate_path) {
-            warn!(
-                event = "core.session.dropbox.idle_gate_clear_failed",
-                branch = branch,
-                path = %gate_path.display(),
-                error = %e,
-            );
-        } else {
-            info!(
-                event = "core.session.dropbox.idle_gate_cleared",
-                branch = branch,
-            );
-        }
-    }
+    remove_idle_gate_file(&dropbox_dir.join(".idle_sent"), branch);
 
     // Append history.jsonl — task delivery already succeeded via task.md;
     // log loudly on failure but do not roll back the task files.
@@ -476,6 +461,59 @@ pub fn write_task(
     );
 
     Ok(Some(new_id))
+}
+
+/// Remove the `.idle_sent` gate file at the given path (best-effort).
+///
+/// No-op if the file does not exist. Warns on removal failure.
+/// Shared by `write_task` (inline gate clear) and `clear_idle_gate` (open-session path).
+fn remove_idle_gate_file(gate_path: &std::path::Path, branch: &str) {
+    if gate_path.exists() {
+        if let Err(e) = std::fs::remove_file(gate_path) {
+            warn!(
+                event = "core.session.dropbox.idle_gate_clear_failed",
+                branch = branch,
+                path = %gate_path.display(),
+                error = %e,
+            );
+        } else {
+            info!(
+                event = "core.session.dropbox.idle_gate_cleared",
+                branch = branch,
+            );
+        }
+    }
+}
+
+/// Clear the `.idle_sent` gate file in a session's dropbox directory.
+///
+/// The gate file is created by the `claude-status` hook after the first idle event.
+/// It must be cleared when new work is delivered (task injection or initial prompt)
+/// so the next idle event triggers a brain notification.
+///
+/// No-op if fleet mode is not active, the dropbox does not exist, or the gate file
+/// is already absent. Best-effort: warns on removal failure.
+pub(super) fn clear_idle_gate(project_id: &str, branch: &str) {
+    if !fleet::fleet_mode_active(branch) {
+        return;
+    }
+
+    let paths = match KildPaths::resolve() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(
+                event = "core.session.dropbox.idle_gate_path_resolve_failed",
+                branch = branch,
+                error = %e,
+            );
+            return;
+        }
+    };
+
+    let gate_path = paths
+        .fleet_dropbox_dir(project_id, branch)
+        .join(".idle_sent");
+    remove_idle_gate_file(&gate_path, branch);
 }
 
 /// Inject `KILD_DROPBOX` (and `KILD_FLEET_DIR` for brain) into daemon env vars.
@@ -1870,5 +1908,52 @@ mod tests {
         assert!(!md.contains("## Your Protocol"));
         assert!(md.contains("No task assigned."));
         assert!(md.contains("No fleet sessions."));
+    }
+
+    // --- clear_idle_gate ---
+
+    #[test]
+    fn clear_idle_gate_removes_existing_gate_file() {
+        with_env("cig_exists", true, |_| {
+            ensure_dropbox("proj123", "my-branch", "claude");
+
+            let paths = KildPaths::resolve().unwrap();
+            let gate_path = paths
+                .fleet_dropbox_dir("proj123", "my-branch")
+                .join(".idle_sent");
+            std::fs::write(&gate_path, "").unwrap();
+            assert!(gate_path.exists(), "gate file should exist before clear");
+
+            clear_idle_gate("proj123", "my-branch");
+
+            assert!(
+                !gate_path.exists(),
+                "clear_idle_gate should remove .idle_sent"
+            );
+        });
+    }
+
+    #[test]
+    fn clear_idle_gate_noop_when_no_gate_file() {
+        with_env("cig_absent", true, |_| {
+            ensure_dropbox("proj123", "my-branch", "claude");
+
+            // No gate file created — clear_idle_gate should not panic or error.
+            clear_idle_gate("proj123", "my-branch");
+
+            let paths = KildPaths::resolve().unwrap();
+            let gate_path = paths
+                .fleet_dropbox_dir("proj123", "my-branch")
+                .join(".idle_sent");
+            assert!(!gate_path.exists());
+        });
+    }
+
+    #[test]
+    fn clear_idle_gate_noop_when_fleet_not_active() {
+        with_env("cig_no_fleet", false, |_| {
+            // Fleet not active — should not panic or error.
+            clear_idle_gate("proj123", "my-branch");
+        });
     }
 }

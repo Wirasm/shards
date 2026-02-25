@@ -62,6 +62,15 @@ pub struct Session {
     #[serde(default)]
     pub agent_session_id: Option<String>,
 
+    /// Previous agent session IDs preserved across fresh opens.
+    ///
+    /// When `kild open` (without `--resume`) generates a new `agent_session_id`,
+    /// the previous ID is pushed here before overwriting. This allows recovery
+    /// of earlier conversations that would otherwise become unreachable.
+    /// Most recent ID is last in the vec.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_session_id_history: Vec<String>,
+
     /// Task list ID for Claude Code task list persistence.
     ///
     /// Generated on `kild create` and fresh `kild open` for Claude agents.
@@ -131,6 +140,7 @@ impl Session {
             note,
             agents,
             agent_session_id,
+            agent_session_id_history: Vec::new(),
             task_list_id,
             runtime_mode,
             use_main_worktree: false,
@@ -188,6 +198,23 @@ impl Session {
         self.agents = agents;
     }
 
+    /// Rotate agent_session_id, preserving the previous ID in history.
+    ///
+    /// No-op on the history if the new ID is identical to the current one (resume path).
+    /// Returns `true` if the previous ID was different and moved to history.
+    pub fn rotate_agent_session_id(&mut self, new_id: String) -> bool {
+        let rotated = if let Some(prev) = self.agent_session_id.take()
+            && prev != new_id
+        {
+            self.agent_session_id_history.push(prev);
+            true
+        } else {
+            false
+        };
+        self.agent_session_id = Some(new_id);
+        rotated
+    }
+
     /// Create a minimal Session for testing purposes.
     #[cfg(test)]
     pub fn new_for_test(branch: impl Into<BranchName>, worktree_path: PathBuf) -> Self {
@@ -207,6 +234,7 @@ impl Session {
             note: None,
             agents: vec![],
             agent_session_id: None,
+            agent_session_id_history: Vec::new(),
             task_list_id: None,
             runtime_mode: None,
             use_main_worktree: false,

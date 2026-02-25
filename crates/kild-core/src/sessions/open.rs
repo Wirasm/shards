@@ -414,7 +414,14 @@ pub fn open_session(
 
         // Deliver initial prompt after the TUI has settled (best-effort).
         if let Some(prompt) = initial_prompt {
-            deliver_initial_prompt(&daemon_result.daemon_session_id, prompt);
+            let delivered = deliver_initial_prompt(&daemon_result.daemon_session_id, prompt);
+            // Clear .idle_sent gate so the next idle event notifies the brain.
+            // deliver_initial_prompt bypasses dropbox::write_task(), which normally
+            // handles this. Only clear when delivery succeeded — clearing on failure
+            // would cause a phantom brain notification on the next idle event.
+            if delivered {
+                dropbox::clear_idle_gate(&session.project_id, &session.branch);
+            }
         }
 
         AgentProcess::new(
@@ -484,9 +491,17 @@ pub fn open_session(
     session.last_activity = Some(now);
     session.add_agent(new_agent);
 
-    // Update agent session ID for resume support
-    if let Some(sid) = new_agent_session_id {
-        session.agent_session_id = Some(sid);
+    // Update agent session ID for resume support.
+    // Preserve the previous ID in history so the original conversation remains recoverable.
+    if let Some(sid) = new_agent_session_id
+        && session.rotate_agent_session_id(sid.clone())
+    {
+        warn!(
+            event = "core.session.agent_session_id_rotated",
+            branch = name,
+            new_id = %sid,
+            "Previous agent session ID moved to history — use --resume to continue an existing conversation"
+        );
     }
 
     // Update task list ID for task list persistence
@@ -1125,5 +1140,144 @@ mod tests {
             resolved, "gemini",
             "shell fallback must use the config's default, not a hardcoded value"
         );
+    }
+
+    // --- agent_session_id_history tests (Bug #572) ---
+
+    /// Fresh open on a session with an existing agent_session_id should
+    /// preserve the old ID in history before overwriting.
+    #[test]
+    fn test_fresh_open_preserves_previous_session_id_in_history() {
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "kild_test_sid_history_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let sessions_dir = temp_dir.join("sessions");
+        let worktree_dir = temp_dir.join("worktree");
+        fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+        fs::create_dir_all(&worktree_dir).expect("create worktree dir");
+
+        let original_sid = "aaaa0000-0000-0000-0000-000000000001".to_string();
+        let new_sid = "bbbb0000-0000-0000-0000-000000000002".to_string();
+
+        let mut session = Session::new(
+            "test-project_sid-history".into(),
+            "test-project".into(),
+            "sid-history".into(),
+            worktree_dir,
+            "claude".to_string(),
+            SessionStatus::Active,
+            chrono::Utc::now().to_rfc3339(),
+            3000,
+            3009,
+            10,
+            None,
+            None,
+            vec![],
+            Some(original_sid.clone()),
+            None,
+            None,
+        );
+
+        assert!(session.rotate_agent_session_id(new_sid.clone()));
+
+        // Verify: new ID is active, old ID is in history
+        assert_eq!(session.agent_session_id, Some(new_sid));
+        assert_eq!(session.agent_session_id_history, vec![original_sid.clone()]);
+
+        // Verify history survives serialization round-trip
+        persistence::save_session_to_file(&session, &sessions_dir).expect("save");
+        let reloaded = persistence::find_session_by_name(&sessions_dir, "sid-history")
+            .expect("find")
+            .expect("exists");
+        assert_eq!(
+            reloaded.agent_session_id_history,
+            vec![original_sid],
+            "agent_session_id_history must survive save/load"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Resume (same ID) should NOT add a duplicate to history.
+    #[test]
+    fn test_resume_does_not_duplicate_session_id_in_history() {
+        let sid = "cccc0000-0000-0000-0000-000000000003".to_string();
+        let mut session = Session::new_for_test(
+            "no-dup",
+            std::env::temp_dir().join("kild_test_no_dup_worktree"),
+        );
+        session.agent_session_id = Some(sid.clone());
+
+        assert!(!session.rotate_agent_session_id(sid));
+        assert!(
+            session.agent_session_id_history.is_empty(),
+            "Resume with same ID must not add to history"
+        );
+    }
+
+    /// Multiple fresh opens should accumulate all previous IDs in order.
+    #[test]
+    fn test_multiple_fresh_opens_accumulate_history() {
+        let ids: Vec<String> = (1..=4)
+            .map(|i| format!("dddd0000-0000-0000-0000-00000000000{i}"))
+            .collect();
+
+        let mut session = Session::new_for_test(
+            "multi-open",
+            std::env::temp_dir().join("kild_test_multi_open_worktree"),
+        );
+        session.agent_session_id = Some(ids[0].clone());
+
+        for new_sid in &ids[1..] {
+            session.rotate_agent_session_id(new_sid.clone());
+        }
+
+        assert_eq!(session.agent_session_id, Some(ids[3].clone()));
+        assert_eq!(session.agent_session_id_history, ids[..3]);
+    }
+
+    /// Empty history serializes cleanly (skip_serializing_if = "Vec::is_empty").
+    #[test]
+    fn test_empty_history_not_serialized() {
+        let session = Session::new_for_test(
+            "no-history",
+            std::env::temp_dir().join("kild_test_no_history_worktree"),
+        );
+        let json = serde_json::to_string(&session).expect("serialize");
+        assert!(
+            !json.contains("agent_session_id_history"),
+            "Empty history should not appear in JSON"
+        );
+    }
+
+    /// Legacy session files without `agent_session_id_history` must deserialize
+    /// cleanly with an empty vec (backward compatibility via #[serde(default)]).
+    #[test]
+    fn test_legacy_session_without_history_deserializes_cleanly() {
+        let legacy_json = r#"{
+            "id": "test-proj_my-branch",
+            "project_id": "test-proj",
+            "branch": "my-branch",
+            "worktree_path": "/tmp/worktree",
+            "agent": "claude",
+            "status": "stopped",
+            "created_at": "2025-01-01T00:00:00Z",
+            "agent_session_id": "aaaa-0000"
+        }"#;
+        let session: Session =
+            serde_json::from_str(legacy_json).expect("legacy format must deserialize");
+        assert!(
+            session.agent_session_id_history.is_empty(),
+            "Legacy sessions without the field must deserialize with empty history"
+        );
+        assert_eq!(session.agent_session_id.as_deref(), Some("aaaa-0000"));
     }
 }
