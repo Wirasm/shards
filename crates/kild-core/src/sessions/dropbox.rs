@@ -419,6 +419,8 @@ pub fn write_task(
     // is now confirmed. The claude-status hook creates .idle_sent on the first idle event;
     // we clear it here to reset the dedup gate for the next task cycle.
     // Must happen before history.jsonl (which can fail and return early).
+    // Best-effort: if removal fails, the stale gate will suppress the next idle inject.
+    // Logged at warn level — the task was delivered, so write_task returns Ok regardless.
     let gate_path = dropbox_dir.join(".idle_sent");
     if gate_path.exists() {
         if let Err(e) = std::fs::remove_file(&gate_path) {

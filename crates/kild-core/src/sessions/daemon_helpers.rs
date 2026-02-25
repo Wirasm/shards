@@ -471,8 +471,10 @@ case "$EVENT" in
       GATE="${KILD_DROPBOX:+$KILD_DROPBOX/.idle_sent}"
       if [ -z "$GATE" ] || [ ! -f "$GATE" ]; then
         if kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
-          if kild inject honryu "[DONE] $BRANCH" 2>/dev/null; then
-            [ -n "$GATE" ] && touch "$GATE"
+          if kild inject honryu "[DONE] $BRANCH"; then
+            if [ -n "$GATE" ]; then
+              touch "$GATE" || echo "[kild] Warning: failed to write idle gate $GATE" >&2
+            fi
           fi
         fi
       fi
