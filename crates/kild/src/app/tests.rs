@@ -714,32 +714,26 @@ fn test_cli_complete_command() {
 #[test]
 fn test_cli_complete_accepts_force_flag() {
     let app = build_cli();
-    let matches = app.try_get_matches_from(vec!["kild", "complete", "test-branch", "--force"]);
-    assert!(matches.is_ok());
-    let complete_matches = matches
-        .unwrap()
-        .subcommand_matches("complete")
-        .unwrap()
-        .clone();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "complete", "test-branch", "--force"])
+        .unwrap();
+    let complete_matches = matches.subcommand_matches("complete").unwrap();
     assert!(complete_matches.get_flag("force"));
 }
 
 #[test]
 fn test_cli_complete_accepts_merge_strategy() {
     let app = build_cli();
-    let matches = app.try_get_matches_from(vec![
-        "kild",
-        "complete",
-        "test-branch",
-        "--merge-strategy",
-        "rebase",
-    ]);
-    assert!(matches.is_ok());
-    let complete_matches = matches
-        .unwrap()
-        .subcommand_matches("complete")
-        .unwrap()
-        .clone();
+    let matches = app
+        .try_get_matches_from(vec![
+            "kild",
+            "complete",
+            "test-branch",
+            "--merge-strategy",
+            "rebase",
+        ])
+        .unwrap();
+    let complete_matches = matches.subcommand_matches("complete").unwrap();
     assert_eq!(
         complete_matches
             .get_one::<String>("merge-strategy")
@@ -751,19 +745,16 @@ fn test_cli_complete_accepts_merge_strategy() {
 #[test]
 fn test_cli_complete_accepts_no_merge_and_dry_run() {
     let app = build_cli();
-    let matches = app.try_get_matches_from(vec![
-        "kild",
-        "complete",
-        "test-branch",
-        "--no-merge",
-        "--dry-run",
-    ]);
-    assert!(matches.is_ok());
-    let complete_matches = matches
-        .unwrap()
-        .subcommand_matches("complete")
-        .unwrap()
-        .clone();
+    let matches = app
+        .try_get_matches_from(vec![
+            "kild",
+            "complete",
+            "test-branch",
+            "--no-merge",
+            "--dry-run",
+        ])
+        .unwrap();
+    let complete_matches = matches.subcommand_matches("complete").unwrap();
     assert!(complete_matches.get_flag("no-merge"));
     assert!(complete_matches.get_flag("dry-run"));
 }

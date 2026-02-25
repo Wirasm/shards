@@ -2,6 +2,7 @@ use clap::ArgMatches;
 use tracing::{error, info};
 
 use kild_core::CompleteRequest;
+use kild_core::CompleteResult;
 use kild_core::events;
 use kild_core::session_ops;
 
@@ -20,10 +21,10 @@ pub(crate) fn handle_complete_command(
         return Err("Invalid branch name".into());
     }
 
+    // merge-strategy has default_value("squash") in the CLI definition, so get_one always succeeds.
     let strategy_str = matches
         .get_one::<String>("merge-strategy")
-        .map(|s| s.as_str())
-        .unwrap_or("squash");
+        .expect("merge-strategy has a default value");
     let merge_strategy: kild_core::MergeStrategy = strategy_str
         .parse()
         .map_err(|e: String| -> Box<dyn std::error::Error> { e.into() })?;
@@ -49,8 +50,6 @@ pub(crate) fn handle_complete_command(
 
     match session_ops::complete_session(&request) {
         Ok(result) => {
-            use kild_core::CompleteResult;
-
             match result {
                 CompleteResult::Merged {
                     strategy,

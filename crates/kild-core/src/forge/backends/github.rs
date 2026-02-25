@@ -219,19 +219,16 @@ impl ForgeBackend for GitHubBackend {
                 Ok(())
             }
             Ok(output) => {
+                let exit_code = output.status.code().unwrap_or(-1);
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 error!(
                     event = "core.forge.merge_failed",
                     branch = %branch,
-                    exit_code = output.status.code(),
+                    exit_code = exit_code,
                     stderr = %stderr
                 );
                 Err(ForgeError::CliError {
-                    message: format!(
-                        "gh pr merge failed (exit {}): {}",
-                        output.status.code().unwrap_or(-1),
-                        stderr
-                    ),
+                    message: format!("gh pr merge failed (exit {}): {}", exit_code, stderr),
                 })
             }
             Err(e) => Err(ForgeError::from(e)),

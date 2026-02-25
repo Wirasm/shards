@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tracing::{debug, error, info, warn};
 
-use crate::forge::types::{CiStatus, PrState};
+use crate::forge::types::{CiStatus, PrCheckResult, PrState};
 use crate::git;
 use crate::sessions::{errors::SessionError, persistence, types::*};
 use kild_config::Config;
@@ -75,28 +75,25 @@ pub fn complete_session(request: &CompleteRequest) -> Result<CompleteResult, Ses
         });
     }
 
-    let forge_backend =
-        match crate::forge::get_forge_backend(&session.worktree_path, forge_override) {
-            Some(backend) => backend,
-            None => {
-                error!(
-                    event = "core.session.complete_no_pr",
-                    name = name,
-                    reason = "no_forge_backend"
-                );
-                return Err(SessionError::NoPrFound {
-                    name: name.to_string(),
-                });
+    let forge_backend = crate::forge::get_forge_backend(&session.worktree_path, forge_override)
+        .ok_or_else(|| {
+            error!(
+                event = "core.session.complete_no_pr",
+                name = name,
+                reason = "no_forge_backend"
+            );
+            SessionError::NoPrFound {
+                name: name.to_string(),
             }
-        };
+        })?;
 
     // 4. --no-merge path uses check_pr_exists + is_pr_merged (lightweight checks)
     if request.no_merge {
         match forge_backend.check_pr_exists(&session.worktree_path, &kild_branch) {
-            crate::forge::types::PrCheckResult::Exists => {
+            PrCheckResult::Exists => {
                 debug!(event = "core.session.complete_pr_exists", branch = name);
             }
-            crate::forge::types::PrCheckResult::NotFound => {
+            PrCheckResult::NotFound => {
                 error!(
                     event = "core.session.complete_no_pr",
                     name = name,
@@ -106,7 +103,7 @@ pub fn complete_session(request: &CompleteRequest) -> Result<CompleteResult, Ses
                     name: name.to_string(),
                 });
             }
-            crate::forge::types::PrCheckResult::Unavailable => {
+            PrCheckResult::Unavailable => {
                 warn!(
                     event = "core.session.complete_pr_check_unavailable",
                     branch = name,
