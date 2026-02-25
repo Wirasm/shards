@@ -47,8 +47,14 @@ pub fn get_session(name: &str) -> Result<Session, SessionError> {
 /// JSON still says Active. This function queries the daemon for the real status and
 /// updates the session file if stale.
 ///
-/// Returns `true` if the session was updated (status changed to Stopped).
-/// This is a best-effort operation — daemon unreachable is treated as "stopped".
+/// Returns `true` if the session status was changed to `Stopped`.
+/// Returns `false` if the session was not modified:
+///   - Session is already stopped or has no daemon session ID
+///   - Daemon reports the session is still running
+///   - Daemon returned an unexpected structured error (skip to avoid false positives)
+///
+/// Daemon unreachable (connection failed, broken pipe, empty response) is treated
+/// as "daemon down" and causes the session to be marked `Stopped`.
 pub fn sync_daemon_session_status(session: &mut Session) -> bool {
     // Only sync Active sessions with daemon_session_id
     if session.status != SessionStatus::Active {
@@ -141,6 +147,10 @@ pub fn sync_daemon_session_status(session: &mut Session) -> bool {
 /// Connection failures, IO errors, and protocol errors (e.g., empty response from
 /// a dying daemon) all indicate the daemon process is not functional. Only
 /// `DaemonError` (a structured error response) proves the daemon is alive.
+///
+/// Note: `NotRunning` is classified as unreachable for defensive completeness,
+/// but in practice `get_session_status()` absorbs `NotRunning` into `Ok(None)`
+/// before it reaches the error handler in `sync_daemon_session_status`.
 fn is_daemon_unreachable(e: &DaemonClientError) -> bool {
     !matches!(e, DaemonClientError::DaemonError { .. })
 }
@@ -296,6 +306,9 @@ mod tests {
 
     #[test]
     fn test_is_daemon_unreachable_not_running() {
+        // Note: in practice, get_session_status() absorbs NotRunning into Ok(None)
+        // before it reaches is_daemon_unreachable. This test exercises the helper
+        // in isolation for defensive completeness.
         let err = DaemonClientError::NotRunning {
             path: "/tmp/test.sock".to_string(),
         };
@@ -314,6 +327,60 @@ mod tests {
         assert!(
             !is_daemon_unreachable(&err),
             "DaemonError means daemon is alive — should NOT be treated as unreachable"
+        );
+    }
+
+    #[test]
+    fn test_sync_daemon_marks_stopped_when_daemon_not_running() {
+        // Active session with a daemon_session_id pointing to a nonexistent daemon.
+        // Tests run without a daemon, so get_session_status returns Ok(None)
+        // (NotRunning early-exit path), which should trigger the Stopped transition.
+        let agent = AgentProcess::new(
+            "claude".to_string(),
+            "proj_stale_0".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            "claude-code".to_string(),
+            chrono::Utc::now().to_rfc3339(),
+            Some("proj_stale_0".to_string()), // daemon_session_id set
+        )
+        .unwrap();
+
+        let mut session = Session::new(
+            "test-project_stale-daemon".into(),
+            "test-project".into(),
+            "stale-daemon".into(),
+            PathBuf::from("/tmp/test"),
+            "claude".to_string(),
+            SessionStatus::Active,
+            chrono::Utc::now().to_rfc3339(),
+            3000,
+            3009,
+            10,
+            None,
+            None,
+            vec![agent],
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(session.status, SessionStatus::Active);
+
+        // With no daemon running, get_session_status returns Ok(None),
+        // and sync should flip the in-memory status to Stopped.
+        // The file persist will fail (no session file on disk) but the
+        // in-memory mutation is the behavior under test.
+        let changed = sync_daemon_session_status(&mut session);
+
+        assert!(changed, "should return true when status changes");
+        assert_eq!(
+            session.status,
+            SessionStatus::Stopped,
+            "session must flip to Stopped when daemon is not running"
         );
     }
 }
