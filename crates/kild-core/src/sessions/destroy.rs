@@ -1,6 +1,7 @@
 use kild_paths::KildPaths;
 use tracing::{debug, error, info, warn};
 
+use crate::forge::types::PrCheckResult;
 use crate::git;
 use crate::git::get_worktree_status;
 use crate::sessions::{errors::SessionError, persistence, types::*};
@@ -179,11 +180,8 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
                 );
             }
 
+            let &(first_pid, ref first_msg) = kill_errors.first().unwrap();
             let error_count = kill_errors.len();
-            let (first_pid, first_msg) = {
-                let (p, m) = kill_errors.first().unwrap();
-                (*p, m.clone())
-            };
 
             let message = if error_count == 1 {
                 format!(
