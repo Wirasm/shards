@@ -8,6 +8,7 @@ use serde_json::json;
 use tracing::{error, info, warn};
 
 use kild_core::agents::{InjectMethod, get_inject_method};
+use kild_core::sessions::fleet::fleet_safe_name;
 
 use super::helpers;
 
@@ -98,9 +99,10 @@ pub(crate) fn handle_inject_command(
         None
     });
 
+    let inbox_name = fleet_safe_name(branch);
     let result = match method {
         InjectMethod::Pty => write_to_pty(&session, text),
-        InjectMethod::ClaudeInbox => write_to_inbox(DEFAULT_TEAM, branch, text),
+        InjectMethod::ClaudeInbox => write_to_inbox(DEFAULT_TEAM, &inbox_name, text),
     };
 
     if let Err(e) = result {
