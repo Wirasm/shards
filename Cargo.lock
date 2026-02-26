@@ -3551,7 +3551,6 @@ dependencies = [
  "core-foundation 0.10.0",
  "dirs 5.0.1",
  "git2",
- "glob",
  "hex",
  "ignore",
  "kild-config",
@@ -3570,7 +3569,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "walkdir",
  "which 7.0.3",
  "xcap",
 ]
