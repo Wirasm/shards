@@ -199,33 +199,39 @@ pub fn worktree_active_branches(path: &Path) -> Result<HashSet<String>, GitError
         .map_err(|e| GitError::Git2Error { source: e })?;
 
     for worktree_name in worktrees.iter().flatten() {
-        match repo.find_worktree(worktree_name) {
-            Ok(worktree) => match Repository::open(worktree.path()) {
-                Ok(wt_repo) => match wt_repo.head() {
-                    Ok(head) => {
-                        if let Some(branch_name) = head.shorthand() {
-                            active.insert(branch_name.to_string());
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            event = "core.git.query.worktree_head_read_failed",
-                            worktree_name = %worktree_name,
-                            error = %e,
-                        );
-                    }
-                },
-                Err(e) => {
-                    warn!(
-                        event = "core.git.query.worktree_open_failed",
-                        worktree_name = %worktree_name,
-                        error = %e,
-                    );
-                }
-            },
+        let worktree = match repo.find_worktree(worktree_name) {
+            Ok(w) => w,
             Err(e) => {
                 warn!(
                     event = "core.git.query.worktree_find_failed",
+                    worktree_name = %worktree_name,
+                    error = %e,
+                );
+                continue;
+            }
+        };
+
+        let wt_repo = match Repository::open(worktree.path()) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    event = "core.git.query.worktree_open_failed",
+                    worktree_name = %worktree_name,
+                    error = %e,
+                );
+                continue;
+            }
+        };
+
+        match wt_repo.head() {
+            Ok(head) => {
+                if let Some(branch_name) = head.shorthand() {
+                    active.insert(branch_name.to_string());
+                }
+            }
+            Err(e) => {
+                warn!(
+                    event = "core.git.query.worktree_head_read_failed",
                     worktree_name = %worktree_name,
                     error = %e,
                 );

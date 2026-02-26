@@ -169,13 +169,13 @@ mod tests {
             .output()
             .expect("git init failed");
 
-        assert_eq!(is_git_repo(path).unwrap(), true);
+        assert!(is_git_repo(path).unwrap());
     }
 
     #[test]
     fn test_is_git_repo_invalid() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        assert_eq!(is_git_repo(temp_dir.path()).unwrap(), false);
+        assert!(!is_git_repo(temp_dir.path()).unwrap());
     }
 
     #[test]

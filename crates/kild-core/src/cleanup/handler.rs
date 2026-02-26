@@ -17,64 +17,44 @@ pub fn scan_for_orphans() -> Result<CleanupSummary, CleanupError> {
     let mut summary = CleanupSummary::new();
 
     // Detect orphaned branches
-    match operations::detect_orphaned_branches(&current_dir) {
-        Ok(orphaned_branches) => {
-            info!(
-                event = "core.cleanup.scan_branches_completed",
-                count = orphaned_branches.len()
-            );
-            for branch in orphaned_branches {
-                summary.add_branch(branch);
-            }
-        }
-        Err(e) => {
-            error!(
-                event = "core.cleanup.scan_branches_failed",
-                error = %e
-            );
-            return Err(e);
-        }
+    let orphaned_branches = operations::detect_orphaned_branches(&current_dir).map_err(|e| {
+        error!(event = "core.cleanup.scan_branches_failed", error = %e);
+        e
+    })?;
+    info!(
+        event = "core.cleanup.scan_branches_completed",
+        count = orphaned_branches.len()
+    );
+    for branch in orphaned_branches {
+        summary.add_branch(branch);
     }
 
     // Detect orphaned worktrees
-    match operations::detect_orphaned_worktrees(&current_dir) {
-        Ok(orphaned_worktrees) => {
-            info!(
-                event = "core.cleanup.scan_worktrees_completed",
-                count = orphaned_worktrees.len()
-            );
-            for worktree_path in orphaned_worktrees {
-                summary.add_worktree(worktree_path);
-            }
-        }
-        Err(e) => {
-            error!(
-                event = "core.cleanup.scan_worktrees_failed",
-                error = %e
-            );
-            return Err(e);
-        }
+    let orphaned_worktrees = operations::detect_orphaned_worktrees(&current_dir).map_err(|e| {
+        error!(event = "core.cleanup.scan_worktrees_failed", error = %e);
+        e
+    })?;
+    info!(
+        event = "core.cleanup.scan_worktrees_completed",
+        count = orphaned_worktrees.len()
+    );
+    for worktree_path in orphaned_worktrees {
+        summary.add_worktree(worktree_path);
     }
 
     // Detect stale sessions
     let config = Config::new();
-    match operations::detect_stale_sessions(&config.sessions_dir()) {
-        Ok(stale_sessions) => {
-            info!(
-                event = "core.cleanup.scan_sessions_completed",
-                count = stale_sessions.len()
-            );
-            for session_id in stale_sessions {
-                summary.add_session(session_id);
-            }
-        }
-        Err(e) => {
-            error!(
-                event = "core.cleanup.scan_sessions_failed",
-                error = %e
-            );
-            return Err(e);
-        }
+    let stale_sessions =
+        operations::detect_stale_sessions(&config.sessions_dir()).map_err(|e| {
+            error!(event = "core.cleanup.scan_sessions_failed", error = %e);
+            e
+        })?;
+    info!(
+        event = "core.cleanup.scan_sessions_completed",
+        count = stale_sessions.len()
+    );
+    for session_id in stale_sessions {
+        summary.add_session(session_id);
     }
 
     info!(
@@ -101,61 +81,43 @@ pub fn cleanup_orphaned_resources(
 
     // Clean up orphaned branches
     if !summary.orphaned_branches.is_empty() {
-        match cleanup_orphaned_branches(&summary.orphaned_branches) {
-            Ok(cleaned_branches) => {
-                for branch in cleaned_branches {
-                    cleaned_summary.add_branch(branch);
-                }
-            }
-            Err(e) => {
-                error!(
-                    event = "core.cleanup.cleanup_branches_failed",
-                    error = %e
-                );
-                return Err(e);
-            }
+        let cleaned_branches =
+            cleanup_orphaned_branches(&summary.orphaned_branches).map_err(|e| {
+                error!(event = "core.cleanup.cleanup_branches_failed", error = %e);
+                e
+            })?;
+        for branch in cleaned_branches {
+            cleaned_summary.add_branch(branch);
         }
     }
 
     // Clean up orphaned worktrees
     if !summary.orphaned_worktrees.is_empty() {
-        match cleanup_orphaned_worktrees(&summary.orphaned_worktrees, force) {
-            Ok((cleaned_worktrees, skipped_worktrees)) => {
-                for worktree_path in cleaned_worktrees {
-                    cleaned_summary.add_worktree(worktree_path);
-                }
-                for (path, reason) in skipped_worktrees {
-                    cleaned_summary.add_skipped_worktree(path, reason);
-                }
-            }
-            Err(e) => {
-                error!(
-                    event = "core.cleanup.cleanup_worktrees_failed",
-                    error = %e
-                );
-                return Err(e);
-            }
+        let (cleaned_worktrees, skipped_worktrees) =
+            cleanup_orphaned_worktrees(&summary.orphaned_worktrees, force).map_err(|e| {
+                error!(event = "core.cleanup.cleanup_worktrees_failed", error = %e);
+                e
+            })?;
+        for worktree_path in cleaned_worktrees {
+            cleaned_summary.add_worktree(worktree_path);
+        }
+        for (path, reason) in skipped_worktrees {
+            cleaned_summary.add_skipped_worktree(path, reason);
         }
     }
 
     // Clean up stale sessions (also removes associated worktrees)
     if !summary.stale_sessions.is_empty() {
-        match cleanup_stale_sessions(&summary.stale_sessions, force) {
-            Ok((cleaned_sessions, skipped)) => {
-                for session_id in cleaned_sessions {
-                    cleaned_summary.add_session(session_id);
-                }
-                for (path, reason) in skipped {
-                    cleaned_summary.add_skipped_worktree(path, reason);
-                }
-            }
-            Err(e) => {
-                error!(
-                    event = "core.cleanup.cleanup_sessions_failed",
-                    error = %e
-                );
-                return Err(e);
-            }
+        let (cleaned_sessions, skipped) = cleanup_stale_sessions(&summary.stale_sessions, force)
+            .map_err(|e| {
+                error!(event = "core.cleanup.cleanup_sessions_failed", error = %e);
+                e
+            })?;
+        for session_id in cleaned_sessions {
+            cleaned_summary.add_session(session_id);
+        }
+        for (path, reason) in skipped {
+            cleaned_summary.add_skipped_worktree(path, reason);
         }
     }
 

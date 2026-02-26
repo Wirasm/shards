@@ -186,53 +186,46 @@ fn collect_session_worktree_paths(sessions_dir: &Path) -> Result<HashSet<String>
             continue;
         };
 
-        match std::fs::read_to_string(&session_file_path) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(session) => {
-                        match session.get("worktree_path") {
-                            Some(worktree_value) => {
-                                if let Some(worktree_path) = worktree_value.as_str() {
-                                    // Try to canonicalize for consistent comparison
-                                    let canonical = PathBuf::from(worktree_path)
-                                        .canonicalize()
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| worktree_path.to_string());
-                                    paths.insert(canonical);
-                                } else {
-                                    warn!(
-                                        event = "core.cleanup.session_invalid_worktree_path_type",
-                                        file_path = %session_file_path.display(),
-                                        worktree_path_value = ?worktree_value,
-                                        "Session file has worktree_path but it is not a string"
-                                    );
-                                }
-                            }
-                            None => {
-                                warn!(
-                                    event = "core.cleanup.session_missing_worktree_path",
-                                    file_path = %session_file_path.display(),
-                                    "Session file is missing worktree_path field"
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            event = "core.cleanup.session_json_parse_failed",
-                            file_path = %session_file_path.display(),
-                            error = %e,
-                            "Session file contains invalid JSON"
-                        );
-                    }
-                }
-            }
+        let content = match std::fs::read_to_string(&session_file_path) {
+            Ok(c) => c,
             Err(e) => {
                 warn!(
                     event = "core.cleanup.session_read_failed",
                     file_path = %session_file_path.display(),
                     error = %e,
                     "Could not read session file while collecting worktree paths"
+                );
+                continue;
+            }
+        };
+
+        let session = match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    event = "core.cleanup.session_json_parse_failed",
+                    file_path = %session_file_path.display(),
+                    error = %e,
+                    "Session file contains invalid JSON"
+                );
+                continue;
+            }
+        };
+
+        match session.get("worktree_path").and_then(|v| v.as_str()) {
+            Some(worktree_path) => {
+                // Try to canonicalize for consistent comparison
+                let canonical = PathBuf::from(worktree_path)
+                    .canonicalize()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| worktree_path.to_string());
+                paths.insert(canonical);
+            }
+            None => {
+                warn!(
+                    event = "core.cleanup.session_missing_worktree_path",
+                    file_path = %session_file_path.display(),
+                    "Session file is missing or has non-string worktree_path field"
                 );
             }
         }
