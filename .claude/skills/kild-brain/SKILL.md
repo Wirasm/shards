@@ -12,10 +12,6 @@ description: |
   - "merge queue", "what's ready to merge", "land the PRs"
   - "direct the workers", "what should <branch> do next"
   - "honryu", "brain", "ask the brain"
-
-context: fork
-agent: kild-brain
-allowed-tools: Bash, Read, Write, Glob, Grep, Task
 ---
 
 User request: $ARGUMENTS
@@ -30,7 +26,9 @@ User request: $ARGUMENTS
 
 ## Protocol
 
-**Honryū ALWAYS runs as a persistent daemon kild session, never as an ad-hoc fork.**
+**Honryū runs as a persistent daemon kild session.** The brain persona is loaded
+inside the daemon PTY via `--agent kild-brain` (set automatically by fleet flags
+in `fleet_agent_flags()` when `branch == "honryu"`).
 
 This skill is a thin router. It ensures the honryu daemon session exists, delivers
 the user's request to it, and reports back. It does NOT execute brain logic itself.
@@ -45,7 +43,7 @@ case "$STATUS" in
     echo "Honryū is already running."
     ;;
   stopped)
-    kild open honryu --no-attach --resume --initial-prompt "You've been restarted by the Tōryō. Orient yourself: check kild list --json, ~/.kild/brain/state.json, today's session log, and .kild/wave-plan.json (if it exists, mention it). Then greet the Tōryō and summarize the fleet state."
+    kild open honryu --resume --initial-prompt "You've been restarted by the Tōryō. Orient yourself: check kild list --json, ~/.kild/brain/state.json, today's session log, and .kild/wave-plan.json (if it exists, mention it). Then greet the Tōryō and summarize the fleet state."
     echo "Honryū restarted."
     ;;
   *)
@@ -68,7 +66,7 @@ kild inject honryu "<user's request here>"
 ```
 
 **IMPORTANT:** Do NOT execute brain logic (stopping workers, creating kilds, running
-overlaps, etc.) from this forked skill. All fleet operations must go through the
+overlaps, etc.) from this skill. All fleet operations must go through the
 persistent honryu daemon session so it maintains context and history.
 
 ### Step 3: Report back
