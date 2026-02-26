@@ -715,6 +715,37 @@ fn test_cli_stop_with_branch_no_all() {
 }
 
 #[test]
+fn test_cli_stop_force_flag() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "stop", "my-branch", "--force"])
+        .unwrap();
+    let stop_matches = matches.subcommand_matches("stop").unwrap();
+    assert!(stop_matches.get_flag("force"));
+    assert_eq!(
+        stop_matches.get_one::<String>("branch").unwrap(),
+        "my-branch"
+    );
+}
+
+#[test]
+fn test_cli_stop_force_short_flag() {
+    let app = build_cli();
+    let matches = app
+        .try_get_matches_from(vec!["kild", "stop", "my-branch", "-f"])
+        .unwrap();
+    let stop_matches = matches.subcommand_matches("stop").unwrap();
+    assert!(stop_matches.get_flag("force"));
+}
+
+#[test]
+fn test_cli_stop_force_conflicts_with_all() {
+    let app = build_cli();
+    let result = app.try_get_matches_from(vec!["kild", "stop", "--all", "--force"]);
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_cli_destroy_all_flag() {
     let app = build_cli();
     let matches = app.try_get_matches_from(vec!["kild", "destroy", "--all"]);

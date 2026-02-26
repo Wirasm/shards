@@ -9,6 +9,51 @@ use kild_core::{events, session_ops};
 use super::json_types::JsonError;
 use crate::color;
 
+/// Resolve the branch name of the calling session, if running inside one.
+///
+/// Tries `$KILD_SESSION_BRANCH` first (reliable for claude/codex agents),
+/// then falls back to CWD-based worktree path matching (universal).
+/// Returns `None` when called from outside any kild session.
+pub(crate) fn resolve_self_branch() -> Option<String> {
+    // Fast path: env var is set for claude and codex daemon sessions
+    if let Ok(branch) = std::env::var("KILD_SESSION_BRANCH")
+        && !branch.is_empty()
+    {
+        return Some(branch);
+    }
+
+    // Fallback: match CWD against session worktree paths
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            warn!(
+                event = "cli.self_detection.cwd_failed",
+                error = %e,
+                "Could not determine CWD for self-detection; self-exclusion may be incomplete"
+            );
+            return None;
+        }
+    };
+    let session = match session_ops::find_session_by_worktree_path(&cwd) {
+        Ok(opt) => opt,
+        Err(e) => {
+            warn!(
+                event = "cli.self_detection.lookup_failed",
+                cwd = %cwd.display(),
+                error = %e,
+                "Session lookup by worktree path failed; self-exclusion may be incomplete"
+            );
+            return None;
+        }
+    }?;
+    // Don't treat --main sessions as "self" via CWD: their worktree_path is the
+    // project root, so any CWD inside the project would false-positive match.
+    if session.use_main_worktree {
+        return None;
+    }
+    Some(session.branch.to_string())
+}
+
 /// Print a JSON error object to stdout for --json mode.
 /// Returns the error wrapped in Box for chaining with `return Err(...)`.
 pub fn print_json_error(error: &dyn std::fmt::Display, code: &str) -> Box<dyn std::error::Error> {
@@ -219,6 +264,67 @@ pub fn resolve_open_mode(matches: &clap::ArgMatches) -> kild_core::OpenMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serialize env-var-mutating tests to avoid races in the multi-threaded test runner.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// # Safety helper — save/restore env var around test
+    unsafe fn set_env(key: &str, val: &str) {
+        unsafe { std::env::set_var(key, val) };
+    }
+    unsafe fn remove_env(key: &str) {
+        unsafe { std::env::remove_var(key) };
+    }
+    unsafe fn restore_env(key: &str, prev: Option<String>) {
+        match prev {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+
+    #[test]
+    fn resolve_self_branch_from_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let key = "KILD_SESSION_BRANCH";
+        let prev = std::env::var(key).ok();
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
+        unsafe { set_env(key, "honryu") };
+
+        let result = resolve_self_branch();
+        assert_eq!(result.as_deref(), Some("honryu"));
+
+        unsafe { restore_env(key, prev) };
+    }
+
+    #[test]
+    fn resolve_self_branch_empty_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let key = "KILD_SESSION_BRANCH";
+        let prev = std::env::var(key).ok();
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
+        unsafe { set_env(key, "") };
+
+        let result = resolve_self_branch();
+        // Empty env var falls through; CWD is unlikely to match a session
+        assert_eq!(result, None);
+
+        unsafe { restore_env(key, prev) };
+    }
+
+    #[test]
+    fn resolve_self_branch_no_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let key = "KILD_SESSION_BRANCH";
+        let prev = std::env::var(key).ok();
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
+        unsafe { remove_env(key) };
+
+        let result = resolve_self_branch();
+        // No env var and CWD is not a session worktree → None
+        assert_eq!(result, None);
+
+        unsafe { restore_env(key, prev) };
+    }
 
     #[test]
     fn test_load_config_with_warning_returns_valid_config() {

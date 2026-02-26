@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::SessionStatus;
 use kild_core::events;
@@ -25,6 +25,41 @@ pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn st
     let branch = matches
         .get_one::<String>("branch")
         .ok_or("Branch argument is required (or use --all)")?;
+
+    // Block self-stop unless --force is passed (prevents accidental self-destruction)
+    let force = matches.get_flag("force");
+    if let Some(self_br) = super::helpers::resolve_self_branch()
+        && self_br == branch.as_str()
+    {
+        if !force {
+            eprintln!(
+                "{} You are about to stop your own session ({}).",
+                color::warning("Warning:"),
+                color::ice(branch),
+            );
+            eprintln!(
+                "  {}",
+                color::hint("This will kill the agent running this command."),
+            );
+            eprintln!("  {}", color::hint("Use --force to proceed."),);
+            warn!(
+                event = "cli.stop_failed",
+                branch = branch,
+                reason = "self_stop"
+            );
+            return Err("Self-stop blocked. Use --force to override.".into());
+        }
+        warn!(
+            event = "cli.stop_self_forced",
+            branch = branch,
+            "Self-stop with --force"
+        );
+        eprintln!(
+            "{} Stopping own session ({}).",
+            color::warning("Warning:"),
+            color::ice(branch),
+        );
+    }
 
     info!(event = "cli.stop_started", branch = branch);
 
@@ -100,16 +135,39 @@ fn handle_stop_teammate(branch: &str, pane_id: &str) -> Result<(), Box<dyn std::
 fn handle_stop_all() -> Result<(), Box<dyn std::error::Error>> {
     info!(event = "cli.stop_all_started");
 
+    let self_branch = super::helpers::resolve_self_branch();
+
     let sessions = session_ops::list_sessions()?;
     let mut active = Vec::new();
     let mut already_stopped = Vec::new();
+    let mut skipped_self = false;
 
     for s in sessions {
+        // Skip the calling session to prevent self-destruction
+        if let Some(ref self_br) = self_branch
+            && s.branch.as_ref() == self_br.as_str()
+        {
+            skipped_self = true;
+            continue;
+        }
         match s.status {
             SessionStatus::Active => active.push(s),
             SessionStatus::Stopped => already_stopped.push(s),
             _ => {}
         }
+    }
+
+    if skipped_self && let Some(ref self_br) = self_branch {
+        info!(
+            event = "cli.stop_all_self_skipped",
+            branch = self_br.as_str()
+        );
+        eprintln!(
+            "{} Skipping self ({}) — use `kild stop {}` explicitly.",
+            color::warning("Note:"),
+            color::ice(self_br),
+            self_br,
+        );
     }
 
     if active.is_empty() && already_stopped.is_empty() {
