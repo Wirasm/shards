@@ -326,38 +326,6 @@ fn test_is_worktree_valid_with_missing_path() {
     assert!(!session.is_worktree_valid());
 }
 
-// --- PrCheckResult tests ---
-
-#[test]
-fn test_pr_check_result_exists() {
-    let result = PrCheckResult::Exists;
-    assert!(result.exists());
-    assert!(!result.not_found());
-    assert!(!result.is_unavailable());
-}
-
-#[test]
-fn test_pr_check_result_not_found() {
-    let result = PrCheckResult::NotFound;
-    assert!(!result.exists());
-    assert!(result.not_found());
-    assert!(!result.is_unavailable());
-}
-
-#[test]
-fn test_pr_check_result_unavailable() {
-    let result = PrCheckResult::Unavailable;
-    assert!(!result.exists());
-    assert!(!result.not_found());
-    assert!(result.is_unavailable());
-}
-
-#[test]
-fn test_pr_check_result_default() {
-    let result = PrCheckResult::default();
-    assert!(result.is_unavailable());
-}
-
 // --- DestroySafetyInfo tests ---
 
 #[test]
