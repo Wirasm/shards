@@ -356,8 +356,11 @@ kild project remove <id|path>
 # Stop agent, preserve worktree
 kild stop <branch>
 
-# Stop all running kilds
+# Stop all running kilds (skips self when run from inside a kild session)
 kild stop --all
+
+# Force stop own session (required when stopping the session you are running inside)
+kild stop <branch> --force
 ```
 
 ### Get kild information
