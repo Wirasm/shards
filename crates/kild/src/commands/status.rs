@@ -94,6 +94,9 @@ pub(crate) fn handle_status_command(
     if let Some(ref note) = session.note {
         rows.push(("Note:", note.clone()));
     }
+    if let Some(issue) = session.issue {
+        rows.push(("Issue:", format!("#{}", issue)));
+    }
     rows.push(("Worktree:", shorten_home_path(&session.worktree_path)));
 
     // Git stats rows

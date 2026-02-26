@@ -14,6 +14,8 @@ pub struct CreateSessionRequest {
     /// What agent to launch (default from config, specific override, or bare shell).
     pub agent_mode: AgentMode,
     pub note: Option<String>,
+    /// Optional GitHub issue number linked to this kild.
+    pub issue: Option<u32>,
     /// Optional project path for UI context. When provided, this path is used
     /// instead of current working directory for project detection.
     ///
@@ -42,6 +44,7 @@ impl CreateSessionRequest {
             branch: branch.into(),
             agent_mode,
             note,
+            issue: None,
             project_path: None,
             base_branch: None,
             no_fetch: false,
@@ -62,6 +65,7 @@ impl CreateSessionRequest {
             branch: branch.into(),
             agent_mode,
             note,
+            issue: None,
             project_path: Some(project_path),
             base_branch: None,
             no_fetch: false,
@@ -69,6 +73,11 @@ impl CreateSessionRequest {
             use_main_worktree: false,
             initial_prompt: None,
         }
+    }
+
+    pub fn with_issue(mut self, issue: Option<u32>) -> Self {
+        self.issue = issue;
+        self
     }
 
     pub fn with_main_worktree(mut self, use_main: bool) -> Self {
