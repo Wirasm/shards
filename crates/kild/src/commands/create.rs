@@ -86,8 +86,10 @@ pub(crate) fn handle_create_command(
 
     let use_main = matches.get_flag("main");
     let initial_prompt = matches.get_one::<String>("initial-prompt").cloned();
+    let issue = matches.get_one::<u32>("issue").copied();
 
     let request = CreateSessionRequest::new(branch.clone(), agent_mode, note)
+        .with_issue(issue)
         .with_base_branch(base_branch)
         .with_no_fetch(no_fetch)
         .with_runtime_mode(runtime_mode)

@@ -41,6 +41,13 @@ pub fn create_command() -> Command {
                 .help("Description of what this kild is for (shown in list/status output)"),
         )
         .arg(
+            Arg::new("issue")
+                .long("issue")
+                .short('i')
+                .help("GitHub issue number to link to this kild, e.g. --issue 123 (shown in list/status, used by wave planner)")
+                .value_parser(clap::value_parser!(u32).range(1..)),
+        )
+        .arg(
             Arg::new("base")
                 .long("base")
                 .short('b')

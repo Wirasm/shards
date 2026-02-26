@@ -122,6 +122,7 @@ mod tests {
             end - start + 1,
             None,
             None,
+            None,
             vec![],
             None,
             None,

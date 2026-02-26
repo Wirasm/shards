@@ -16,6 +16,7 @@ fn test_session_creation() {
         10,
         Some("2024-01-01T00:00:00Z".to_string()),
         None,
+        None,
         vec![],
         None,
         None,
@@ -186,6 +187,7 @@ fn test_session_with_terminal_type_in_agent() {
         10,
         Some("2024-01-01T00:00:00Z".to_string()),
         None,
+        None,
         vec![agent],
         None,
         None,
@@ -289,6 +291,7 @@ fn test_is_worktree_valid_with_existing_path() {
         0,
         None,
         None,
+        None,
         vec![],
         None,
         None,
@@ -314,6 +317,7 @@ fn test_is_worktree_valid_with_missing_path() {
         0,
         0,
         0,
+        None,
         None,
         None,
         vec![],
@@ -680,6 +684,7 @@ fn test_session_with_multiple_agents_serialization() {
         10,
         Some("2024-01-01T00:00:00Z".to_string()),
         None,
+        None,
         vec![
             AgentProcess::new(
                 "claude".to_string(),
@@ -853,6 +858,7 @@ fn test_session_with_agent_session_id_roundtrip() {
         10,
         None,
         None,
+        None,
         vec![],
         Some("550e8400-e29b-41d4-a716-446655440000".to_string()),
         None,
@@ -883,6 +889,7 @@ fn test_session_agent_session_id_survives_clear_agents() {
         3000,
         3009,
         10,
+        None,
         None,
         None,
         vec![],
@@ -942,6 +949,7 @@ fn test_session_with_runtime_mode_roundtrip() {
         10,
         None,
         None,
+        None,
         vec![],
         None,
         None,
@@ -971,6 +979,7 @@ fn test_session_runtime_mode_survives_clear_agents() {
         3000,
         3009,
         10,
+        None,
         None,
         None,
         vec![],
@@ -1081,6 +1090,7 @@ fn test_session_new_sets_all_fields() {
         10,
         Some("2024-01-01T12:00:00Z".to_string()),
         Some("Auth feature".to_string()),
+        None,
         vec![],
         Some("sid-123".to_string()),
         Some("tl-456".to_string()),
@@ -1207,6 +1217,7 @@ fn test_session_agent_methods() {
         0,
         None,
         None,
+        None,
         agents,
         None,
         None,
@@ -1319,4 +1330,96 @@ fn test_use_main_worktree_defaults_false_on_old_json() {
         !session.use_main_worktree,
         "use_main_worktree must default to false for old sessions without the field"
     );
+}
+
+// --- issue field tests ---
+
+#[test]
+fn test_session_backward_compatibility_issue() {
+    // Old session JSON without issue field should deserialize with None
+    let json = r#"{
+        "id": "test/branch",
+        "project_id": "test",
+        "branch": "branch",
+        "worktree_path": "/tmp/test",
+        "agent": "claude",
+        "status": "Active",
+        "created_at": "2024-01-01T00:00:00Z",
+        "port_range_start": 3000,
+        "port_range_end": 3009,
+        "port_count": 10
+    }"#;
+
+    let session: Session = serde_json::from_str(json).unwrap();
+    assert_eq!(session.issue, None);
+    assert_eq!(&*session.branch, "branch");
+}
+
+#[test]
+fn test_session_with_issue_roundtrip() {
+    let session = Session::new(
+        "test/branch".into(),
+        "test".into(),
+        "branch".into(),
+        PathBuf::from("/tmp/test"),
+        "claude".to_string(),
+        SessionStatus::Active,
+        "2024-01-01T00:00:00Z".to_string(),
+        3000,
+        3009,
+        10,
+        None,
+        None,
+        Some(42),
+        vec![],
+        None,
+        None,
+        None,
+    );
+
+    assert_eq!(session.issue, Some(42));
+
+    // Verify round-trip preserves issue
+    let serialized = serde_json::to_string(&session).unwrap();
+    let deserialized: Session = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(deserialized.issue, Some(42));
+}
+
+#[test]
+fn test_session_with_issue_from_json() {
+    let json = r#"{
+        "id": "test/branch",
+        "project_id": "test",
+        "branch": "branch",
+        "worktree_path": "/tmp/test",
+        "agent": "claude",
+        "status": "Active",
+        "created_at": "2024-01-01T00:00:00Z",
+        "port_range_start": 3000,
+        "port_range_end": 3009,
+        "port_count": 10,
+        "issue": 123
+    }"#;
+
+    let session: Session = serde_json::from_str(json).unwrap();
+    assert_eq!(session.issue, Some(123));
+}
+
+#[test]
+fn test_create_session_request_with_issue() {
+    let request = CreateSessionRequest::new(
+        "feature-auth".to_string(),
+        kild_protocol::AgentMode::Agent("claude".to_string()),
+        Some("OAuth2 implementation".to_string()),
+    )
+    .with_issue(Some(42));
+    assert_eq!(request.issue, Some(42));
+
+    // Without issue
+    let request_no_issue = CreateSessionRequest::new(
+        "feature-auth".to_string(),
+        kild_protocol::AgentMode::Agent("claude".to_string()),
+        None,
+    );
+    assert_eq!(request_no_issue.issue, None);
 }

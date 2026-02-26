@@ -53,6 +53,13 @@ pub struct Session {
     #[serde(default)]
     pub note: Option<String>,
 
+    /// Optional GitHub issue number linked to this kild.
+    ///
+    /// Set via `--issue` / `-i` flag during `kild create`. Used by wave planning
+    /// to track which issues are already claimed by active kilds.
+    #[serde(default)]
+    pub issue: Option<u32>,
+
     /// Agent session ID for resume support.
     ///
     /// Generated on `kild create` and fresh `kild open` for resume-capable agents (e.g., Claude Code).
@@ -120,6 +127,7 @@ impl Session {
         port_count: u16,
         last_activity: Option<String>,
         note: Option<String>,
+        issue: Option<u32>,
         agents: Vec<AgentProcess>,
         agent_session_id: Option<String>,
         task_list_id: Option<String>,
@@ -138,6 +146,7 @@ impl Session {
             port_count,
             last_activity,
             note,
+            issue,
             agents,
             agent_session_id,
             agent_session_id_history: Vec::new(),
@@ -232,6 +241,7 @@ impl Session {
             port_count: 0,
             last_activity: None,
             note: None,
+            issue: None,
             agents: vec![],
             agent_session_id: None,
             agent_session_id_history: Vec::new(),
