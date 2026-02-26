@@ -26,10 +26,15 @@ pub fn is_git_repo(path: &Path) -> Result<bool, GitError> {
 
 /// Verify that a path is inside a git repository.
 ///
-/// Returns `Ok(())` if in a repo, `Err(GitError::NotInRepository)` otherwise.
+/// Returns `Ok(())` if in a repo, `Err(GitError::NotInRepository)` if the
+/// path is not inside a git repo, or `Err(GitError::Git2Error)` for unexpected
+/// failures (e.g. permission denied).
 pub fn ensure_in_repo(path: &Path) -> Result<(), GitError> {
-    Repository::discover(path).map_err(|_| GitError::NotInRepository)?;
-    Ok(())
+    match Repository::discover(path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Err(GitError::NotInRepository),
+        Err(e) => Err(GitError::Git2Error { source: e }),
+    }
 }
 
 /// Get the URL of the "origin" remote, if configured.
@@ -107,12 +112,31 @@ pub fn has_any_remote(path: &Path) -> bool {
 /// Returns `Some(true)` if dirty, `Some(false)` if clean,
 /// `None` if the check failed (repo can't be opened, status error).
 pub fn has_uncommitted_changes(path: &Path) -> Option<bool> {
-    let repo = Repository::open(path).ok()?;
+    let repo = match Repository::open(path) {
+        Ok(r) => r,
+        Err(e) => {
+            debug!(
+                event = "core.git.query.status_repo_open_failed",
+                path = %path.display(),
+                error = %e,
+            );
+            return None;
+        }
+    };
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(true);
     opts.include_ignored(false);
-    let statuses = repo.statuses(Some(&mut opts)).ok()?;
-    Some(!statuses.is_empty())
+    match repo.statuses(Some(&mut opts)) {
+        Ok(statuses) => Some(!statuses.is_empty()),
+        Err(e) => {
+            warn!(
+                event = "core.git.query.status_check_failed",
+                path = %path.display(),
+                error = %e,
+            );
+            None
+        }
+    }
 }
 
 /// List all local branch names in the repository discovered from `path`.
@@ -125,8 +149,15 @@ pub fn list_local_branch_names(path: &Path) -> Result<Vec<String>, GitError> {
     let mut names = Vec::new();
     for item in branches {
         let (branch, _) = item.map_err(|e| GitError::Git2Error { source: e })?;
-        if let Ok(Some(name)) = branch.name() {
-            names.push(name.to_string());
+        match branch.name() {
+            Ok(Some(name)) => names.push(name.to_string()),
+            Ok(None) => {}
+            Err(e) => {
+                debug!(
+                    event = "core.git.query.branch_name_unreadable",
+                    error = %e,
+                );
+            }
         }
     }
     Ok(names)
@@ -154,6 +185,10 @@ pub fn head_branch_name(path: &Path) -> Result<Option<String>, GitError> {
 ///
 /// This discovers which branches are "active" — checked out in any worktree
 /// or the main repository HEAD. Useful for orphan detection.
+///
+/// Worktrees that cannot be opened or whose HEAD cannot be read are silently
+/// skipped (with a warning). Their branches will not appear in the result and
+/// may be incorrectly identified as orphaned by callers.
 pub fn worktree_active_branches(path: &Path) -> Result<HashSet<String>, GitError> {
     let repo = Repository::discover(path).map_err(|e| GitError::Git2Error { source: e })?;
     let mut active = HashSet::new();
@@ -218,11 +253,16 @@ pub fn worktree_active_branches(path: &Path) -> Result<HashSet<String>, GitError
 
 /// A registered git worktree entry.
 pub struct WorktreeEntry {
+    /// The git-internal admin name of the worktree (e.g., `kild-my-feature`).
     pub name: String,
+    /// Filesystem path to the worktree's working directory.
     pub path: PathBuf,
 }
 
 /// List all registered worktrees in the repository discovered from `path`.
+///
+/// Worktrees that are registered but inaccessible (e.g., corrupted metadata)
+/// are skipped with a warning and excluded from the result.
 pub fn list_worktree_entries(path: &Path) -> Result<Vec<WorktreeEntry>, GitError> {
     let repo = Repository::discover(path).map_err(|e| GitError::Git2Error { source: e })?;
     let worktrees = repo
@@ -252,18 +292,39 @@ pub fn list_worktree_entries(path: &Path) -> Result<Vec<WorktreeEntry>, GitError
 
 /// Check if a worktree path is a valid git repository with a resolvable HEAD.
 ///
-/// Returns `true` if the worktree can be opened as a repo and HEAD has a target.
-/// Returns `false` if the path doesn't exist, can't be opened, or HEAD is broken.
+/// Returns `true` if the path can be opened as a git repo and `HEAD` resolves to
+/// a concrete object (i.e., `head.target().is_some()`).
+/// Returns `false` if:
+/// - The path does not exist
+/// - The path cannot be opened as a repository
+/// - `HEAD` errors (unreadable)
+/// - `HEAD` has no concrete target (detached HEAD pointing nowhere, or
+///   unresolved symbolic ref)
 pub fn is_worktree_valid(worktree_path: &Path) -> bool {
     if !worktree_path.exists() {
         return false;
     }
-    let Ok(repo) = Repository::open(worktree_path) else {
-        return false;
+    let repo = match Repository::open(worktree_path) {
+        Ok(r) => r,
+        Err(e) => {
+            debug!(
+                event = "core.git.query.worktree_validate_open_failed",
+                path = %worktree_path.display(),
+                error = %e,
+            );
+            return false;
+        }
     };
     match repo.head() {
         Ok(head) => head.target().is_some(),
-        Err(_) => false,
+        Err(e) => {
+            debug!(
+                event = "core.git.query.worktree_validate_head_failed",
+                path = %worktree_path.display(),
+                error = %e,
+            );
+            false
+        }
     }
 }
 

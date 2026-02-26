@@ -371,7 +371,7 @@ pub fn destroy_session(name: &str, force: bool) -> Result<(), SessionError> {
 
 /// Check if the git repository at the given path has any remote configured.
 ///
-/// Delegates to `git::has_any_remote`. Returns false on any error (graceful degradation).
+/// Returns false on any error (graceful degradation).
 pub fn has_remote_configured(worktree_path: &std::path::Path) -> bool {
     crate::git::has_any_remote(worktree_path)
 }

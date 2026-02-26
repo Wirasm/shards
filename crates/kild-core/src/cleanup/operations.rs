@@ -15,7 +15,10 @@ use tracing::{info, warn};
 
 pub fn validate_cleanup_request() -> Result<(), CleanupError> {
     let current_dir = std::env::current_dir().map_err(|e| CleanupError::IoError { source: e })?;
-    git::ensure_in_repo(&current_dir).map_err(|_| CleanupError::NotInRepository)?;
+    git::ensure_in_repo(&current_dir).map_err(|e| match e {
+        git::GitError::NotInRepository => CleanupError::NotInRepository,
+        other => CleanupError::GitError { source: other },
+    })?;
     Ok(())
 }
 
