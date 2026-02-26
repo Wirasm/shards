@@ -519,15 +519,6 @@ mod tests {
     }
 
     #[test]
-    fn test_readiness_needs_push_never_pushed() {
-        // has_unpushed = true covers both "unpushed commits" and "never pushed"
-        assert_eq!(
-            MergeReadiness::compute(Some(true), 0, true, true, None),
-            MergeReadiness::NeedsPush
-        );
-    }
-
-    #[test]
     fn test_readiness_needs_pr() {
         assert_eq!(
             MergeReadiness::compute(Some(true), 0, true, false, None),

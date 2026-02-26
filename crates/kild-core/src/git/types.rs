@@ -446,6 +446,43 @@ mod tests {
     }
 
     #[test]
+    fn test_has_unpushed_with_unpushed_commits() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 3,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert!(ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_has_unpushed_when_never_pushed() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: false,
+            ..Default::default()
+        };
+        assert!(ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_has_unpushed_false_when_up_to_date() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert!(!ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_conflict_status_is_clean() {
+        assert_eq!(ConflictStatus::Clean.is_clean(), Some(true));
+        assert_eq!(ConflictStatus::Conflicts.is_clean(), Some(false));
+        assert_eq!(ConflictStatus::Unknown.is_clean(), None);
+    }
+
+    #[test]
     fn test_worktree_status_with_degraded_state() {
         let status = WorktreeStatus {
             has_uncommitted_changes: true,
