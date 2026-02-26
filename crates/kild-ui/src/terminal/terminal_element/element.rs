@@ -221,7 +221,7 @@ pub(crate) fn detect_urls(
                 "URL region width must be positive: start_col={start_col}, end_col={end_col}, url={}",
                 link.as_str()
             );
-            let x = bounds.origin.x + start_col as f32 * cell_width;
+            let x = (bounds.origin.x + start_col as f32 * cell_width).floor();
             let y = bounds.origin.y + *line_idx as f32 * cell_height;
             let w = (end_col - start_col) as f32 * cell_width;
             url_regions.push(PreparedUrlRegion {
