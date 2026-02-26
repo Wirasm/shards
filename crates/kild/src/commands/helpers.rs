@@ -25,6 +25,11 @@ pub(crate) fn resolve_self_branch() -> Option<String> {
     // Fallback: match CWD against session worktree paths
     let cwd = std::env::current_dir().ok()?;
     let session = session_ops::find_session_by_worktree_path(&cwd).ok()??;
+    // Don't treat --main sessions as "self" via CWD: their worktree_path is the
+    // project root, so any CWD inside the project would false-positive match.
+    if session.use_main_worktree {
+        return None;
+    }
     Some(session.branch.to_string())
 }
 
