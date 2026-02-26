@@ -6,6 +6,20 @@ use tracing::{debug, warn};
 
 use crate::errors::DaemonError;
 
+/// Returns the default bin file path: `~/.kild/daemon.bin`.
+pub fn bin_file_path() -> PathBuf {
+    KildPaths::resolve()
+        .unwrap_or_else(|e| {
+            warn!(
+                event = "daemon.bin.home_dir_fallback",
+                error = %e,
+                fallback = "/tmp/.kild",
+            );
+            KildPaths::from_dir(PathBuf::from("/tmp/.kild"))
+        })
+        .daemon_bin_file()
+}
+
 /// Returns the default PID file path: `~/.kild/daemon.pid`.
 pub fn pid_file_path() -> PathBuf {
     KildPaths::resolve()

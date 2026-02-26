@@ -25,10 +25,10 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         return Ok(());
     }
 
-    let daemon_binary = kild_core::daemon::find_sibling_binary("kild-daemon")
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-
     if foreground {
+        let daemon_binary = kild_core::daemon::find_sibling_binary("kild-daemon")
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
         // Spawn kild-daemon with inherited stdio (blocks until child exits)
         let status = std::process::Command::new(&daemon_binary)
             .stdout(std::process::Stdio::inherit())
@@ -43,73 +43,9 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         }
         info!(event = "cli.daemon.start_completed");
     } else {
-        // Spawn daemon as a detached background process
-        let mut child = std::process::Command::new(&daemon_binary)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .stdin(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| format!("Failed to start daemon: {}", e))?;
-
-        debug!(event = "cli.daemon.spawn_completed", pid = child.id());
-
-        // Wait for socket to become available (with crash detection)
-        let socket_path = kild_core::daemon::socket_path();
-        let timeout = std::time::Duration::from_secs(5);
-        let start = std::time::Instant::now();
-
-        loop {
-            // Check if daemon crashed before socket was ready
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    error!(event = "cli.daemon.start_failed", reason = "child_exited", status = %status);
-                    return Err(format!(
-                        "Daemon exited with {} before becoming ready.\n\
-                         Try: kild daemon start --foreground  (to see startup errors)",
-                        status
-                    )
-                    .into());
-                }
-                Ok(None) => {} // Still running
-                Err(e) => {
-                    debug!(event = "cli.daemon.child_status_check_failed", error = %e);
-                }
-            }
-
-            let socket_exists = socket_path.exists();
-            let ping_ok =
-                socket_exists && kild_core::daemon::client::ping_daemon().unwrap_or(false);
-
-            debug!(
-                event = "cli.daemon.socket_check",
-                socket_exists = socket_exists,
-                ping_ok = ping_ok,
-                elapsed_ms = start.elapsed().as_millis() as u64,
-            );
-
-            if ping_ok {
-                break;
-            }
-            if start.elapsed() > timeout {
-                eprintln!("Daemon started but socket not available after 5s.");
-                eprintln!("Try: kild daemon start --foreground  (to see startup errors)");
-                eprintln!("Try: ps aux | grep 'kild-daemon'     (to check process status)");
-                return Err("Daemon socket not available after 5s".into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        match read_daemon_pid() {
-            Ok(pid) => {
-                println!("Daemon started (PID: {})", pid);
-                info!(event = "cli.daemon.start_completed", pid = pid);
-            }
-            Err(e) => {
-                warn!(event = "cli.daemon.pid_read_failed", error = %e);
-                println!("Daemon started (PID unknown)");
-                info!(event = "cli.daemon.start_completed");
-            }
-        }
+        let pid = spawn_daemon_background()?;
+        println!("Daemon started (PID: {})", pid);
+        info!(event = "cli.daemon.start_completed", pid = pid);
     }
 
     Ok(())
@@ -119,8 +55,7 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
     info!(event = "cli.daemon.restart_started");
 
     // Stop (best-effort — if not running, that's fine)
-    let was_running = kild_core::daemon::client::ping_daemon().unwrap_or(false);
-    if was_running {
+    if kild_core::daemon::client::ping_daemon().unwrap_or(false) {
         match kild_core::daemon::client::request_shutdown() {
             Ok(()) => {
                 let pid_file = kild_core::daemon::pid_file_path();
@@ -142,7 +77,17 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Start fresh — reuse the start logic with an empty ArgMatches for background mode
+    let pid = spawn_daemon_background()?;
+    println!("Daemon restarted (PID: {})", pid);
+    info!(event = "cli.daemon.restart_completed", pid = pid);
+
+    Ok(())
+}
+
+/// Spawn the daemon binary in the background and wait for it to become ready.
+///
+/// Returns the PID of the new daemon process on success.
+fn spawn_daemon_background() -> Result<u32, Box<dyn std::error::Error>> {
     let daemon_binary = kild_core::daemon::find_sibling_binary("kild-daemon")
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
@@ -153,6 +98,8 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
         .spawn()
         .map_err(|e| format!("Failed to start daemon: {}", e))?;
 
+    debug!(event = "cli.daemon.spawn_completed", pid = child.id());
+
     let socket_path = kild_core::daemon::socket_path();
     let timeout = std::time::Duration::from_secs(5);
     let start = std::time::Instant::now();
@@ -160,10 +107,10 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                error!(event = "cli.daemon.restart_failed", reason = "child_exited", status = %status);
+                error!(event = "cli.daemon.start_failed", reason = "child_exited", status = %status);
                 return Err(format!(
                     "Daemon exited with {} before becoming ready.\n\
-                     Try: kild daemon start --foreground",
+                     Try: kild daemon start --foreground  (to see startup errors)",
                     status
                 )
                 .into());
@@ -174,30 +121,36 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let ping_ok =
-            socket_path.exists() && kild_core::daemon::client::ping_daemon().unwrap_or(false);
+        let socket_exists = socket_path.exists();
+        let ping_ok = socket_exists && kild_core::daemon::client::ping_daemon().unwrap_or(false);
+
+        debug!(
+            event = "cli.daemon.socket_check",
+            socket_exists = socket_exists,
+            ping_ok = ping_ok,
+            elapsed_ms = start.elapsed().as_millis() as u64,
+        );
+
         if ping_ok {
             break;
         }
         if start.elapsed() > timeout {
-            return Err("Daemon started but socket not available after 5s".into());
+            eprintln!("Daemon started but socket not available after 5s.");
+            eprintln!("Try: kild daemon start --foreground  (to see startup errors)");
+            eprintln!("Try: ps aux | grep 'kild-daemon'     (to check process status)");
+            return Err("Daemon socket not available after 5s".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     match read_daemon_pid() {
-        Ok(pid) => {
-            println!("Daemon restarted (PID: {})", pid);
-            info!(event = "cli.daemon.restart_completed", pid = pid);
-        }
+        Ok(pid) => Ok(pid),
         Err(e) => {
             warn!(event = "cli.daemon.pid_read_failed", error = %e);
-            println!("Daemon restarted (PID unknown)");
-            info!(event = "cli.daemon.restart_completed");
+            // Daemon is running (ping succeeded) but PID file is unreadable — return 0
+            Ok(0)
         }
     }
-
-    Ok(())
 }
 
 fn handle_daemon_stop() -> Result<(), Box<dyn std::error::Error>> {

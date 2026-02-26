@@ -8,24 +8,34 @@ use super::errors::DaemonAutoStartError;
 /// Ensure the daemon is running, auto-starting it if configured.
 ///
 /// 1. Pings the daemon — if alive, checks for staleness. Stale daemons are
-///    restarted automatically (stop + re-spawn).
-/// 2. Checks `config.daemon_auto_start()` — if disabled, returns `Disabled` error.
+///    stopped and re-spawned automatically (bypasses the `auto_start` guard).
+/// 2. If no daemon is running, checks `config.daemon_auto_start()` — if disabled,
+///    returns `Disabled` error.
 /// 3. Spawns `kild-daemon` binary in background (stderr inherited).
-/// 4. Polls socket + ping with 5s timeout, 100ms interval. Checks child process
-///    exit status each iteration to detect early crashes.
+/// 4. Polls socket + ping with 5s timeout, 50ms→500ms exponential backoff.
+///    Checks child process exit status each iteration to detect early crashes.
 pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartError> {
+    let mut needs_spawn = false;
+
     match client::ping_daemon() {
         Ok(true) => {
             if !super::is_daemon_stale() {
                 return Ok(());
             }
-            // Daemon is running but stale — restart it
+            // Daemon is running but stale — stop it and re-spawn
             warn!(event = "core.daemon.stale_detected");
             eprintln!("Daemon binary has been updated — restarting daemon...");
-            if let Err(e) = restart_stale_daemon() {
-                warn!(event = "core.daemon.stale_restart_failed", error = %e);
-                eprintln!("Warning: failed to restart stale daemon: {e}");
-                // Fall through to let normal auto-start handle it
+            match stop_stale_daemon() {
+                Ok(()) => {
+                    // Stale daemon stopped — spawn unconditionally (bypass auto_start guard)
+                    needs_spawn = true;
+                }
+                Err(e) => {
+                    warn!(event = "core.daemon.stale_stop_failed", error = %e);
+                    eprintln!("Warning: failed to stop stale daemon: {e}");
+                    // Old daemon is still running — return Ok since a daemon exists
+                    return Ok(());
+                }
             }
         }
         Ok(false) => {}
@@ -34,10 +44,16 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
         }
     }
 
-    if !config.daemon_auto_start() {
+    // Only check auto_start when no stale restart was triggered
+    if !needs_spawn && !config.daemon_auto_start() {
         return Err(DaemonAutoStartError::Disabled);
     }
 
+    spawn_daemon()
+}
+
+/// Spawn the daemon binary and wait for it to become ready.
+fn spawn_daemon() -> Result<(), DaemonAutoStartError> {
     info!(event = "core.daemon.auto_start_started");
     eprintln!("Starting daemon...");
 
@@ -119,11 +135,10 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
     }
 }
 
-/// Stop a stale daemon so that auto-start can spawn a fresh one.
+/// Stop a stale daemon so a fresh one can be spawned.
 ///
 /// Sends a graceful shutdown request, then polls for the PID file to be removed.
-/// Returns `Ok(())` when the old daemon has stopped, or an error string on failure.
-fn restart_stale_daemon() -> Result<(), String> {
+fn stop_stale_daemon() -> Result<(), String> {
     client::request_shutdown().map_err(|e| format!("shutdown request failed: {e}"))?;
 
     let pid_file = super::pid_file_path();
@@ -137,7 +152,7 @@ fn restart_stale_daemon() -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    info!(event = "core.daemon.stale_restart_stopped");
+    info!(event = "core.daemon.stale_daemon_stopped");
     Ok(())
 }
 

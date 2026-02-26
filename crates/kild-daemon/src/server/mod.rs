@@ -44,11 +44,7 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
     pid::write_pid_file(&pid_path)?;
 
     // Write bin file (binary path + mtime for staleness detection)
-    let bin_path = config
-        .pid_path
-        .parent()
-        .map(|p| p.join("daemon.bin"))
-        .unwrap_or_else(|| pid_path.with_file_name("daemon.bin"));
+    let bin_path = pid::bin_file_path();
     if let Err(e) = pid::write_bin_file(&bin_path) {
         warn!(
             event = "daemon.server.bin_write_failed",

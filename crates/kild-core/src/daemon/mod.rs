@@ -107,14 +107,21 @@ pub fn is_daemon_stale() -> bool {
     }
 
     // Mtime mismatch: binary updated in-place (e.g., cargo install)
-    let current_mtime = std::fs::metadata(&expected_canonical)
-        .and_then(|m| m.modified())
-        .map(|t| {
-            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        })
-        .unwrap_or(0);
+    let current_mtime = match std::fs::metadata(&expected_canonical).and_then(|m| m.modified()) {
+        Ok(t) => t
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        Err(e) => {
+            debug!(
+                event = "core.daemon.stale_mtime_unreadable",
+                error = %e,
+                path = %expected_canonical.display(),
+            );
+            // Cannot determine current mtime — assume not stale
+            return false;
+        }
+    };
 
     if current_mtime != stored_mtime {
         debug!(
@@ -133,7 +140,15 @@ pub fn is_daemon_stale() -> bool {
 fn read_bin_file(path: &std::path::Path) -> Option<(PathBuf, u64)> {
     let content = match std::fs::read_to_string(path) {
         Ok(s) => s,
-        Err(_) => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            warn!(
+                event = "core.daemon.bin_read_failed",
+                path = %path.display(),
+                error = %e,
+            );
+            return None;
+        }
     };
     let mut lines = content.lines();
     let bin_path = lines.next()?;
