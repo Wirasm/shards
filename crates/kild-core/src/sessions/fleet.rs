@@ -70,7 +70,7 @@ pub(super) fn is_dropbox_capable_agent(agent: &str) -> bool {
 /// Returns true if the agent supports the Claude Code inbox/team protocol.
 ///
 /// Only claude sessions get inbox JSON injection and `--agent-id`/`--team-name` flags.
-pub(super) fn is_claude_fleet_agent(agent: &str) -> bool {
+pub fn is_claude_fleet_agent(agent: &str) -> bool {
     AgentType::parse(agent) == Some(AgentType::Claude)
 }
 
@@ -78,7 +78,7 @@ pub(super) fn is_claude_fleet_agent(agent: &str) -> bool {
 ///
 /// Active when the session is the brain itself (team will be created by ensure_fleet_member)
 /// or when the team directory already exists (brain was created earlier).
-pub(super) fn fleet_mode_active(branch: &str) -> bool {
+pub fn fleet_mode_active(branch: &str) -> bool {
     if branch == BRAIN_BRANCH {
         return true;
     }

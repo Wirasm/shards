@@ -4,6 +4,7 @@ use tracing::{error, info};
 use kild_core::SessionStatus;
 use kild_core::events;
 use kild_core::session_ops;
+use kild_core::sessions::fleet;
 
 use super::helpers::{
     FailedOperation, OpenedKild, format_count, format_partial_failure_error,
@@ -65,6 +66,31 @@ pub(crate) fn handle_open_command(matches: &ArgMatches) -> Result<(), Box<dyn st
             if let Some(pid) = session.latest_agent().and_then(|a| a.process_id()) {
                 println!("  PID:   {}", pid);
             }
+
+            // Warn fleet claude sessions about --initial-prompt deprecation.
+            if let Some(prompt) = initial_prompt
+                && fleet::fleet_mode_active(&session.branch)
+                && fleet::is_claude_fleet_agent(&session.agent)
+            {
+                eprintln!();
+                eprintln!("Warning: --initial-prompt is unreliable for fleet sessions.");
+                eprintln!(
+                    "  Use instead: kild inject {} \"<your message>\"",
+                    session.branch
+                );
+
+                let safe_name = fleet::fleet_safe_name(&session.branch);
+                match fleet::write_to_inbox(fleet::BRAIN_BRANCH, &safe_name, prompt) {
+                    Ok(()) => {
+                        eprintln!("  → Delivered via inbox as fallback.");
+                    }
+                    Err(e) => {
+                        eprintln!("  ✗ Inbox fallback also failed: {}", e);
+                        eprintln!("  Manually run: kild inject {} \"...\"", session.branch);
+                    }
+                }
+            }
+
             info!(
                 event = "cli.open_completed",
                 branch = branch,

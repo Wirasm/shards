@@ -82,12 +82,20 @@ Communication uses two channels that work together. You don't need to think abou
 
 ### Sending instructions to workers
 
-```bash
-# To a running worker
-kild inject <branch> "Your next task: <clear instruction>"
+**Always use `kild inject` — never use `--initial-prompt`.**
 
-# To a stopped worker — resume + deliver on startup
-kild open <branch> --resume --initial-prompt "<instruction>"
+```bash
+# Create a worker (no task yet — just boot the agent)
+kild create <branch> --daemon --agent claude --yolo --issue <N> --note "<title>"
+
+# Wait ~5 seconds for the agent to initialize, then inject
+sleep 5
+kild inject <branch> "Your task: <clear instruction>"
+
+# To a stopped worker — resume, then inject
+kild open <branch> --resume
+sleep 5
+kild inject <branch> "Your next task: <instruction>"
 ```
 
 `kild inject` delivers via **both** channels simultaneously:
@@ -95,6 +103,8 @@ kild open <branch> --resume --initial-prompt "<instruction>"
 - **Dropbox** — writes `task.md` + increments `task-id` for protocol state tracking
 
 For non-Claude agents (Codex, Kiro, etc.), inject writes to PTY stdin + dropbox.
+
+**Do NOT use `--initial-prompt` on `kild create` or `kild open`.** The `--initial-prompt` flag has unreliable delivery for fleet sessions. Always create/open first, then inject separately.
 
 **Never use `kild stop` to deliver messages.** Stopping kills the agent process.
 
@@ -174,7 +184,8 @@ kild stop --all                          # Stop all workers
 ### Communication — directing workers
 ```bash
 kild inject <branch> "<instruction>"     # Message a running worker
-kild open <branch> --resume --initial-prompt "<msg>"  # Restart + instruct
+# To restart + instruct: open first, wait, then inject
+kild open <branch> --resume && sleep 5 && kild inject <branch> "<msg>"
 ```
 
 ### Git operations — keeping branches clean
