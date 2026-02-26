@@ -134,7 +134,7 @@ pub(super) fn spawn_daemon_agent(
         None,
         None,
         None,
-        params.agent_command.to_string(),
+        fleet_command,
         now,
         Some(daemon_result.daemon_session_id),
     )
