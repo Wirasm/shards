@@ -38,6 +38,9 @@ pub(super) struct AgentSpawnParams<'a> {
 /// Handles the shared daemon spawn sequence: daemon startup, agent hook setup,
 /// fleet wiring, PTY creation, and early-exit detection.
 ///
+/// The returned `AgentProcess::command` contains the fleet-augmented command
+/// (base agent command + fleet flags), matching what the daemon actually executes.
+///
 /// Create-only steps (shim binary, pre-emptive cleanup, pane registry init)
 /// and open-only steps (initial prompt delivery) remain in their respective callers.
 pub(super) fn spawn_daemon_agent(
@@ -134,7 +137,7 @@ pub(super) fn spawn_daemon_agent(
         None,
         None,
         None,
-        params.agent_command.to_string(),
+        fleet_command,
         now,
         Some(daemon_result.daemon_session_id),
     )
