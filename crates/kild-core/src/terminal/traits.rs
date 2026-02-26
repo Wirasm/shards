@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn mock_terminal_backend_close_window_does_not_panic() {
         let backend = MockBackend;
-        // close_window returns () - just verify it doesn't panic
+        // Verify fire-and-forget close does not panic
         backend.close_window(Some("123"));
     }
 }

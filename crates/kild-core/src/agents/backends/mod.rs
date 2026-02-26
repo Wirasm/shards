@@ -1,7 +1,39 @@
 //! Agent backend implementations.
 //!
 //! All backends are defined via the `define_agent_backend!` macro, which generates
-//! the struct, `AgentBackend` trait impl, and tests from a declarative one-liner.
+//! the struct, `AgentBackend` trait impl, and uniquely named tests. Each invocation
+//! requires a `test_prefix` identifier used to produce descriptive test function
+//! names via `paste`.
+
+/// Shared test body for both macro arms. Generates the four tests common to all
+/// backends; the yolo-specific test is added by each arm individually.
+#[cfg(test)]
+macro_rules! define_agent_backend_tests {
+    ($struct_name:ident, $prefix:ident, $name:expr, $display:expr, $cmd:expr, [$($pat:expr),+]) => {
+        paste::paste! {
+            #[test]
+            fn [<$prefix _backend_returns_correct_name>]() {
+                assert_eq!($struct_name.name(), $name);
+            }
+
+            #[test]
+            fn [<$prefix _backend_returns_correct_display_name>]() {
+                assert_eq!($struct_name.display_name(), $display);
+            }
+
+            #[test]
+            fn [<$prefix _backend_returns_correct_default_command>]() {
+                assert_eq!($struct_name.default_command(), $cmd);
+            }
+
+            #[test]
+            fn [<$prefix _backend_returns_expected_process_patterns>]() {
+                let patterns = $struct_name.process_patterns();
+                $(assert!(patterns.contains(&$pat.to_string()));)+
+            }
+        }
+    };
+}
 
 macro_rules! define_agent_backend {
     // Arm with yolo_flags (agents that support autonomous mode)
@@ -48,28 +80,9 @@ macro_rules! define_agent_backend {
             use super::*;
             use crate::agents::traits::AgentBackend;
 
+            define_agent_backend_tests!($struct_name, $prefix, $name, $display, $cmd, [$($pat),+]);
+
             paste::paste! {
-                #[test]
-                fn [<$prefix _backend_returns_correct_name>]() {
-                    assert_eq!($struct_name.name(), $name);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_correct_display_name>]() {
-                    assert_eq!($struct_name.display_name(), $display);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_correct_default_command>]() {
-                    assert_eq!($struct_name.default_command(), $cmd);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_expected_process_patterns>]() {
-                    let patterns = $struct_name.process_patterns();
-                    $(assert!(patterns.contains(&$pat.to_string()));)+
-                }
-
                 #[test]
                 fn [<$prefix _backend_returns_correct_yolo_flags>]() {
                     assert_eq!($struct_name.yolo_flags(), Some($yolo));
@@ -116,28 +129,9 @@ macro_rules! define_agent_backend {
             use super::*;
             use crate::agents::traits::AgentBackend;
 
+            define_agent_backend_tests!($struct_name, $prefix, $name, $display, $cmd, [$($pat),+]);
+
             paste::paste! {
-                #[test]
-                fn [<$prefix _backend_returns_correct_name>]() {
-                    assert_eq!($struct_name.name(), $name);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_correct_display_name>]() {
-                    assert_eq!($struct_name.display_name(), $display);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_correct_default_command>]() {
-                    assert_eq!($struct_name.default_command(), $cmd);
-                }
-
-                #[test]
-                fn [<$prefix _backend_returns_expected_process_patterns>]() {
-                    let patterns = $struct_name.process_patterns();
-                    $(assert!(patterns.contains(&$pat.to_string()));)+
-                }
-
                 #[test]
                 fn [<$prefix _backend_returns_no_yolo_flags>]() {
                     assert_eq!($struct_name.yolo_flags(), None);
