@@ -135,6 +135,13 @@ pub struct UncommittedDetails {
     pub untracked_files: usize,
 }
 
+impl WorktreeStatus {
+    /// Whether the branch has unpushed commits or has never been pushed.
+    pub fn has_unpushed(&self) -> bool {
+        self.unpushed_commit_count > 0 || !self.has_remote_branch
+    }
+}
+
 impl UncommittedDetails {
     /// Returns true if there are no uncommitted changes.
     pub fn is_empty(&self) -> bool {
@@ -220,6 +227,19 @@ pub enum ConflictStatus {
     Conflicts,
     /// Check failed — conflict status is unreliable.
     Unknown,
+}
+
+impl ConflictStatus {
+    /// Whether the merge is clean (no conflicts).
+    ///
+    /// Returns `Some(true)` for clean, `Some(false)` for conflicts, `None` for unknown.
+    pub fn is_clean(&self) -> Option<bool> {
+        match self {
+            ConflictStatus::Clean => Some(true),
+            ConflictStatus::Conflicts => Some(false),
+            ConflictStatus::Unknown => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ConflictStatus {
@@ -423,6 +443,43 @@ mod tests {
         assert!(status.uncommitted_details.is_none());
         assert!(!status.behind_count_failed);
         assert!(!status.status_check_failed);
+    }
+
+    #[test]
+    fn test_has_unpushed_with_unpushed_commits() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 3,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert!(ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_has_unpushed_when_never_pushed() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: false,
+            ..Default::default()
+        };
+        assert!(ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_has_unpushed_false_when_up_to_date() {
+        let ws = WorktreeStatus {
+            unpushed_commit_count: 0,
+            has_remote_branch: true,
+            ..Default::default()
+        };
+        assert!(!ws.has_unpushed());
+    }
+
+    #[test]
+    fn test_conflict_status_is_clean() {
+        assert_eq!(ConflictStatus::Clean.is_clean(), Some(true));
+        assert_eq!(ConflictStatus::Conflicts.is_clean(), Some(false));
+        assert_eq!(ConflictStatus::Unknown.is_clean(), None);
     }
 
     #[test]
