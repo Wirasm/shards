@@ -179,6 +179,9 @@ where
                     false
                 };
 
+                // None means PTY is already gone (session stopped / removed mid-attach);
+                // treat as changed to skip garbled replay — attach_client will surface the
+                // real error below if the session is truly invalid.
                 let size_changed = old_size.is_none_or(|(r, c)| r != rows || c != cols);
 
                 // Subscribe to broadcast BEFORE capturing scrollback to avoid
@@ -198,16 +201,15 @@ where
                 // escape sequences rendered at the old size which produce garbled output
                 // in the new terminal. The agent will re-render via SIGWINCH.
                 let scrollback = if size_changed {
-                    if !resize_failed {
-                        debug!(
-                            event = "daemon.connection.scrollback_skipped",
-                            session_id = %session_id,
-                            old_size = ?old_size,
-                            new_rows = rows,
-                            new_cols = cols,
-                            "Skipping scrollback replay: PTY dimensions changed",
-                        );
-                    }
+                    debug!(
+                        event = "daemon.connection.scrollback_skipped",
+                        session_id = %session_id,
+                        old_size = ?old_size,
+                        new_rows = rows,
+                        new_cols = cols,
+                        resize_failed = resize_failed,
+                        "Skipping scrollback replay: PTY dimensions changed",
+                    );
                     Vec::new()
                 } else {
                     match mgr.scrollback_contents(&session_id) {
