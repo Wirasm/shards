@@ -99,9 +99,18 @@ A single `kild list --json` right after inject is fine to confirm the session st
 4. Act
 5. Log if significant
 
+### Detecting stuck workers
+
+Workers can get stuck in several ways. Check `kild list` for signs:
+
+- **`activity: waiting`** — Worker is blocked on a permission prompt. This usually means it wasn't created with `--yolo`. Fix: `kild inject <branch> "approve and continue"` or stop and reopen with `--yolo`.
+- **`activity: idle`** for too long — Worker finished but didn't report. Check `kild diff <branch>` to see if it made changes. If it did, inject the next instruction. If it didn't, it may have failed silently — check with `kild attach <branch>` to inspect.
+- **`activity: working`** for an unusually long time — Worker may be in a loop or stuck on a complex task. Attach to inspect: `kild attach <branch>`. If truly stuck, inject a nudge or stop and reopen.
+- **`Run(0/N)`** — Agent process died. The daemon session exists but no process is running. This can happen if the agent crashed or the resume UUID was invalid. Check `kild attach <branch>` for error output, then `kild open <branch> --resume` to restart.
+
 ## Fleet Operations
 
-The `/kild` skill has the full CLI reference with all flags and options. Here's when and why to use each command:
+The `/kild` skill is loaded automatically (see `skills:` in the header) and has the full CLI reference with all flags and options. If you need to look up a specific command's flags, run `/kild` to load the reference. Here's when and why to use each command:
 
 ### Awareness — understanding fleet state
 ```bash
@@ -110,9 +119,18 @@ kild diff <branch>        # What files a worker changed (unstaged diff)
 kild stats <branch>       # Branch health: commits ahead, merge readiness, CI
 kild pr <branch>          # PR status: state, reviews, checks
 kild overlaps             # File conflicts across all active kilds
+kild inbox <branch>       # Inspect dropbox state (task, ack, report) for a worker
+kild inbox --all           # Dropbox state for all fleet sessions
+kild prime <branch>       # Generate fleet context blob for a worker
+kild prime --all --status  # Compact fleet status table across all sessions
 ```
 
 Use `kild list --json` for structured data you can pipe through `jq`. It includes status, agent info, PR state, merge readiness, and more.
+
+**Priming workers with fleet context:** When a worker needs to understand the fleet state (e.g., after being created or when coordinating with other workers), use `kild prime` to generate a context blob and inject it:
+```bash
+kild inject <branch> "$(kild prime <branch>)"
+```
 
 ### Lifecycle — managing workers
 ```bash
@@ -142,21 +160,23 @@ kild sync --all           # Fetch + rebase all
 
 **Mode 1 — Isolated worktree** (standard, for code changes):
 ```bash
-kild create <branch> --daemon --agent claude --note "<task summary>"
+kild create <branch> --daemon --agent claude --yolo --note "<task summary>"
 ```
 Creates a `kild/<branch>` git branch + daemon PTY. Use for all feature, fix, and refactor work. An attach window opens automatically in Ghostty so the Tōryō can see what the agent is doing.
 
 **Mode 2 — Main branch** (for analysis, no code changes):
 ```bash
-kild create <branch> --daemon --agent claude --main --note "<task summary>"
+kild create <branch> --daemon --agent claude --main --yolo --note "<task summary>"
 ```
 Runs from the project root on the main branch. No worktree. Use for background analysis, script runners, tooling.
 
 **Mode 3 — With issue tracking**:
 ```bash
-kild create <branch> --daemon --agent claude --issue <N> --note "<title>"
+kild create <branch> --daemon --agent claude --yolo --issue <N> --note "<title>"
 ```
 Links the kild to a GitHub issue number for tracking in `kild list` output.
+
+**Always use `--yolo`** when creating workers. This enables full autonomy mode (skips permission prompts). Without it, workers will get stuck waiting for human approval on tool calls, showing `activity: waiting` in `kild list`. The Tōryō can override this for specific workers if needed.
 
 **Always let attach windows open.** When creating or opening kilds, do NOT use `--no-attach`. The Tōryō needs to see what each agent is doing. Attach windows are the default and should stay that way. The only exception is if the Tōryō explicitly asks for headless operation.
 
