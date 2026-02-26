@@ -7,14 +7,20 @@ use tracing::{debug, warn};
 
 use crate::errors::ShimError;
 
-/// Get a connection to the daemon, reusing a cached one if available.
+/// Take a connection from the pool, or create a fresh one.
 ///
 /// Delegates to `kild_protocol::pool` for thread-local connection caching.
 /// Critical for `write_stdin()` which is called per-keystroke — avoids
 /// creating a new socket connection for every key press.
 fn get_or_connect() -> Result<kild_protocol::IpcConnection, ShimError> {
     let paths = KildPaths::resolve().map_err(|e| ShimError::state(e.to_string()))?;
-    kild_protocol::pool::take(&paths.daemon_socket()).map_err(Into::into)
+    let (conn, reused) = kild_protocol::pool::take(&paths.daemon_socket())?;
+    if reused {
+        debug!(event = "shim.ipc.connection_reused");
+    } else {
+        debug!(event = "shim.ipc.connection_created");
+    }
+    Ok(conn)
 }
 
 /// Return a connection to the pool for reuse.
@@ -22,7 +28,11 @@ fn get_or_connect() -> Result<kild_protocol::IpcConnection, ShimError> {
 /// Delegates to `kild_protocol::pool::release` which re-validates liveness
 /// before caching.
 fn return_conn(conn: kild_protocol::IpcConnection) {
-    kild_protocol::pool::release(conn);
+    if kild_protocol::pool::release(conn) {
+        debug!(event = "shim.ipc.connection_cached");
+    } else {
+        debug!(event = "shim.ipc.connection_dropped_on_return");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

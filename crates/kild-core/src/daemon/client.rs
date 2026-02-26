@@ -11,7 +11,7 @@ use kild_protocol::{
 };
 use tracing::{debug, info, warn};
 
-/// Get a connection to the daemon, reusing a cached one if available.
+/// Take a connection to the daemon from the pool, or create a fresh one.
 ///
 /// Uses `kild_protocol::pool` for thread-local connection caching. Each thread
 /// maintains its own connection — for single-threaded CLI commands, this means
@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 /// via TCP/TLS instead of Unix socket. TLS connections are never cached —
 /// see `get_tls_connection()` for rationale.
 ///
-/// The connection is taken from the cache (exclusive ownership) and must be
+/// The connection is taken from the pool (exclusive ownership) and must be
 /// returned with `return_connection()` after successful use.
 fn get_connection() -> Result<IpcConnection, DaemonClientError> {
     // CLI --remote override takes precedence over config file.
@@ -52,7 +52,13 @@ fn get_connection() -> Result<IpcConnection, DaemonClientError> {
     }
 
     let socket_path = crate::daemon::socket_path();
-    kild_protocol::pool::take(&socket_path).map_err(Into::into)
+    let (conn, reused) = kild_protocol::pool::take(&socket_path)?;
+    if reused {
+        debug!(event = "core.daemon.connection_reused");
+    } else {
+        debug!(event = "core.daemon.connection_created");
+    }
+    Ok(conn)
 }
 
 /// Create a fresh TLS connection to a remote daemon.
@@ -83,7 +89,11 @@ fn get_tls_connection(
 /// Delegates to `kild_protocol::pool::release` which re-validates liveness
 /// before caching.
 fn return_connection(conn: IpcConnection) {
-    kild_protocol::pool::release(conn);
+    if kild_protocol::pool::release(conn) {
+        debug!(event = "core.daemon.connection_cached");
+    } else {
+        debug!(event = "core.daemon.connection_dropped_on_return");
+    }
 }
 
 use crate::errors::KildError;
