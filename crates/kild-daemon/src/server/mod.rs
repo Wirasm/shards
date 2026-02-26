@@ -23,10 +23,11 @@ use crate::types::DaemonConfig;
 /// This is the main entrypoint called by `kild daemon start`. It:
 /// 1. Checks for an existing daemon (PID file)
 /// 2. Writes a PID file
-/// 3. Binds a Unix socket
-/// 4. Optionally binds a TLS-wrapped TCP listener (when `bind_tcp` is configured)
-/// 5. Accepts client connections in a loop
-/// 6. Handles graceful shutdown on SIGTERM/SIGINT
+/// 3. Writes a bin file (binary path + mtime for staleness detection)
+/// 4. Binds a Unix socket
+/// 5. Optionally binds a TLS-wrapped TCP listener (when `bind_tcp` is configured)
+/// 6. Accepts client connections in a loop
+/// 7. Handles graceful shutdown on SIGTERM/SIGINT
 pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
     let pid_path = config.pid_path.clone();
     let socket_path = config.socket_path.clone();
@@ -42,6 +43,16 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
 
     // Write PID file
     pid::write_pid_file(&pid_path)?;
+
+    // Write bin file (binary path + mtime for staleness detection)
+    let bin_path = pid::bin_file_path();
+    if let Err(e) = pid::write_bin_file(&bin_path) {
+        warn!(
+            event = "daemon.server.bin_write_failed",
+            error = %e,
+            "Staleness detection will not work for this daemon instance.",
+        );
+    }
 
     // Clean up stale socket file
     if socket_path.exists() {
@@ -168,8 +179,8 @@ pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
         mgr.stop_all();
     }
 
-    // Clean up PID and socket files
-    cleanup(&pid_path, &socket_path);
+    // Clean up PID, bin, and socket files
+    cleanup(&pid_path, &bin_path, &socket_path);
 
     info!(event = "daemon.server.shutdown_completed");
 
@@ -233,14 +244,15 @@ async fn tcp_accept_loop(
     }
 }
 
-/// Clean up PID file and socket file on shutdown.
-fn cleanup(pid_path: &Path, socket_path: &Path) {
+/// Clean up PID file, bin file, and socket file on shutdown.
+fn cleanup(pid_path: &Path, bin_path: &Path, socket_path: &Path) {
     if let Err(e) = pid::remove_pid_file(pid_path) {
         error!(
             event = "daemon.server.pid_cleanup_failed",
             error = %e,
         );
     }
+    pid::remove_bin_file(bin_path);
     if socket_path.exists()
         && let Err(e) = std::fs::remove_file(socket_path)
     {
