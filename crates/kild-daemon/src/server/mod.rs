@@ -23,10 +23,11 @@ use crate::types::DaemonConfig;
 /// This is the main entrypoint called by `kild daemon start`. It:
 /// 1. Checks for an existing daemon (PID file)
 /// 2. Writes a PID file
-/// 3. Binds a Unix socket
-/// 4. Optionally binds a TLS-wrapped TCP listener (when `bind_tcp` is configured)
-/// 5. Accepts client connections in a loop
-/// 6. Handles graceful shutdown on SIGTERM/SIGINT
+/// 3. Writes a bin file (binary path + mtime for staleness detection)
+/// 4. Binds a Unix socket
+/// 5. Optionally binds a TLS-wrapped TCP listener (when `bind_tcp` is configured)
+/// 6. Accepts client connections in a loop
+/// 7. Handles graceful shutdown on SIGTERM/SIGINT
 pub async fn run_server(config: DaemonConfig) -> Result<(), DaemonError> {
     let pid_path = config.pid_path.clone();
     let socket_path = config.socket_path.clone();

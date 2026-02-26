@@ -86,14 +86,21 @@ pub fn write_bin_file(path: &Path) -> Result<(), DaemonError> {
 
     let canonical = exe.canonicalize().unwrap_or(exe);
 
-    let mtime = fs::metadata(&canonical)
-        .and_then(|m| m.modified())
-        .map(|t| {
-            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        })
-        .unwrap_or(0);
+    let mtime = match fs::metadata(&canonical).and_then(|m| m.modified()) {
+        Ok(t) => t
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        Err(e) => {
+            warn!(
+                event = "daemon.bin.mtime_read_failed",
+                path = %canonical.display(),
+                error = %e,
+                "Staleness detection by mtime will be unreliable for this daemon instance.",
+            );
+            0
+        }
+    };
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -127,7 +134,18 @@ pub fn read_bin_file(path: &Path) -> Option<(PathBuf, u64)> {
     let mut lines = content.lines();
     let bin_path = lines.next()?;
     let mtime_str = lines.next()?;
-    let mtime = mtime_str.parse::<u64>().ok()?;
+    let mtime = match mtime_str.parse::<u64>() {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                event = "daemon.bin.mtime_parse_failed",
+                path = %path.display(),
+                mtime_str = mtime_str,
+                error = %e,
+            );
+            return None;
+        }
+    };
 
     Some((PathBuf::from(bin_path), mtime))
 }

@@ -15,8 +15,6 @@ use super::errors::DaemonAutoStartError;
 /// 4. Polls socket + ping with 5s timeout, 50ms→500ms exponential backoff.
 ///    Checks child process exit status each iteration to detect early crashes.
 pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartError> {
-    let mut needs_spawn = false;
-
     match client::ping_daemon() {
         Ok(true) => {
             if !super::is_daemon_stale() {
@@ -28,11 +26,15 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
             match stop_stale_daemon() {
                 Ok(()) => {
                     // Stale daemon stopped — spawn unconditionally (bypass auto_start guard)
-                    needs_spawn = true;
+                    return spawn_daemon();
                 }
                 Err(e) => {
                     warn!(event = "core.daemon.stale_stop_failed", error = %e);
                     eprintln!("Warning: failed to stop stale daemon: {e}");
+                    eprintln!(
+                        "The old daemon binary is still in use. \
+                         Run 'kild daemon restart' manually to upgrade."
+                    );
                     // Old daemon is still running — return Ok since a daemon exists
                     return Ok(());
                 }
@@ -44,8 +46,7 @@ pub fn ensure_daemon_running(config: &KildConfig) -> Result<(), DaemonAutoStartE
         }
     }
 
-    // Only check auto_start when no stale restart was triggered
-    if !needs_spawn && !config.daemon_auto_start() {
+    if !config.daemon_auto_start() {
         return Err(DaemonAutoStartError::Disabled);
     }
 
@@ -137,17 +138,23 @@ fn spawn_daemon() -> Result<(), DaemonAutoStartError> {
 
 /// Stop a stale daemon so a fresh one can be spawned.
 ///
-/// Sends a graceful shutdown request, then polls for the PID file to be removed.
+/// Sends a graceful shutdown request, then polls for the PID file and socket
+/// to be removed (100ms interval, 5s timeout).
 fn stop_stale_daemon() -> Result<(), String> {
     client::request_shutdown().map_err(|e| format!("shutdown request failed: {e}"))?;
 
     let pid_file = super::pid_file_path();
+    let socket_file = socket_path();
     let timeout = std::time::Duration::from_secs(5);
     let start = std::time::Instant::now();
 
-    while pid_file.exists() {
+    while pid_file.exists() || socket_file.exists() {
         if start.elapsed() > timeout {
-            return Err("old daemon did not stop within 5s".to_string());
+            return Err(format!(
+                "old daemon did not stop within 5s (pid_exists={}, socket_exists={})",
+                pid_file.exists(),
+                socket_file.exists(),
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

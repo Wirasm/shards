@@ -20,8 +20,13 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
 
     // Check if already running
     if kild_core::daemon::client::ping_daemon().unwrap_or(false) {
-        let pid = read_daemon_pid()?;
-        println!("Daemon already running (PID: {})", pid);
+        match read_daemon_pid() {
+            Ok(pid) => println!("Daemon already running (PID: {})", pid),
+            Err(e) => {
+                warn!(event = "cli.daemon.pid_read_failed", error = %e);
+                println!("Daemon already running (PID unknown)");
+            }
+        }
         return Ok(());
     }
 
@@ -43,9 +48,16 @@ fn handle_daemon_start(matches: &ArgMatches) -> Result<(), Box<dyn std::error::E
         }
         info!(event = "cli.daemon.start_completed");
     } else {
-        let pid = spawn_daemon_background()?;
-        println!("Daemon started (PID: {})", pid);
-        info!(event = "cli.daemon.start_completed", pid = pid);
+        match spawn_daemon_background()? {
+            Some(pid) => {
+                println!("Daemon started (PID: {})", pid);
+                info!(event = "cli.daemon.start_completed", pid = pid);
+            }
+            None => {
+                println!("Daemon started (PID unknown)");
+                info!(event = "cli.daemon.start_completed");
+            }
+        }
     }
 
     Ok(())
@@ -63,6 +75,7 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
                 let start = std::time::Instant::now();
                 while pid_file.exists() {
                     if start.elapsed() > timeout {
+                        error!(event = "cli.daemon.restart_stop_timeout");
                         return Err("Old daemon did not stop within 5s".into());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -77,17 +90,24 @@ fn handle_daemon_restart() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let pid = spawn_daemon_background()?;
-    println!("Daemon restarted (PID: {})", pid);
-    info!(event = "cli.daemon.restart_completed", pid = pid);
+    match spawn_daemon_background()? {
+        Some(pid) => {
+            println!("Daemon restarted (PID: {})", pid);
+            info!(event = "cli.daemon.restart_completed", pid = pid);
+        }
+        None => {
+            println!("Daemon restarted (PID unknown)");
+            info!(event = "cli.daemon.restart_completed");
+        }
+    }
 
     Ok(())
 }
 
 /// Spawn the daemon binary in the background and wait for it to become ready.
 ///
-/// Returns the PID of the new daemon process on success.
-fn spawn_daemon_background() -> Result<u32, Box<dyn std::error::Error>> {
+/// Returns the PID of the new daemon process, or `None` if the PID file is unreadable.
+fn spawn_daemon_background() -> Result<Option<u32>, Box<dyn std::error::Error>> {
     let daemon_binary = kild_core::daemon::find_sibling_binary("kild-daemon")
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
@@ -143,14 +163,7 @@ fn spawn_daemon_background() -> Result<u32, Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    match read_daemon_pid() {
-        Ok(pid) => Ok(pid),
-        Err(e) => {
-            warn!(event = "cli.daemon.pid_read_failed", error = %e);
-            // Daemon is running (ping succeeded) but PID file is unreadable — return 0
-            Ok(0)
-        }
-    }
+    Ok(read_daemon_pid().ok())
 }
 
 fn handle_daemon_stop() -> Result<(), Box<dyn std::error::Error>> {

@@ -26,7 +26,7 @@ pub fn socket_path() -> PathBuf {
         .daemon_socket()
 }
 
-/// Bin file path for daemon binary staleness detection.
+/// Returns the default bin file path: `~/.kild/daemon.bin`.
 pub fn bin_file_path() -> PathBuf {
     KildPaths::resolve()
         .unwrap_or_else(|e| {
@@ -91,7 +91,13 @@ pub fn is_daemon_stale() -> bool {
 
     let expected = match find_sibling_binary("kild-daemon") {
         Ok(p) => p,
-        Err(_) => return false,
+        Err(e) => {
+            warn!(
+                event = "core.daemon.stale_check_binary_missing",
+                error = %e,
+            );
+            return false;
+        }
     };
 
     let expected_canonical = expected.canonicalize().unwrap_or(expected);
@@ -153,7 +159,18 @@ fn read_bin_file(path: &std::path::Path) -> Option<(PathBuf, u64)> {
     let mut lines = content.lines();
     let bin_path = lines.next()?;
     let mtime_str = lines.next()?;
-    let mtime = mtime_str.parse::<u64>().ok()?;
+    let mtime = match mtime_str.parse::<u64>() {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                event = "core.daemon.bin_mtime_parse_failed",
+                path = %path.display(),
+                mtime_str = mtime_str,
+                error = %e,
+            );
+            return None;
+        }
+    };
     Some((PathBuf::from(bin_path), mtime))
 }
 
