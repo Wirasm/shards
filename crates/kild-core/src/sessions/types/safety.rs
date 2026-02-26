@@ -1,4 +1,4 @@
-use crate::forge::types::PrCheckResult;
+use crate::forge::types::{MergeStrategy, PrCheckResult};
 use crate::git::types::WorktreeStatus;
 
 /// Safety information for a destroy operation.
@@ -59,16 +59,16 @@ impl DestroySafetyInfo {
         // Skip if status check failed (already showed critical message)
         if self.git_status.has_uncommitted_changes && !self.git_status.status_check_failed {
             let message = if let Some(details) = &self.git_status.uncommitted_details {
-                let parts: Vec<String> = [
-                    (details.staged_files > 0).then(|| format!("{} staged", details.staged_files)),
-                    (details.modified_files > 0)
-                        .then(|| format!("{} modified", details.modified_files)),
-                    (details.untracked_files > 0)
-                        .then(|| format!("{} untracked", details.untracked_files)),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
+                let mut parts = Vec::new();
+                if details.staged_files > 0 {
+                    parts.push(format!("{} staged", details.staged_files));
+                }
+                if details.modified_files > 0 {
+                    parts.push(format!("{} modified", details.modified_files));
+                }
+                if details.untracked_files > 0 {
+                    parts.push(format!("{} untracked", details.untracked_files));
+                }
                 format!("Uncommitted changes: {}", parts.join(", "))
             } else {
                 "Uncommitted changes detected".to_string()
@@ -106,7 +106,7 @@ pub struct CompleteRequest {
     /// Branch name of the kild to complete.
     pub name: String,
     /// Merge strategy (squash, merge, rebase).
-    pub merge_strategy: crate::forge::types::MergeStrategy,
+    pub merge_strategy: MergeStrategy,
     /// Skip merging — just clean up (old behavior, requires PR already merged).
     pub no_merge: bool,
     /// Force through safety checks (uncommitted changes, CI failures, pending reviews).
@@ -122,7 +122,7 @@ impl CompleteRequest {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            merge_strategy: crate::forge::types::MergeStrategy::default(),
+            merge_strategy: MergeStrategy::default(),
             no_merge: false,
             force: false,
             dry_run: false,
@@ -137,7 +137,7 @@ pub enum CompleteResult {
     /// PR was merged by this command, remote branch deleted, session destroyed.
     Merged {
         /// The merge strategy used.
-        strategy: crate::forge::types::MergeStrategy,
+        strategy: MergeStrategy,
         /// Whether remote branch was deleted (false if deletion failed, non-fatal).
         remote_deleted: bool,
     },
