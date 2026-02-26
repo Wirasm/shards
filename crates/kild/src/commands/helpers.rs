@@ -23,8 +23,29 @@ pub(crate) fn resolve_self_branch() -> Option<String> {
     }
 
     // Fallback: match CWD against session worktree paths
-    let cwd = std::env::current_dir().ok()?;
-    let session = session_ops::find_session_by_worktree_path(&cwd).ok()??;
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            warn!(
+                event = "cli.self_detection.cwd_failed",
+                error = %e,
+                "Could not determine CWD for self-detection; self-exclusion may be incomplete"
+            );
+            return None;
+        }
+    };
+    let session = match session_ops::find_session_by_worktree_path(&cwd) {
+        Ok(opt) => opt,
+        Err(e) => {
+            warn!(
+                event = "cli.self_detection.lookup_failed",
+                cwd = %cwd.display(),
+                error = %e,
+                "Session lookup by worktree path failed; self-exclusion may be incomplete"
+            );
+            return None;
+        }
+    }?;
     // Don't treat --main sessions as "self" via CWD: their worktree_path is the
     // project root, so any CWD inside the project would false-positive match.
     if session.use_main_worktree {
@@ -244,6 +265,9 @@ pub fn resolve_open_mode(matches: &clap::ArgMatches) -> kild_core::OpenMode {
 mod tests {
     use super::*;
 
+    /// Serialize env-var-mutating tests to avoid races in the multi-threaded test runner.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// # Safety helper — save/restore env var around test
     unsafe fn set_env(key: &str, val: &str) {
         unsafe { std::env::set_var(key, val) };
@@ -260,9 +284,10 @@ mod tests {
 
     #[test]
     fn resolve_self_branch_from_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = "KILD_SESSION_BRANCH";
         let prev = std::env::var(key).ok();
-        // SAFETY: test-only, single-threaded test runner
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
         unsafe { set_env(key, "honryu") };
 
         let result = resolve_self_branch();
@@ -273,9 +298,10 @@ mod tests {
 
     #[test]
     fn resolve_self_branch_empty_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = "KILD_SESSION_BRANCH";
         let prev = std::env::var(key).ok();
-        // SAFETY: test-only, single-threaded test runner
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
         unsafe { set_env(key, "") };
 
         let result = resolve_self_branch();
@@ -287,9 +313,10 @@ mod tests {
 
     #[test]
     fn resolve_self_branch_no_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let key = "KILD_SESSION_BRANCH";
         let prev = std::env::var(key).ok();
-        // SAFETY: test-only, single-threaded test runner
+        // SAFETY: serialized via ENV_LOCK, no concurrent env var access
         unsafe { remove_env(key) };
 
         let result = resolve_self_branch();

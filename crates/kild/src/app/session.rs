@@ -210,7 +210,8 @@ pub fn stop_command() -> Command {
                 .long("force")
                 .short('f')
                 .help("Force stop (required when stopping own session)")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::SetTrue)
+                .conflicts_with("all"),
         )
 }
 

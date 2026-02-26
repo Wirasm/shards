@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::events;
 use kild_core::session_ops;
@@ -38,13 +38,18 @@ pub(crate) fn handle_destroy_command(
                 color::hint("This will kill the agent and remove the session."),
             );
             eprintln!("  {}", color::hint("Use --force to proceed."),);
-            error!(
-                event = "cli.destroy_blocked",
+            warn!(
+                event = "cli.destroy_failed",
                 branch = branch,
                 reason = "self_destroy"
             );
             return Err("Self-destroy blocked. Use --force to override.".into());
         }
+        warn!(
+            event = "cli.destroy_self_forced",
+            branch = branch,
+            "Self-destroy with --force"
+        );
         eprintln!(
             "{} Destroying own session ({}).",
             color::warning("Warning:"),

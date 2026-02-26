@@ -1,5 +1,5 @@
 use clap::ArgMatches;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use kild_core::SessionStatus;
 use kild_core::events;
@@ -42,13 +42,18 @@ pub(crate) fn handle_stop_command(matches: &ArgMatches) -> Result<(), Box<dyn st
                 color::hint("This will kill the agent running this command."),
             );
             eprintln!("  {}", color::hint("Use --force to proceed."),);
-            error!(
-                event = "cli.stop_blocked",
+            warn!(
+                event = "cli.stop_failed",
                 branch = branch,
                 reason = "self_stop"
             );
             return Err("Self-stop blocked. Use --force to override.".into());
         }
+        warn!(
+            event = "cli.stop_self_forced",
+            branch = branch,
+            "Self-stop with --force"
+        );
         eprintln!(
             "{} Stopping own session ({}).",
             color::warning("Warning:"),
