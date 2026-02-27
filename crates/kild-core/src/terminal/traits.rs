@@ -39,7 +39,8 @@ pub trait TerminalBackend: Send + Sync {
     /// close logic (AppleScript, pkill, Hyprland IPC, etc.).
     ///
     /// # Arguments
-    /// * `window_id` - The window ID (for iTerm/Terminal.app) or title (for Ghostty)
+    /// * `window_id` - Opaque identifier: numeric window ID (iTerm/Terminal.app)
+    ///   or window title (Ghostty/Alacritty)
     ///
     /// # Behavior
     /// - Close failures are non-fatal and logged at warn level

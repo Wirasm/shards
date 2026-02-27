@@ -308,6 +308,40 @@ pub fn hide_via_applescript(
     hide_applescript_window(&script, terminal_name, window_id)
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn spawn_via_applescript(
+    _spawn_script: &str,
+    _terminal_name: &str,
+    _config: &crate::terminal::types::SpawnConfig,
+) -> Result<Option<String>, TerminalError> {
+    Ok(None)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn close_via_applescript(_close_script: &str, _terminal_name: &str, _window_id: &str) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn focus_via_applescript(
+    _focus_script: &str,
+    _terminal_name: &str,
+    _window_id: &str,
+) -> Result<(), TerminalError> {
+    Err(TerminalError::FocusFailed {
+        message: "Focus not supported on this platform".to_string(),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_via_applescript(
+    _hide_script: &str,
+    _terminal_name: &str,
+    _window_id: &str,
+) -> Result<(), TerminalError> {
+    Err(TerminalError::HideFailed {
+        message: "Hide not supported on this platform".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
