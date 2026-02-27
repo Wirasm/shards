@@ -7,9 +7,14 @@ use tracing::{info, warn};
 ///
 /// This script is registered in Claude Code's `~/.claude/settings.json` for Stop,
 /// Notification, SubagentStop, TeammateIdle, and TaskCompleted hooks. It reads JSON
-/// from stdin, maps Claude Code events to KILD agent statuses, and calls
-/// `kild agent-status --self <status> --notify`.
-/// Always overwrites to pick up updated hook content (e.g. new brain-inject block).
+/// from stdin and does two things:
+///
+/// 1. Maps Claude Code events to KILD agent statuses via `kild agent-status --self <status>`.
+/// 2. Forwards tagged events to the Honryū brain session via `kild inject honryu "[EVENT] ..."`.
+///    By default only primary agent events (Stop, Notification) are forwarded. Set
+///    `KILD_HOOK_VERBOSE=1` to include SubagentStop, TeammateIdle, and TaskCompleted.
+///
+/// Always overwrites to pick up updated hook content.
 /// User edits to `~/.kild/hooks/claude-status` will be replaced on every create/open.
 fn ensure_claude_status_hook_with_paths(paths: &KildPaths) -> Result<(), String> {
     let hooks_dir = paths.hooks_dir();
@@ -49,15 +54,16 @@ LAST_MSG=$(echo "$INPUT" | grep -o '"transcript_summary":"[^"]*"' | head -1 | se
 TAG=""
 FORWARD=""
 SKIP_GATE=""
+WRITE_GATE=""
 case "$EVENT" in
-  Stop)           TAG="agent.stop";     FORWARD=1 ;;
+  Stop)           TAG="agent.stop";     FORWARD=1; WRITE_GATE=1 ;;
   SubagentStop)   TAG="subagent.stop";  [ "${KILD_HOOK_VERBOSE:-0}" = "1" ] && FORWARD=1 ;;
   TeammateIdle)   TAG="teammate.idle";  [ "${KILD_HOOK_VERBOSE:-0}" = "1" ] && FORWARD=1 ;;
   TaskCompleted)  TAG="task.completed"; [ "${KILD_HOOK_VERBOSE:-0}" = "1" ] && FORWARD=1 ;;
   Notification)
     case "$NTYPE" in
       permission_prompt) TAG="agent.waiting"; FORWARD=1; SKIP_GATE=1 ;;
-      idle_prompt)       TAG="agent.idle";    FORWARD=1 ;;
+      idle_prompt)       TAG="agent.idle";    FORWARD=1; WRITE_GATE=1 ;;
     esac
     ;;
 esac
@@ -69,7 +75,7 @@ if [ -n "$FORWARD" ]; then
      { [ -n "$SKIP_GATE" ] || [ -z "$GATE" ] || [ ! -f "$GATE" ]; } && \
      kild list --json 2>/dev/null | jq -e '.sessions[] | select(.branch == "honryu" and .status == "active")' > /dev/null 2>&1; then
     if kild inject honryu "$MSG"; then
-      if [ -z "$SKIP_GATE" ] && [ -n "$GATE" ]; then
+      if [ -n "$WRITE_GATE" ] && [ -n "$GATE" ]; then
         touch "$GATE" || echo "[kild] Warning: failed to write idle gate $GATE" >&2
       fi
     fi
@@ -334,8 +340,8 @@ mod tests {
             "Script should extract transcript_summary from JSON payload"
         );
         assert!(
-            content.contains("KILD_HOOK_VERBOSE"),
-            "Script should support KILD_HOOK_VERBOSE env var"
+            content.contains(r#"[ "${KILD_HOOK_VERBOSE:-0}" = "1" ] && FORWARD=1"#),
+            "Script should gate verbose events on KILD_HOOK_VERBOSE=1"
         );
         assert!(
             content.contains("[EVENT] $BRANCH $TAG"),
@@ -376,8 +382,29 @@ mod tests {
             .nth(1)
             .expect("Should have TAG initialization");
         assert!(
-            forward_block.contains("SubagentStop") && forward_block.contains("TeammateIdle"),
-            "SubagentStop and TeammateIdle should appear in the forward block with verbose gating"
+            forward_block.contains("SubagentStop")
+                && forward_block.contains("TeammateIdle")
+                && forward_block.contains("TaskCompleted"),
+            "SubagentStop, TeammateIdle, TaskCompleted should appear in the forward block"
+        );
+        assert!(
+            forward_block.contains("KILD_HOOK_VERBOSE"),
+            "Verbose-only events must be gated on KILD_HOOK_VERBOSE"
+        );
+        // Stop must forward unconditionally — not gated on KILD_HOOK_VERBOSE
+        let stop_arm_start = content.find("Stop)").expect("Should have Stop arm");
+        let stop_arm_end = content
+            .find("SubagentStop)")
+            .expect("Should have SubagentStop arm");
+        let stop_arm = &content[stop_arm_start..stop_arm_end];
+        assert!(
+            !stop_arm.contains("KILD_HOOK_VERBOSE"),
+            "Stop must not be gated on KILD_HOOK_VERBOSE"
+        );
+        // Only primary events (Stop, idle_prompt) should write the gate file
+        assert!(
+            content.contains("WRITE_GATE"),
+            "Script should use WRITE_GATE to control gate file writes"
         );
 
         #[cfg(unix)]
