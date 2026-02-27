@@ -178,6 +178,27 @@ impl Session {
         !self.agents.is_empty()
     }
 
+    /// PID file keys for all agents in this session.
+    ///
+    /// Multi-agent sessions use per-agent spawn IDs as keys. Legacy sessions
+    /// (pre-multi-agent, no tracked agents) fall back to the session ID.
+    pub fn pid_keys(&self) -> Vec<String> {
+        if self.has_agents() {
+            self.agents
+                .iter()
+                .map(|agent| {
+                    if agent.spawn_id().is_empty() {
+                        self.id.to_string()
+                    } else {
+                        agent.spawn_id().to_string()
+                    }
+                })
+                .collect()
+        } else {
+            vec![self.id.to_string()]
+        }
+    }
+
     /// Number of tracked agents.
     pub fn agent_count(&self) -> usize {
         self.agents.len()
