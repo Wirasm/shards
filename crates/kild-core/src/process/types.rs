@@ -58,7 +58,7 @@ impl From<sysinfo::ProcessStatus> for ProcessStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProcessInfo {
+pub struct ProcessSnapshot {
     pub pid: Pid,
     pub name: String,
     pub status: ProcessStatus,

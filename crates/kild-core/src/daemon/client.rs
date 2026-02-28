@@ -601,7 +601,8 @@ pub fn read_scrollback(daemon_session_id: &str) -> Result<Option<Vec<u8>>, Daemo
 ///
 /// Returns all sessions from the daemon. The caller can filter by prefix
 /// to find sessions belonging to a specific kild (e.g., UI-created shells).
-pub fn list_daemon_sessions() -> Result<Vec<kild_protocol::SessionInfo>, DaemonClientError> {
+pub fn list_daemon_sessions() -> Result<Vec<kild_protocol::DaemonSessionStatus>, DaemonClientError>
+{
     debug!(event = "core.daemon.list_sessions_started");
 
     let request = ClientMessage::ListSessions {
