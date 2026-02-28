@@ -19,12 +19,15 @@ use crate::views::main_view::keybindings::UiKeybindings;
 /// - Focus handling (keyboard events route here when terminal is visible)
 /// - Key-to-escape translation via `input::keystroke_to_escape()`
 /// - Event batching with repaint notification after each batch
+/// - Cursor blink timing via `BlinkManager` (epoch-based, resets on keystroke)
 pub struct TerminalView {
     terminal: Terminal,
     focus_handle: FocusHandle,
     /// Event batching task. Stored to prevent cancellation.
     _event_task: Task<()>,
     /// Cursor blink state. Toggled by an epoch-based async timer.
+    /// Enabled/disabled in `render()` based on focus state.
+    /// `pub(super)` so the blink timer closure in `blink.rs` can access it.
     pub(super) blink: BlinkManager,
     /// Mouse state passed to TerminalElement on each render.
     /// TerminalElement is reconstructed every frame -- do not cache instances.
@@ -74,14 +77,12 @@ impl TerminalView {
             .await;
         });
 
-        let mut blink = BlinkManager::new();
-        blink.enable(cx);
-
+        // Blink starts inert — render() enables it once focus is confirmed.
         Self {
             terminal,
             focus_handle,
             _event_task: event_task,
-            blink,
+            blink: BlinkManager::new(),
             mouse_state: MouseState {
                 position: None,
                 cmd_held: false,
@@ -127,14 +128,11 @@ impl TerminalView {
             .await;
         });
 
-        let mut blink = BlinkManager::new();
-        blink.enable(cx);
-
         Self {
             terminal,
             focus_handle,
             _event_task: event_task,
-            blink,
+            blink: BlinkManager::new(),
             mouse_state: MouseState {
                 position: None,
                 cmd_held: false,
@@ -202,7 +200,7 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        self.blink.pause(cx);
+        self.blink.reset(cx);
 
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform;
@@ -298,6 +296,14 @@ impl Render for TerminalView {
         let resize_handle = self.terminal.resize_handle();
         let error = self.terminal.error_message();
 
+        // Drive blink lifecycle from focus state. Gaining focus starts the
+        // timer; losing focus stops it and holds the cursor visible.
+        if has_focus && !self.blink.is_enabled() {
+            self.blink.enable(cx);
+        } else if !has_focus && self.blink.is_enabled() {
+            self.blink.disable();
+        }
+
         let mut container = div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
@@ -323,7 +329,8 @@ impl Render for TerminalView {
             );
         }
 
-        // Only blink when focused — unfocused terminals show a static hollow block.
+        // Blink state only applies when focused. Unfocused terminals always
+        // show the cursor (prepaint renders it as a half-opacity hollow block).
         let cursor_visible = !has_focus || self.blink.visible();
 
         container.child(TerminalElement::new(
