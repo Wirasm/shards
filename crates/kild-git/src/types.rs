@@ -38,14 +38,14 @@ pub struct CommitCounts {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct WorktreeInfo {
+pub struct WorktreeState {
     pub path: PathBuf,
     pub branch: String,
     pub project_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProjectInfo {
+pub struct GitProjectState {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
@@ -53,13 +53,13 @@ pub struct ProjectInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct BranchInfo {
+pub struct BranchState {
     pub name: String,
     pub exists: bool,
     pub is_current: bool,
 }
 
-impl WorktreeInfo {
+impl WorktreeState {
     pub fn new(path: PathBuf, branch: String, project_id: String) -> Self {
         Self {
             path,
@@ -315,7 +315,7 @@ pub struct OverlapReport {
     pub clean_kilds: Vec<CleanKild>,
 }
 
-impl ProjectInfo {
+impl GitProjectState {
     pub fn new(id: String, name: String, path: PathBuf, remote_url: Option<String>) -> Self {
         Self {
             id,
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_worktree_info() {
-        let worktree = WorktreeInfo::new(
+        let worktree = WorktreeState::new(
             PathBuf::from("/tmp/test"),
             "feature-branch".to_string(),
             "test-project".to_string(),
@@ -345,13 +345,13 @@ mod tests {
 
     #[test]
     fn test_worktree_info_preserves_original_branch_name() {
-        // WorktreeInfo stores the original branch name (with slashes),
+        // WorktreeState stores the original branch name (with slashes),
         // not the sanitized version used for the worktree path/directory.
         // This ensures git operations use the correct branch name.
         let original_branch = "feature/auth";
         let sanitized_path = PathBuf::from("/tmp/worktrees/project/feature-auth");
 
-        let info = WorktreeInfo::new(
+        let info = WorktreeState::new(
             sanitized_path,
             original_branch.to_string(),
             "test-project".to_string(),
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_project_info() {
-        let project = ProjectInfo::new(
+        let project = GitProjectState::new(
             "test-id".to_string(),
             "test-project".to_string(),
             PathBuf::from("/path/to/project"),
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_branch_info() {
-        let branch = BranchInfo {
+        let branch = BranchState {
             name: "main".to_string(),
             exists: true,
             is_current: true,
