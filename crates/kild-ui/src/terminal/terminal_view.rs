@@ -3,6 +3,7 @@ use gpui::{
     ScrollWheelEvent, Task, Window, div, prelude::*, px,
 };
 
+use super::blink::BlinkManager;
 use super::terminal_element::scroll_delta_lines;
 
 use super::input;
@@ -23,6 +24,8 @@ pub struct TerminalView {
     focus_handle: FocusHandle,
     /// Event batching task. Stored to prevent cancellation.
     _event_task: Task<()>,
+    /// Cursor blink state. Toggled by an epoch-based async timer.
+    pub(super) blink: BlinkManager,
     /// Mouse state passed to TerminalElement on each render.
     /// TerminalElement is reconstructed every frame -- do not cache instances.
     mouse_state: MouseState,
@@ -71,10 +74,14 @@ impl TerminalView {
             .await;
         });
 
+        let mut blink = BlinkManager::new();
+        blink.enable(cx);
+
         Self {
             terminal,
             focus_handle,
             _event_task: event_task,
+            blink,
             mouse_state: MouseState {
                 position: None,
                 cmd_held: false,
@@ -120,10 +127,14 @@ impl TerminalView {
             .await;
         });
 
+        let mut blink = BlinkManager::new();
+        blink.enable(cx);
+
         Self {
             terminal,
             focus_handle,
             _event_task: event_task,
+            blink,
             mouse_state: MouseState {
                 position: None,
                 cmd_held: false,
@@ -191,6 +202,8 @@ impl TerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.blink.pause(cx);
+
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform;
 
@@ -310,12 +323,15 @@ impl Render for TerminalView {
             );
         }
 
+        // Only blink when focused — unfocused terminals show a static hollow block.
+        let cursor_visible = !has_focus || self.blink.visible();
+
         container.child(TerminalElement::new(
             content,
             term,
             has_focus,
             resize_handle,
-            true,
+            cursor_visible,
             MouseState {
                 position: self.mouse_state.position,
                 cmd_held: self.mouse_state.cmd_held,
