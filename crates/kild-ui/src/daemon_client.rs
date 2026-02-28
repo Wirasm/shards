@@ -662,7 +662,7 @@ mod tests {
             assert_eq!(&*session.id, "test-sess");
             assert_eq!(session.status, SessionStatus::Running);
         } else {
-            panic!("expected SessionInfo");
+            panic!("expected session_info response");
         }
     }
 

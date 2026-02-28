@@ -779,7 +779,7 @@ fn test_session_with_corrupted_agent_fails_to_deserialize() {
 }
 
 #[test]
-fn test_agent_status_info_serde_roundtrip() {
+fn test_agent_status_record_serde_roundtrip() {
     let info = AgentStatusRecord {
         status: AgentStatus::Working,
         updated_at: "2026-02-05T12:00:00Z".to_string(),

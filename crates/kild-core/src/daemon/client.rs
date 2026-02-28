@@ -411,7 +411,7 @@ pub fn get_session_status(
                 "Unexpected response type from daemon"
             );
             Err(DaemonClientError::ProtocolError {
-                message: "Expected SessionInfo response".to_string(),
+                message: "Expected session_info response".to_string(),
             })
         }
         Err(IpcError::DaemonError { ref code, .. }) if *code == ErrorCode::SessionNotFound => {
@@ -468,7 +468,7 @@ pub fn get_session_info(
                 "Unexpected response type from daemon"
             );
             Err(DaemonClientError::ProtocolError {
-                message: "Expected SessionInfo response".to_string(),
+                message: "Expected session_info response".to_string(),
             })
         }
         Err(IpcError::DaemonError { ref code, .. }) if *code == ErrorCode::SessionNotFound => {
