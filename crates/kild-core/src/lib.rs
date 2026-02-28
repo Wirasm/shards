@@ -51,7 +51,6 @@ pub use kild_config::{
     Keybindings, KildConfig, TerminalConfig, UiConfig, VALID_TERMINALS,
 };
 pub use kild_config::{CopyOptions, IncludeConfig, PatternRule};
-pub use notify::{NotificationBackend, NotifyError};
 pub use projects::{Project, ProjectError, ProjectManager, ProjectsData};
 pub use sessions::agent_status::AgentStatusResult;
 pub use sessions::info::SessionInfo;

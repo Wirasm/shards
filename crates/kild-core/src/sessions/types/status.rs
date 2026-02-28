@@ -1,5 +1,6 @@
 use kild_protocol::AgentStatus;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,7 +27,13 @@ impl From<kild_protocol::SessionStatus> for SessionStatus {
             kild_protocol::SessionStatus::Stopped => SessionStatus::Stopped,
             // SessionStatus is #[non_exhaustive]; treat unknown variants as Active
             // (alive until proven otherwise).
-            _ => SessionStatus::Active,
+            _ => {
+                warn!(
+                    event = "core.session.status_conversion_unknown",
+                    "Unknown daemon SessionStatus variant; treating as Active"
+                );
+                SessionStatus::Active
+            }
         }
     }
 }

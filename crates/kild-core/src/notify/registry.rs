@@ -26,49 +26,38 @@ impl NotificationRegistry {
     }
 
     /// Detect the first available notification backend.
+    ///
+    /// Returns the first backend (in registration order) that reports
+    /// `is_available() == true`. Registration order in `new()` therefore
+    /// determines priority.
     fn detect(&self) -> Option<&dyn NotificationBackend> {
-        self.backends.iter().find_map(|b| {
-            if b.is_available() {
-                Some(b.as_ref())
-            } else {
-                None
-            }
-        })
+        self.backends
+            .iter()
+            .find(|b| b.is_available())
+            .map(|b| b.as_ref())
     }
-}
-
-/// Detect the first available notification backend for the current platform.
-///
-/// Returns `None` on unsupported platforms or when no notification tools are installed.
-pub fn detect_backend() -> Option<&'static dyn NotificationBackend> {
-    REGISTRY.detect()
 }
 
 /// Send a notification via the first available platform backend.
 ///
-/// Best-effort: returns the backend's `Result` to let callers decide how
-/// to handle failures. Returns `Ok(())` with a debug log if no backend is available.
-pub fn send_via_backend(title: &str, message: &str) -> Result<(), super::errors::NotifyError> {
-    let Some(backend) = detect_backend() else {
+/// Returns `Ok(true)` if the notification was sent, `Ok(false)` if no backend
+/// is available (skipped), or `Err` if the backend failed.
+pub fn send_via_backend(title: &str, message: &str) -> Result<bool, super::errors::NotifyError> {
+    let Some(backend) = REGISTRY.detect() else {
         debug!(
             event = "core.notify.send_skipped",
             reason = "no backend available",
         );
-        return Ok(());
+        return Ok(false);
     };
 
-    backend.send(title, message)
+    backend.send(title, message)?;
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detect_backend_does_not_panic() {
-        // Should never panic regardless of platform
-        let _result = detect_backend();
-    }
 
     #[test]
     fn registry_contains_expected_backends() {
@@ -80,7 +69,6 @@ mod tests {
 
     #[test]
     fn send_via_backend_does_not_panic() {
-        // Best-effort: should never panic even if no backend available
         let _result = send_via_backend("Test", "Hello");
     }
 }

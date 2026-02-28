@@ -26,6 +26,10 @@ pub fn should_notify(notify: bool, status: AgentStatus) -> bool {
 }
 
 /// Format the notification message for an agent status change.
+///
+/// The message body always reads "needs input" regardless of status.
+/// This covers both `Waiting` (literal input required) and `Error`
+/// (user must inspect and unblock the agent).
 pub fn format_notification_message(agent: &str, branch: &str, status: AgentStatus) -> String {
     format!("Agent {} in {} needs input ({})", agent, branch, status)
 }
@@ -42,8 +46,11 @@ pub fn send_notification(title: &str, message: &str) {
     );
 
     match registry::send_via_backend(title, message) {
-        Ok(()) => {
+        Ok(true) => {
             info!(event = "core.notify.send_completed", title = title);
+        }
+        Ok(false) => {
+            // No backend available — already logged at debug in registry
         }
         Err(e) => {
             warn!(

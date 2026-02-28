@@ -9,12 +9,6 @@ pub enum NotifyError {
 
     #[error("Notification failed: {message}")]
     SendFailed { message: String },
-
-    #[error("IO error during notification: {source}")]
-    IoError {
-        #[from]
-        source: std::io::Error,
-    },
 }
 
 impl KildError for NotifyError {
@@ -22,7 +16,6 @@ impl KildError for NotifyError {
         match self {
             NotifyError::ToolNotFound { .. } => "NOTIFY_TOOL_NOT_FOUND",
             NotifyError::SendFailed { .. } => "NOTIFY_SEND_FAILED",
-            NotifyError::IoError { .. } => "NOTIFY_IO_ERROR",
         }
     }
 
@@ -58,16 +51,6 @@ mod tests {
             "Notification failed: osascript exited with code 1"
         );
         assert_eq!(error.error_code(), "NOTIFY_SEND_FAILED");
-        assert!(!error.is_user_error());
-    }
-
-    #[test]
-    fn test_io_error() {
-        let error = NotifyError::IoError {
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"),
-        };
-        assert!(error.to_string().contains("IO error"));
-        assert_eq!(error.error_code(), "NOTIFY_IO_ERROR");
         assert!(!error.is_user_error());
     }
 }

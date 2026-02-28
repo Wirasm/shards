@@ -16,12 +16,6 @@ impl NotificationBackend for LinuxNotificationBackend {
     }
 
     fn send(&self, title: &str, message: &str) -> Result<(), NotifyError> {
-        if which::which("notify-send").is_err() {
-            return Err(NotifyError::ToolNotFound {
-                tool: "notify-send".to_string(),
-            });
-        }
-
         let output = std::process::Command::new("notify-send")
             .arg(title)
             .arg(message)
@@ -54,7 +48,6 @@ mod tests {
     #[test]
     fn linux_backend_availability_matches_platform() {
         let backend = LinuxNotificationBackend;
-        // On non-Linux platforms, should always be unavailable
         if !cfg!(target_os = "linux") {
             assert!(!backend.is_available());
         }

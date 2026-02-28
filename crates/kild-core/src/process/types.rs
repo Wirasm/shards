@@ -118,7 +118,6 @@ mod tests {
             start_time: 1700001000,
         };
         let _metadata: ProcessMetadata = (&info).into();
-        // Original info still accessible
         assert_eq!(info.name, "kiro");
         assert_eq!(info.pid.as_u32(), 5678);
     }
